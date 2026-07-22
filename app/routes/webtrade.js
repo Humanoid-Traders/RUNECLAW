@@ -64,12 +64,15 @@ router.post('/propose', tradeLimit, async (req, res) => {
     if (entry === null || sl === null || tp === null) {
       return res.status(400).json({ error: 'entry, sl, tp must be positive numbers' });
     }
+    // Order type: 'market' (open now) or 'limit' (rest at entry). Anything else
+    // falls back to 'limit' — the platform default; the gateway re-validates.
+    const orderType = String(b.order_type || 'limit').trim().toLowerCase() === 'market' ? 'market' : 'limit';
     const ident = await resolveBotIdentity(req);
-    secLog('WEB_TRADE_PROPOSE', req, `${direction} ${symbol} entry=${entry} sl=${sl} tp=${tp}`);
+    secLog('WEB_TRADE_PROPOSE', req, `${direction} ${symbol} ${orderType} entry=${entry} sl=${sl} tp=${tp}`);
     const r = await gateway.postGateway('/trade/propose', {
       telegram_id: ident.id,
       name: String(ident.email || '').split('@')[0],
-      direction, symbol, entry, sl, tp,
+      direction, symbol, entry, sl, tp, order_type: orderType,
       ...(margin !== undefined ? { margin } : {}),
     });
     return gateway.relay(res, r);

@@ -156,6 +156,23 @@ test('unlinked trade propose forwards web:<uid> identity', async () => {
   });
   assert.strictEqual(r.status, 200);
   assert.match(seen[0].body.telegram_id, /^web:\d+$/);
+  // Order type defaults to limit (the platform's maker-only default).
+  assert.strictEqual(seen[0].body.order_type, 'limit');
+});
+
+test('trade propose forwards an explicit market order type; garbage → limit', async () => {
+  seen.length = 0;
+  await request('POST', '/api/trade/propose', {
+    token: signUnlinked,
+    body: { direction: 'LONG', symbol: 'SOL', entry: 71, sl: 70, tp: 76, order_type: 'market' },
+  });
+  assert.strictEqual(seen[0].body.order_type, 'market');
+  seen.length = 0;
+  await request('POST', '/api/trade/propose', {
+    token: signUnlinked,
+    body: { direction: 'LONG', symbol: 'SOL', entry: 71, sl: 70, tp: 76, order_type: 'banana' },
+  });
+  assert.strictEqual(seen[0].body.order_type, 'limit');
 });
 
 test('controls stay telegram-gated for unlinked users', async () => {

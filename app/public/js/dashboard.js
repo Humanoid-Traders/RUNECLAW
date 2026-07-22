@@ -787,11 +787,19 @@
       const r = await fetchJSON('/api/signals?limit=3', { auth: false });
       const sigs = r.data?.signals || [];
       if (!sigs.length) return null;
-      return sigs.map(s => `
+      return sigs.map(s => {
+        // Actionable signals get a one-tap Trade button (prefills the ticket
+        // with this signal's geometry) — same mechanism as the Signals stream.
+        const tradeable = s.pnl == null && s.entry_price && s.stop_loss && s.take_profit;
+        const btn = tradeable
+          ? `<button class="btn btn--sm btn--primary" data-ptrade='${esc(JSON.stringify({ d: s.direction, sy: s.symbol, e: s.entry_price, sl: s.stop_loss, tp: s.take_profit }))}'>Trade</button>`
+          : '';
+        return `
         <div class="kv-row">
           <span class="row" style="gap:8px">${dirChip(s.direction)}<b style="font-family:var(--font-ui)">${esc(s.symbol)}</b><span class="muted small">${esc(s.pattern || '')}</span></span>
-          <span class="num muted">${fmtPrice(s.entry_price)} · ${fmtAgo(s.created_at)}</span>
-        </div>`).join('') + `<a class="btn btn--ghost btn--sm mt-2" href="#signals">All signals →</a>`;
+          <span class="row" style="gap:8px;align-items:center"><span class="num muted">${fmtPrice(s.entry_price)} · ${fmtAgo(s.created_at)}</span>${btn}</span>
+        </div>`;
+      }).join('') + `<a class="btn btn--ghost btn--sm mt-2" href="#signals">All signals →</a>`;
     }, { empty: { icon: 'icon-radar', text: 'No signals yet — they appear as the engine scans.', }, timeoutMs: 10000 });
 
     every(60000, () => { getScan().then(updateConnChip); });
@@ -1876,7 +1884,14 @@
                   <input class="input input--num" id="tMargin" type="number" step="any" min="0" placeholder="Auto"></div>
               </div>
               <div class="form-row">
-                <div class="field"><label for="tEntry">Entry (limit)</label><input class="input input--num" id="tEntry" type="number" step="any" min="0" placeholder="0.00"></div>
+                <div class="field"><label for="tOrderType">Order type</label>
+                  <select class="input" id="tOrderType">
+                    <option value="limit">🎯 Limit — rest at your entry</option>
+                    <option value="market">⚡ Market — open now at price</option>
+                  </select></div>
+              </div>
+              <div class="form-row">
+                <div class="field"><label for="tEntry" id="tEntryLabel">Entry (limit)</label><input class="input input--num" id="tEntry" type="number" step="any" min="0" placeholder="0.00"></div>
                 <div class="field"><label for="tSl">Stop loss</label><input class="input input--num" id="tSl" type="number" step="any" min="0" placeholder="0.00"></div>
                 <div class="field"><label for="tTp">Take profit</label><input class="input input--num" id="tTp" type="number" step="any" min="0" placeholder="0.00"></div>
               </div>
@@ -1887,7 +1902,7 @@
                 <span id="tMsg" class="small muted" aria-live="polite"></span>
               </div>
               <div id="tCopilot" class="small" style="margin-top:var(--s1)"></div>
-              <p class="muted small">Every trade re-runs the full risk gate at confirmation. Limit order, same path as the Telegram bot.</p>
+              <p class="muted small">Every trade re-runs the full risk gate at confirmation — same path as the Telegram bot. <b>Limit</b> rests a maker order at your entry; <b>Market</b> opens now at the current price (taker, possible slippage).</p>
             </form>
           </section>
           <section class="panel" id="p-sizer">
@@ -2045,6 +2060,7 @@
         entry: parseFloat($('tEntry').value),
         sl: parseFloat($('tSl').value),
         tp: parseFloat($('tTp').value),
+        order_type: ($('tOrderType') && $('tOrderType').value === 'market') ? 'market' : 'limit',
       };
       const marginRaw = $('tMargin').value.trim();
       if (marginRaw !== '') body.margin = Number(marginRaw);
@@ -2056,6 +2072,15 @@
       openTradeModal(r.data.pending_trade, () => drawPositions());
     });
 
+    // The Entry label reflects the order type: for a market order the price is
+    // a reference (execution is at the live price), for a limit it's the resting
+    // price. Keeps the form honest about what "entry" means.
+    const _relabelEntry = () => {
+      const lab = document.getElementById('tEntryLabel');
+      if (lab) lab.textContent = ($('tOrderType') && $('tOrderType').value === 'market') ? 'Entry (reference)' : 'Entry (limit)';
+    };
+    if ($('tOrderType')) $('tOrderType').addEventListener('change', _relabelEntry);
+
     // UX-4: apply a one-tap-from-signal prefill, if one was stashed. Cleared
     // immediately so a later manual visit to Trade starts blank.
     if (tradePrefill) {
@@ -2066,6 +2091,7 @@
         if (p.e != null) $('tEntry').value = p.e;
         if (p.sl != null) $('tSl').value = p.sl;
         if (p.tp != null) $('tTp').value = p.tp;
+        if (p.ot && $('tOrderType')) { $('tOrderType').value = (String(p.ot).toLowerCase() === 'market' ? 'market' : 'limit'); _relabelEntry(); }
         // Trigger the live risk/reward preview the form wires to input events.
         $('tEntry').dispatchEvent(new Event('input', { bubbles: true }));
         const tk = document.getElementById('p-ticket');
@@ -2096,7 +2122,8 @@
     body.innerHTML = `
       <span class="mode-badge ${live ? 'mode-badge--live' : 'mode-badge--paper'}">${live ? 'LIVE — REAL MONEY' : 'PAPER'}</span>
       <div class="kv-row"><span>Pair</span><b>${esc(pt.symbol)}/USDT ${esc(pt.direction)}</b></div>
-      <div class="kv-row"><span>Entry (limit)</span><b>$${fmt(pt.entry, 4)}</b></div>
+      <div class="kv-row"><span>Order type</span><b>${(pt.order_type === 'market') ? '⚡ Market — open now' : '🎯 Limit — rest at entry'}</b></div>
+      <div class="kv-row"><span>${(pt.order_type === 'market') ? 'Entry (reference)' : 'Entry (limit)'}</span><b>$${fmt(pt.entry, 4)}</b></div>
       <div class="kv-row"><span>Stop loss</span><b>$${fmt(pt.sl, 4)} (−${fmt(pt.sl_pct, 1)}%)</b></div>
       <div class="kv-row"><span>Take profit</span><b>$${fmt(pt.tp, 4)} (+${fmt(pt.tp_pct, 1)}%)</b></div>
       <div class="kv-row"><span>Risk : reward</span><b>${fmt(pt.rr)}</b></div>

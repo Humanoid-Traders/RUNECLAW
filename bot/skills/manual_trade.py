@@ -74,10 +74,22 @@ def parse_manual_trade(text: str) -> Union[ParsedManualTrade, str]:
     return (direction, symbol, entry, sl, tp, margin)
 
 
+def normalize_order_type(order_type) -> str:
+    """One place decides the order type: 'market' (open now, taker) or 'limit'
+    (rest at entry). Anything unrecognised falls back to 'limit' — the platform
+    default (maker, no slippage)."""
+    ot = str(order_type or "limit").strip().lower()
+    return "market" if ot == "market" else "limit"
+
+
 def build_manual_idea(direction: str, symbol: str, entry: float,
-                      sl: float, tp: float):
+                      sl: float, tp: float, order_type: str = "limit"):
     """Build the manual TradeIdea exactly as /trade does. Raises ValueError on
-    model-level sanity failures (non-finite prices, wrong SL/TP side)."""
+    model-level sanity failures (non-finite prices, wrong SL/TP side).
+
+    order_type: 'limit' (default — rests at ``entry``) or 'market' (opens now
+    at the current price). Both are already supported by the executor; the
+    default keeps the historical limit-only behaviour."""
     from bot.utils.models import TradeIdea, Direction
     pair = f"{symbol}/USDT:USDT"
     return TradeIdea(
@@ -90,7 +102,7 @@ def build_manual_idea(direction: str, symbol: str, entry: float,
         reasoning="Manual trade placed by user",
         signals_used=["manual"],
         source="manual",
-        order_type="limit",
+        order_type=normalize_order_type(order_type),
     )
 
 
