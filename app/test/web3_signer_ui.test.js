@@ -67,6 +67,17 @@ test('a broadcast tx renders a clickable block-explorer link', () => {
   assert.match(dash, /href="\$\{esc\(d\.explorer_url\)\}" target="_blank" rel="noopener"/);
 });
 
+test('the signer address links to the selected network\'s explorer', () => {
+  // per-testnet explorer hosts come from signer_status; the address link points
+  // at the chosen chain's /address/ page and follows the network selector.
+  assert.match(dash, /const addrLink = \(net\) =>/);
+  assert.match(dash, /explorerByNet\[net\]/);
+  assert.match(dash, /\/address\/\$\{a\}" target="_blank" rel="noopener"/);
+  // validated https host only, and re-pointed when the network changes.
+  assert.match(dash, /host && \/\^https:\\\/\\\/\/\.test\(host\)/);
+  assert.match(dash, /id === 'sgn-net'[\s\S]*?addrLink\(e\.target\.value\)/);
+});
+
 test('wei is derived from ETH without float error, and a send confirms first', () => {
   // BigInt path — decimal ETH string → integer wei, never Number * 1e18.
   assert.match(dash, /weiFromEth/);
