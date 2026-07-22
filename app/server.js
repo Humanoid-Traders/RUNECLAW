@@ -142,6 +142,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/llm', require('./routes/llm'));
 app.use('/api/staking', require('./routes/staking'));
 app.use('/api/public/chat', publicChatRouter);
+app.use('/api/contract', require('./routes/contract'));
 app.use('/api/trade', webtradeRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/leaderboard', leaderboardRouter);
