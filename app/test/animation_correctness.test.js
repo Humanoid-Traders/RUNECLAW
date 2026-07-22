@@ -22,8 +22,9 @@ test('SSE live pushes refresh in place (soft), never a full teardown', () => {
   const soft = (sse.match(/\{ soft: true \}/g) || []).length;
   assert.ok(rerenders >= 4 && soft === rerenders,
     `all ${rerenders} SSE re-renders must be soft (got ${soft})`);
-  // …and soft mode suppresses scroll-jump + entrance replay.
-  assert.match(dash, /if \(!opts\.soft\) window\.scrollTo/);
+  // …and soft mode suppresses scroll-jump + entrance replay (the guard may be
+  // a one-liner or a braced block that also triggers the view cross-fade).
+  assert.match(dash, /if \(!opts\.soft\)[\s{]*window\.scrollTo/);
   assert.match(css, /\.rc-soft \.panel, \.rc-soft \.rc-rise \{ animation: none; \}/);
 });
 

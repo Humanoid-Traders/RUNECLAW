@@ -147,7 +147,16 @@
     // and no replayed entrance stagger. Only real navigation gets the full
     // "assembling itself" treatment.
     container.classList.toggle('rc-soft', !!opts.soft);
-    if (!opts.soft) window.scrollTo({ top: 0 });
+    if (!opts.soft) {
+      window.scrollTo({ top: 0 });
+      // Cross-fade the fresh view up into place. Restart the CSS animation by
+      // removing the class, forcing a reflow, then re-adding it — so repeat
+      // navigations to the same view still animate. Soft SSE refreshes skip
+      // this (no jump), and prefers-reduced-motion neutralises it in CSS.
+      container.classList.remove('view-anim');
+      void container.offsetWidth;
+      container.classList.add('view-anim');
+    }
     // Pull the docked chat back out before the container is wiped; the chat
     // view re-docks it. Other views keep the floating FAB.
     if (window.RCChat) window.RCChat.unmountInline();
@@ -3718,7 +3727,7 @@
         const col = GRADE_COLOR[data.grade] || 'var(--text-1)';
         scoreEl.innerHTML = `<div class="row" style="align-items:center;gap:var(--s3);flex-wrap:wrap">
             <div style="text-align:center;min-width:120px">
-              <div style="font-size:52px;font-weight:800;line-height:1;color:${col}">${data.score}</div>
+              <div style="font-size:52px;font-weight:800;line-height:1;color:${col}" data-count="${data.score}">${data.score}</div>
               <div class="small muted">out of 100</div>
             </div>
             <div>
@@ -3729,6 +3738,8 @@
           </div>`;
       }
     }
+
+    if (scoreEl && window.RC && RC.animateCounters) RC.animateCounters(scoreEl);
 
     const subEl = C('repsub');
     if (subEl) {

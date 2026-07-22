@@ -209,8 +209,12 @@
         delete el.dataset.rcLoaded;
         el.innerHTML = stateBlock(empty);
       } else {
+        // Count-up runs on FIRST population only — soft SSE refreshes keep the
+        // live-value flash, they don't re-roll the number.
+        const wasLoaded = el.dataset.rcLoaded === '1';
         el.innerHTML = html;
         el.dataset.rcLoaded = '1';
+        if (!wasLoaded) animateCounters(el);
       }
     } catch (e) {
       clearTimeout(timer);
@@ -276,10 +280,52 @@
     };
   }
 
+  // ── Count-up: roll a number to its value on first appearance ─────────────
+  // Premium feel without lying — the FINAL value is exact; only the approach is
+  // animated. Reduced-motion (or dur<=0) sets the value instantly.
+  const _reducedMotion = () =>
+    !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  function countUp(el, to, opts = {}) {
+    const { from = 0, dur = 850, decimals = 0, prefix = '', suffix = '' } = opts;
+    to = Number(to);
+    if (!el || !isFinite(to)) return;
+    const fmtN = (v) => prefix + Number(v).toLocaleString(undefined,
+      { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) + suffix;
+    if (_reducedMotion() || dur <= 0 || !window.requestAnimationFrame) {
+      el.textContent = fmtN(to); return;
+    }
+    el.classList.add('rc-counting');
+    const t0 = performance.now();
+    const tick = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);   // easeOutCubic
+      el.textContent = fmtN(from + (to - from) * eased);
+      if (p < 1) requestAnimationFrame(tick); else el.textContent = fmtN(to);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // Roll up any [data-count] elements inside a freshly-rendered subtree. Opt-in
+  // per element: data-count="1234.5" [data-count-dec] [data-count-prefix]
+  // [data-count-suffix]. Each element animates once.
+  function animateCounters(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('[data-count]').forEach((el) => {
+      if (el.dataset.rcCounted) return;
+      el.dataset.rcCounted = '1';
+      countUp(el, el.dataset.count, {
+        decimals: parseInt(el.dataset.countDec || '0', 10) || 0,
+        prefix: el.dataset.countPrefix || '',
+        suffix: el.dataset.countSuffix || '',
+      });
+    });
+  }
+
   window.RC = {
     TOKEN, LOGGED_IN, authHeaders, logout,
     fetchJSON, postWithStepUp, esc, fmt, fmtMoney, fmtPrice, fmtK, signed, pnlClass, fmtAgo,
     dirChip, sanitizeBotHtml, toast, renderPanel, stateBlock, connectStream,
-    modalA11y,
+    modalA11y, countUp, animateCounters,
   };
 })();

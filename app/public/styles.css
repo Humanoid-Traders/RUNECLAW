@@ -61,6 +61,12 @@
   --rail-w: 208px;
   --topbar-h: 56px;
   --tabbar-h: 58px;
+
+  /* Motion — one easing + duration vocabulary so interactions feel of a piece.
+     Every use is auto-gated by the global reduced-motion block further down. */
+  --ease-out: cubic-bezier(.22, .61, .36, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+  --dur-1: 120ms; --dur-2: 200ms; --dur-3: 320ms;
 }
 
 /* ---- Reset / base ------------------------------------------------------ */
@@ -800,3 +806,56 @@ body::after {
 .rc-lang-select:hover { color: var(--text); border-color: var(--text-3); }
 .rc-lang-select:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
 :root[dir="rtl"] .rc-lang-select { padding: 6px 10px 6px 26px; background-position: left 9px center; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Motion & interaction polish — a cohesive smoothness layer across every
+   control. Appended last so these rules win ties; every animation/transition
+   here is auto-neutralised by the global prefers-reduced-motion block near the
+   top of this file (it zeroes all durations), so this is accessible by default.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Buttons: ease colour/border, lift a hair toward the cursor, spring on press. */
+.btn {
+  transition: color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(63, 182, 255, .14); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.985); }
+.btn--primary:hover:not(:disabled) { box-shadow: 0 6px 22px rgba(63, 182, 255, .30); }
+
+/* Interactive cards lift + deepen their shadow on hover. */
+.nft-card, .dapp-card, a.lpos-item, .news-item, .news-alert, .feed-item {
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
+}
+a.dapp-card:hover, a.lpos-item:hover, .nft-card:hover {
+  transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0, 0, 0, .38); border-color: var(--line-2);
+}
+
+/* Chips & tabs spring; small nudge on hover. */
+.chip, .mc-chip, .tab-btn, .chat-chip {
+  transition: transform var(--dur-1) var(--ease-spring), color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+.mc-chip:hover, .tab-btn:hover:not([aria-current="page"]) { transform: translateY(-1px); }
+
+/* Inputs: a soft focus glow instead of a hard jump. */
+.input {
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+.input:focus, .input:focus-visible { box-shadow: 0 0 0 3px var(--gold-dim); }
+
+/* Nav items ease their active-state colour/background. */
+.rail a, .tabbar a, .nav-links a, .topbar .top-actions a {
+  transition: color var(--dur-1) var(--ease-out), background var(--dur-2) var(--ease-out);
+}
+
+/* View cross-fade: real navigation eases the fresh view up into place (soft
+   SSE refreshes never get it — see dashboard.js showView). */
+@keyframes rc-view-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+#viewContainer.view-anim { animation: rc-view-in var(--dur-3) var(--ease-out); }
+
+/* Count-up: the value settles without a layout jump (tabular figures). */
+.rc-counting { font-variant-numeric: tabular-nums; }
