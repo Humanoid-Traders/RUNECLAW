@@ -322,10 +322,44 @@
     });
   }
 
+  // Scroll-reveal: ease .reveal-on-scroll sections up as they enter the
+  // viewport, once each. Reduced-motion (or a browser without
+  // IntersectionObserver) reveals everything immediately so content is never
+  // stranded invisible. Safe to call repeatedly — already-revealed and
+  // already-observed elements are skipped.
+  let _revealObserver = null;
+  function revealOnScroll(root = document) {
+    if (!root || !root.querySelectorAll) return;
+    const els = root.querySelectorAll('.reveal-on-scroll:not(.rc-inview)');
+    if (!els.length) return;
+    if (_reducedMotion() || !('IntersectionObserver' in window)) {
+      els.forEach((el) => el.classList.add('rc-inview'));
+      return;
+    }
+    if (!_revealObserver) {
+      _revealObserver = new IntersectionObserver((entries, obs) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) { e.target.classList.add('rc-inview'); obs.unobserve(e.target); }
+        });
+      }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    }
+    els.forEach((el) => {
+      if (el.dataset.rcReveal) return;
+      el.dataset.rcReveal = '1';
+      _revealObserver.observe(el);
+    });
+  }
+  // Wire any sections present at load; views injected later re-arm via RC.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => revealOnScroll());
+  } else {
+    revealOnScroll();
+  }
+
   window.RC = {
     TOKEN, LOGGED_IN, authHeaders, logout,
     fetchJSON, postWithStepUp, esc, fmt, fmtMoney, fmtPrice, fmtK, signed, pnlClass, fmtAgo,
     dirChip, sanitizeBotHtml, toast, renderPanel, stateBlock, connectStream,
-    modalA11y, countUp, animateCounters,
+    modalA11y, countUp, animateCounters, revealOnScroll,
   };
 })();

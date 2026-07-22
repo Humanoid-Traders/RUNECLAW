@@ -859,3 +859,65 @@ a.dapp-card:hover, a.lpos-item:hover, .nft-card:hover {
 
 /* Count-up: the value settles without a layout jump (tabular figures). */
 .rc-counting { font-variant-numeric: tabular-nums; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   WEB-UX — premium smoothness pass. Tactile response on every interactive
+   surface, a gliding rail indicator, and an opt-in scroll-reveal. Everything
+   animates transform / opacity only and is auto-neutralised by the global
+   prefers-reduced-motion block near the top of this file.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Rail nav: the active item grows a rune-blue accent bar and hovered items
+   glide a hair toward the content they open — the nav feels like it responds. */
+.rail a { position: relative; }
+.rail a::before {
+  content: ""; position: absolute; left: 3px; top: 50%;
+  width: 3px; height: 0; border-radius: 3px; transform: translateY(-50%);
+  background: var(--gold-bright); box-shadow: 0 0 8px var(--gold);
+  transition: height var(--dur-2) var(--ease-spring);
+}
+.rail a[aria-current="page"]::before { height: 58%; }
+.rail a { transition: color var(--dur-1) var(--ease-out), background var(--dur-2) var(--ease-out), transform var(--dur-1) var(--ease-out); }
+.rail a:hover:not([aria-current="page"]) { transform: translateX(2px); }
+
+/* Tabbar (mobile): the active tab floats its icon a touch above the label. */
+.tabbar a { transition: color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); }
+.tabbar a .icon { transition: transform var(--dur-2) var(--ease-spring); }
+.tabbar a[aria-current="page"] .icon { transform: translateY(-2px); }
+
+/* Data rows: a rune-blue rail wipes in on hover and the tint eases in, so a
+   long table reads as something you're moving a cursor through, not a static
+   grid. Pure paint — no layout shift. */
+.tbl tbody tr { transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out); }
+.tbl tbody tr:hover { box-shadow: inset 2px 0 0 var(--gold); }
+
+/* Definition / key-value rows highlight softly under the cursor. */
+.kv-row { border-radius: 6px; transition: background var(--dur-1) var(--ease-out); }
+.kv-row:hover { background: var(--surface-2); }
+
+/* Panels settle their border toward the light on hover — presence without
+   motion, so a mouse crossing the page never sets the whole grid bouncing. */
+.panel { transition: border-color var(--dur-2) var(--ease-out); }
+.panel:hover { border-color: var(--line-2); }
+
+/* Opt-in scroll-reveal: sections marked .reveal-on-scroll ease up as they
+   enter the viewport (app.js adds .rc-inview via IntersectionObserver). The
+   hidden pre-state is dropped entirely for reduced-motion users so nothing is
+   ever stuck invisible if observation is skipped. */
+.reveal-on-scroll { opacity: 0; transform: translateY(20px); transition: opacity var(--dur-3) var(--ease-out), transform var(--dur-3) var(--ease-out); }
+.reveal-on-scroll.rc-inview { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .reveal-on-scroll { opacity: 1; transform: none; } }
+
+/* AI shimmer: a single brand surface (opt-in via .rc-ai-shimmer) drifts a
+   light sweep across its gradient text, so the headline reads as alive. Used
+   sparingly — one element per page — to avoid the "everything glows" look. */
+.rc-ai-shimmer {
+  background: linear-gradient(100deg, currentColor 34%, var(--gold-bright) 50%, currentColor 66%);
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; animation: rc-ai-shimmer 6.5s linear infinite;
+}
+@keyframes rc-ai-shimmer { to { background-position: -200% 0; } }
+
+/* Scrollbar thumb warms toward the brand on hover — a small sign the surface
+   is interactive all the way to its edges. */
+::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
