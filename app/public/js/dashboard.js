@@ -3216,9 +3216,14 @@
         // read-only and unauthenticated (SIWE can't sign on Solana), it only
         // ever feeds public balance reads.
         const solShort = d.sol_address ? `${d.sol_address.slice(0, 4)}…${d.sol_address.slice(-4)}` : null;
+        // Clickable explorer link (Solscan) when the watched address is well-formed
+        // base58 — read-only, rel=noopener; falls back to the bare short address.
+        const solAddrHtml = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(d.sol_address || '')
+          ? `<a href="https://solscan.io/account/${esc(d.sol_address)}" target="_blank" rel="noopener" class="num">${esc(solShort)} ↗</a>`
+          : `<b class="num">${esc(solShort)}</b>`;
         const solBlock = d.sol_address
           ? `<div class="mt-3" style="border-top:1px solid var(--line);padding-top:var(--s3)">
-              <p class="small" style="color:var(--text-2)">◎ Solana watch address <b class="num">${esc(solShort)}</b> —
+              <p class="small" style="color:var(--text-2)">◎ Solana watch address ${solAddrHtml} —
                 SOL and major SPL balances mirror read-only into Portfolio.</p>
               <button class="btn btn--sm" id="solUnwatch" type="button">Stop watching</button></div>`
           : `<div class="mt-3" style="border-top:1px solid var(--line);padding-top:var(--s3)">
@@ -3228,7 +3233,12 @@
                 <button class="btn btn--sm" id="solWatch" type="button">◎ Watch</button></div></div>`;
         if (d.linked && d.address) {
           const short = `${d.address.slice(0, 6)}…${d.address.slice(-4)}`;
-          return `<p class="small" style="color:var(--text-2)">✅ Wallet <b class="num">${esc(short)}</b> is linked —
+          // Canonical EVM address view (Etherscan) — the address is one identity
+          // across chains; read-only, rel=noopener; bare address if malformed.
+          const addrHtml = /^0x[0-9a-fA-F]{40}$/.test(d.address)
+            ? `<a href="https://etherscan.io/address/${esc(d.address)}" target="_blank" rel="noopener" class="num">${esc(short)} ↗</a>`
+            : `<b class="num">${esc(short)}</b>`;
+          return `<p class="small" style="color:var(--text-2)">✅ Wallet ${addrHtml} is linked —
               its balances mirror into Portfolio, net worth and exposure across the tracked chains.
               RUNECLAW can read them, never move them.</p>
             <button class="btn btn--sm" id="walletUnlink" type="button">Unlink wallet</button>
