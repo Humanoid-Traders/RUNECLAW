@@ -1,0 +1,51 @@
+/**
+ * POST /api/web3/execute — WEB3-LIVE-EXEC slice 1 (admin-only, preview-only).
+ *
+ * The first, safest slice toward live on-chain execution: it returns a DRY-RUN
+ * PREVIEW of an on-chain action and NEVER signs or broadcasts. The bot gateway
+ * re-checks admin server-side (a forged JWT can't reach it), runs the web3
+ * execution gate (default-OFF flag, testnet-first) and the Authority Envelope
+ * authorize() before producing the preview. Real signing/broadcast ships in a
+ * later, separately-gated, still admin-only, still envelope-enforced slice.
+ */
+
+'use strict';
+
+const express = require('express');
+const { authMiddleware } = require('../auth');
+const { rateLimit, userKey } = require('../lib/rate_limit');
+const { resolveBotIdentity } = require('../lib/identity');
+const gateway = require('../lib/gateway');
+
+const router = express.Router();
+router.use(authMiddleware);
+router.use(rateLimit({ windowMs: 60000, max: 10, key: userKey }));
+
+router.post('/execute', async (req, res) => {
+  try {
+    if (!gateway.isConfigured()) {
+      return res.status(503).json({ error: 'Web3 execution not configured' });
+    }
+    const b = req.body || {};
+    const ident = await resolveBotIdentity(req);
+    // The gateway is authoritative on admin + gate + envelope; the web layer just
+    // forwards the resolved identity and the requested (preview) action.
+    const r = await gateway.postGateway('/web3/execute', {
+      telegram_id: ident.id,
+      network: String(b.network || 'sepolia'),
+      side: String(b.side || 'swap'),
+      from_token: String(b.from_token || ''),
+      to_token: String(b.to_token || ''),
+      amount_usd: b.amount_usd,
+      dest: String(b.dest || ''),
+      // broadcast is intentionally NOT forwarded — this slice is preview-only and
+      // the gate refuses a broadcast anyway.
+    }, 15000);
+    return gateway.relay(res, r);
+  } catch (err) {
+    console.error('Web3 execute preview proxy error:', err.message);
+    return res.status(502).json({ error: 'Web3 execution unavailable' });
+  }
+});
+
+module.exports = router;
