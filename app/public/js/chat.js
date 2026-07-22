@@ -574,6 +574,21 @@
           cap.textContent = '🤖 ' + r.data.model;
           bubble.appendChild(cap);
         }
+        // Free-tier meter: show how many free questions remain so the limit is
+        // visible before the wall, not only at it. Only for a real LLM answer to
+        // a non-exempt (free) user; the quota-exceeded turn renders its own
+        // upgrade card. quota is absent when the cap is dormant (no funded Grok).
+        const _q = r.data.quota;
+        if (r.data.intent === 'chat' && _q && _q.exempt === false
+            && typeof _q.remaining === 'number') {
+          const meter = document.createElement('div');
+          meter.className = 'muted small';
+          meter.style.cssText = 'margin-top:4px;opacity:.75;font-size:11px';
+          meter.innerHTML = _q.remaining > 0
+            ? `⚡ ${_q.remaining} of ${_q.limit} free questions left today`
+            : '⚡ Last free question today — <a href="/dashboard#account">upgrade for unlimited →</a>';
+          bubble.appendChild(meter);
+        }
         if (r.data.setup) appendSetupAction(r.data.setup);
       }
     } catch (e) {
