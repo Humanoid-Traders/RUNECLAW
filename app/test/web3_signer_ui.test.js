@@ -60,6 +60,13 @@ test('the console never handles a private key and shows only the public address'
   assert.ok(!/signTransaction|raw_transaction/.test(body), 'the UI never signs');
 });
 
+test('a broadcast tx renders a clickable block-explorer link', () => {
+  // the console prefers d.explorer_url (validated https) → a one-click on-chain
+  // record; falls back to the bare hash otherwise.
+  assert.match(dash, /d\.explorer_url && \/\^https:/);
+  assert.match(dash, /href="\$\{esc\(d\.explorer_url\)\}" target="_blank" rel="noopener"/);
+});
+
 test('wei is derived from ETH without float error, and a send confirms first', () => {
   // BigInt path — decimal ETH string → integer wei, never Number * 1e18.
   assert.match(dash, /weiFromEth/);

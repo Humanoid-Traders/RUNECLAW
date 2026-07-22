@@ -2337,6 +2337,8 @@ async def handle_web3_sign(request: web.Request) -> web.Response:
     audit(system_log, f"Web3 SIGN (admin) testnet {network} -> {dest[:10]}",
           action="web3_sign", result="OK" if bcast.get("ok") else "SIGNED",
           data={"network": network, "broadcast": bool(bcast.get("ok"))})
+    _txh = bcast.get("tx_hash") or signed.get("tx_hash")
+    from bot.web.web3_exec_gate import explorer_tx_url as _explorer_tx_url
     return web.json_response({
         "signed": True,
         "broadcast": bool(bcast.get("ok")),
@@ -2345,7 +2347,10 @@ async def handle_web3_sign(request: web.Request) -> web.Response:
         "testnet": net.get("testnet"),
         "from": signed.get("from"),
         "to": dest,
-        "tx_hash": bcast.get("tx_hash") or signed.get("tx_hash"),
+        "tx_hash": _txh,
+        # One-click on-chain record: the block-explorer tx URL (empty when the
+        # network/hash can't build a valid link).
+        "explorer_url": _explorer_tx_url(network, _txh) if bcast.get("ok") else "",
         "envelope": {"id": env_id},
         "note": bcast.get("error") or "Signed and broadcast to testnet. Testnet-only in "
                 "this slice — mainnet signing is a separate, later, separately-gated slice.",

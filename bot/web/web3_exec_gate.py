@@ -38,16 +38,37 @@ from typing import Optional
 
 # Known EVM networks and whether each is a testnet. Live testing starts here.
 NETWORKS = {
-    "sepolia": {"chain_id": 11155111, "testnet": True, "label": "Ethereum Sepolia"},
-    "base-sepolia": {"chain_id": 84532, "testnet": True, "label": "Base Sepolia"},
-    "arbitrum-sepolia": {"chain_id": 421614, "testnet": True, "label": "Arbitrum Sepolia"},
-    "optimism-sepolia": {"chain_id": 11155420, "testnet": True, "label": "Optimism Sepolia"},
-    "ethereum": {"chain_id": 1, "testnet": False, "label": "Ethereum"},
-    "base": {"chain_id": 8453, "testnet": False, "label": "Base"},
-    "arbitrum": {"chain_id": 42161, "testnet": False, "label": "Arbitrum"},
-    "optimism": {"chain_id": 10, "testnet": False, "label": "Optimism"},
-    "polygon": {"chain_id": 137, "testnet": False, "label": "Polygon"},
+    "sepolia": {"chain_id": 11155111, "testnet": True, "label": "Ethereum Sepolia",
+                "explorer": "https://sepolia.etherscan.io"},
+    "base-sepolia": {"chain_id": 84532, "testnet": True, "label": "Base Sepolia",
+                     "explorer": "https://sepolia.basescan.org"},
+    "arbitrum-sepolia": {"chain_id": 421614, "testnet": True, "label": "Arbitrum Sepolia",
+                         "explorer": "https://sepolia.arbiscan.io"},
+    "optimism-sepolia": {"chain_id": 11155420, "testnet": True, "label": "Optimism Sepolia",
+                         "explorer": "https://sepolia-optimism.etherscan.io"},
+    "ethereum": {"chain_id": 1, "testnet": False, "label": "Ethereum",
+                 "explorer": "https://etherscan.io"},
+    "base": {"chain_id": 8453, "testnet": False, "label": "Base",
+             "explorer": "https://basescan.org"},
+    "arbitrum": {"chain_id": 42161, "testnet": False, "label": "Arbitrum",
+                 "explorer": "https://arbiscan.io"},
+    "optimism": {"chain_id": 10, "testnet": False, "label": "Optimism",
+                 "explorer": "https://optimistic.etherscan.io"},
+    "polygon": {"chain_id": 137, "testnet": False, "label": "Polygon",
+                "explorer": "https://polygonscan.com"},
 }
+
+
+def explorer_tx_url(network: str, tx_hash: str) -> str:
+    """Block-explorer URL for a tx on a known network, or "" when unknown. The
+    hash is validated to a 0x-prefixed hex string so a malformed value can never
+    build a misleading link."""
+    net = resolve_network(network)
+    base = (net or {}).get("explorer") if net else ""
+    h = str(tx_hash or "").strip()
+    if not base or not h.startswith("0x") or len(h) < 6:
+        return ""
+    return f"{base.rstrip('/')}/tx/{h}"
 
 _CHECKS = (
     ("feature_enabled",

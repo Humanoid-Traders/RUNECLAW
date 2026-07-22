@@ -104,6 +104,7 @@ def signer_status(env: Optional[dict] = None) -> dict:
         testnets.append({
             "network": name, "label": n.get("label"), "chain_id": n.get("chain_id"),
             "rpc_configured": bool(rpc_url_for(name, env)),
+            "explorer": n.get("explorer", ""),
         })
     return {
         "feature_enabled": gate.feature_enabled(env),
