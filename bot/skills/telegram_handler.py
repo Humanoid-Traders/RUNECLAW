@@ -1202,6 +1202,22 @@ class TelegramHandler:
                 # real boundary is the execution gate.
                 history = _sanitize_history_for_llm(history)
 
+        # AI-WEBSEARCH: real-time web search is admin/ULTRA-only (it bills per
+        # search against the operator's Anthropic key, and only the admin path
+        # can reach that key). Public and non-admin chat never carry the tool.
+        # The model decides WHEN to search; the provider attaches the tool only
+        # on models that support it and strips-and-retries if one rejects it.
+        web_search_ok = is_admin and not public
+        if web_search_ok:
+            system_prompt += (
+                "\n\nLIVE WEB SEARCH: You have a web_search tool for real-time "
+                "information — breaking news, current prices, today's events. "
+                "Use it whenever the answer depends on fresh facts you can't be "
+                "certain of from memory, then cite the sources you used. Prefer "
+                "reputable primary sources and note how recent each is. NEVER "
+                "search or reproduce paywalled or credential-gated content. If "
+                "the question doesn't need fresh data, just answer directly.")
+
         # i18n: instruct the model to answer in the user's language. The UI
         # dictionary is en/zh only, but the LLM localizes freeform replies into
         # any named language — so a Spanish/French/… user gets native chat for
@@ -1308,9 +1324,27 @@ class TelegramHandler:
                 if client is None:
                     continue
 
+                # AI-WEBSEARCH: only attach the tool when this candidate is the
+                # operator's Anthropic key (the only path allowed to spend it);
+                # the provider re-checks the model. citations come back in the
+                # opt-in list and are surfaced as a Sources footer below.
+                _cfor_search = (web_search_ok
+                                and cfg.provider == LLMProvider.ANTHROPIC)
+                _citations: list = []
                 answer = await llm_complete(
                     client, cfg, system_prompt, question,
-                    history=history)
+                    history=history,
+                    web_search=_cfor_search,
+                    citations_out=_citations if _cfor_search else None)
+                if _citations:
+                    _lines = "\n".join(
+                        f"• {c.get('title') or c.get('url')} — {c.get('url')}"
+                        for c in _citations)
+                    answer = (f"{answer.rstrip()}\n\n🔎 Live web sources:\n"
+                              f"{_lines}")
+                    audit(system_log,
+                          f"Chat web_search used ({len(_citations)} sources)",
+                          action="chat_web_search", result="OK")
 
                 # Track cost. llm_complete() discards the provider's usage
                 # object for EVERY provider (Anthropic and OpenAI-compatible

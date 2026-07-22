@@ -768,6 +768,16 @@ _THINKING_ALWAYS_ON_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:$|[.-])")
 _STRUCTURED_OUTPUT_RE = re.compile(
     r"^claude-[a-z]+-5(?:$|[.-])|^claude-opus-4-[6-9](?:$|[.-])")
 
+# AI-WEBSEARCH: models that accept the web_search server tool with dynamic
+# filtering (web_search_20260209) — Opus 4.6+, Sonnet 5 / 4.6, and the
+# Fable/Mythos 5 flagships. Older models don't get it; if any model
+# unexpectedly rejects the tool the create() call strips it and retries (see
+# llm_complete), so this degrades to a plain answer rather than failing.
+_WEB_SEARCH_RE = re.compile(
+    r"^claude-[a-z]+-5(?:$|[.-])|^claude-opus-4-[6-9](?:$|[.-])"
+    r"|^claude-sonnet-4-6(?:$|[.-])")
+WEB_SEARCH_TOOL_TYPE = "web_search_20260209"
+
 
 def model_accepts_temperature(model: str) -> bool:
     """False when the model rejects an explicit `temperature` (Claude 5
@@ -788,6 +798,40 @@ def model_supports_structured_output(model: str) -> bool:
     return bool(_STRUCTURED_OUTPUT_RE.match((model or "").strip().lower()))
 
 
+def model_supports_web_search(model: str) -> bool:
+    """True when the model accepts the web_search server tool
+    (Claude 5 family, Opus 4.6+, Sonnet 4.6)."""
+    return bool(_WEB_SEARCH_RE.match((model or "").strip().lower()))
+
+
+def _collect_web_citations(response) -> list[dict]:
+    """Pull cited sources out of an Anthropic response that used the web_search
+    server tool. Prefers the citations actually attached to the model's text
+    (what it really used), and falls back to the raw search-result blocks.
+    Deduped by URL, capped, and each entry is {title, url}."""
+    seen: set[str] = set()
+    out: list[dict] = []
+
+    def _add(url, title):
+        url = (url or "").strip()
+        if not url or url in seen:
+            return
+        seen.add(url)
+        out.append({"url": url, "title": (title or url).strip()[:160]})
+
+    for block in (getattr(response, "content", None) or []):
+        btype = getattr(block, "type", "")
+        if btype == "text":
+            for cit in (getattr(block, "citations", None) or []):
+                _add(getattr(cit, "url", ""), getattr(cit, "title", ""))
+        elif btype == "web_search_tool_result":
+            for res in (getattr(block, "content", None) or []):
+                _add(getattr(res, "url", ""), getattr(res, "title", ""))
+        if len(out) >= 8:
+            break
+    return out[:8]
+
+
 async def llm_complete(
     client,
     config: LLMConfig,
@@ -795,6 +839,9 @@ async def llm_complete(
     user_prompt: str,
     history: list[dict] | None = None,
     json_schema: dict | None = None,
+    web_search: bool = False,
+    web_search_max_uses: int = 4,
+    citations_out: list | None = None,
 ) -> str:
     """
     Unified completion call — handles OpenAI-format and Anthropic-format.
@@ -862,34 +909,49 @@ async def llm_complete(
                     "schema": json_schema,
                 }
 
+            # AI-WEBSEARCH: attach the web_search server tool so the model can
+            # fetch fresh facts and cite them. Gated to supported models only;
+            # the caller gates WHO gets web_search (admin/ULTRA) — this only
+            # decides whether the chosen model can carry the tool at all.
+            if web_search and _WEB_SEARCH_RE.match(model_l):
+                extra["tools"] = [{
+                    "type": WEB_SEARCH_TOOL_TYPE,
+                    "name": "web_search",
+                    "max_uses": max(1, int(web_search_max_uses)),
+                }]
+
+            async def _create(**kw):
+                return await client.messages.create(
+                    model=config.model, max_tokens=config.max_tokens,
+                    system=system_content, messages=messages, **kw)
+
             try:
-                response = await client.messages.create(
-                    model=config.model,
-                    max_tokens=config.max_tokens,
-                    system=system_content,
-                    messages=messages,
-                    **extra,
-                )
+                response = await _create(**extra)
             except Exception as _so_exc:
                 # Future-proof net (mirrors the analyzer's temperature retry):
-                # if a model unexpectedly rejects output_config.format, strip
-                # the schema and retry ONCE — a degraded free-form answer beats
-                # failing every call until a code change ships.
+                # if a model unexpectedly rejects a NEWER parameter (the schema
+                # via output_config.format, or the web_search tool), strip the
+                # offending field and retry ONCE — a degraded plain answer beats
+                # failing every call until a code change ships. Unrelated errors
+                # (rate limits, auth) are re-raised untouched.
                 _so_msg = str(_so_exc).lower()
-                _had_format = "format" in extra.get("output_config", {})
-                if _had_format and ("output_config" in _so_msg
-                                    or "json_schema" in _so_msg
-                                    or "structured" in _so_msg):
-                    extra["output_config"].pop("format", None)
-                    if not extra["output_config"]:
-                        extra.pop("output_config")
-                    response = await client.messages.create(
-                        model=config.model,
-                        max_tokens=config.max_tokens,
-                        system=system_content,
-                        messages=messages,
-                        **extra,
-                    )
+                _retry = {k: (dict(v) if isinstance(v, dict) else v)
+                          for k, v in extra.items()}
+                _changed = False
+                if _retry.get("tools") and ("web_search" in _so_msg
+                                            or "tool" in _so_msg
+                                            or "unsupported" in _so_msg):
+                    _retry.pop("tools", None)
+                    _changed = True
+                if _retry.get("output_config", {}).get("format") and (
+                        "output_config" in _so_msg or "json_schema" in _so_msg
+                        or "structured" in _so_msg):
+                    _retry["output_config"].pop("format", None)
+                    if not _retry["output_config"]:
+                        _retry.pop("output_config")
+                    _changed = True
+                if _changed:
+                    response = await _create(**_retry)
                 else:
                     raise
             # Fable/Mythos-class models can end with stop_reason="refusal" —
@@ -897,15 +959,30 @@ async def llm_complete(
             # (rule-based fallback) runs instead of treating "" as an answer.
             if getattr(response, "stop_reason", "") == "refusal":
                 raise RuntimeError("LLM declined to answer (stop_reason=refusal)")
-            # Handle thinking blocks — extract text block
+            # Extract the model's text. With web_search the answer spans
+            # MULTIPLE text blocks interleaved with tool-use/result blocks, so
+            # concatenate every text block in that mode; the plain path keeps
+            # its long-standing first-text-block behaviour.
             raw_text = ""
             if response.content:
-                for block in response.content:
-                    if getattr(block, "type", "") == "text":
-                        raw_text = block.text
-                        break
+                if web_search:
+                    parts = [b.text for b in response.content
+                             if getattr(b, "type", "") == "text"
+                             and getattr(b, "text", "")]
+                    raw_text = "\n\n".join(parts).strip()
+                else:
+                    for block in response.content:
+                        if getattr(block, "type", "") == "text":
+                            raw_text = block.text
+                            break
                 if not raw_text and hasattr(response.content[0], "text"):
                     raw_text = response.content[0].text
+            # Hand cited sources back to the caller (opt-in via citations_out).
+            if citations_out is not None and web_search:
+                try:
+                    citations_out.extend(_collect_web_citations(response))
+                except Exception:
+                    pass
             return raw_text or ""
 
         else:
