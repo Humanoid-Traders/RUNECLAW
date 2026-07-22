@@ -24,6 +24,68 @@
   const metaEl = document.getElementById('chatMeta');
   if (!fab || !drawer) return;
 
+  // ── WEB-VISION: image attachments (chart / positions screenshots) ─────────
+  // Logged-in only (public chat has no vision path). The agent READS a pasted
+  // or picked screenshot; the server admin-gates who may actually use it.
+  // Images are downscaled client-side to keep the upload small.
+  let attached = [];            // [{ media_type, data(base64, no data: prefix) }]
+  let attachRow = null, fileInput = null;
+  function renderAttachments() {
+    if (!attachRow) return;
+    if (!attached.length) { attachRow.innerHTML = ''; attachRow.hidden = true; return; }
+    attachRow.hidden = false;
+    attachRow.innerHTML = attached.map((a, i) =>
+      '<span class="chat-attach"><img alt="attachment preview" src="data:'
+      + a.media_type + ';base64,' + a.data + '">'
+      + '<button type="button" data-i="' + i + '" aria-label="Remove image">×</button></span>').join('');
+  }
+  async function downscaleImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((res, rej) => {
+        const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
+      const max = 1600; let w = img.width, h = img.height;
+      if (w > max || h > max) { const s = max / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      return { media_type: 'image/jpeg', data: cv.toDataURL('image/jpeg', 0.82).split(',')[1] };
+    } finally { URL.revokeObjectURL(url); }
+  }
+  async function addImageFile(file) {
+    if (!file || !/^image\//.test(file.type || '')) return;
+    if (attached.length >= 3) { toast('Up to 3 images at a time.'); return; }
+    try { attached.push(await downscaleImage(file)); renderAttachments(); }
+    catch (e) { toast('Couldn\'t read that image — try another.'); }
+  }
+  if (!PUBLIC && form && sendBtn) {
+    fileInput = document.createElement('input');
+    fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.hidden = true;
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files && fileInput.files[0]; if (f) addImageFile(f); fileInput.value = ''; });
+    const attachBtn = document.createElement('button');
+    attachBtn.type = 'button'; attachBtn.className = 'chat-attach-btn';
+    attachBtn.title = 'Attach a chart or screenshot';
+    attachBtn.setAttribute('aria-label', 'Attach an image'); attachBtn.textContent = '📎';
+    attachBtn.addEventListener('click', () => fileInput.click());
+    sendBtn.parentNode.insertBefore(attachBtn, sendBtn);
+    attachRow = document.createElement('div');
+    attachRow.className = 'chat-attach-row'; attachRow.hidden = true;
+    attachRow.appendChild(fileInput);
+    form.parentNode.insertBefore(attachRow, form);
+    attachRow.addEventListener('click', (e) => {
+      const b = e.target.closest && e.target.closest('button[data-i]'); if (!b) return;
+      attached.splice(Number(b.dataset.i), 1); renderAttachments();
+    });
+    input.addEventListener('paste', (e) => {
+      const items = (e.clipboardData || {}).items || [];
+      for (const it of items) {
+        if (it.type && it.type.indexOf('image') === 0) {
+          const f = it.getAsFile(); if (f) { addImageFile(f); e.preventDefault(); }
+        }
+      }
+    });
+  }
+
   let open = false;
   let busy = false;
   let pending = null;   // one-slot queue: a message sent while a turn is in flight
@@ -422,11 +484,15 @@
   async function send(retryText) {
     const isRetry = retryText != null;
     const text = isRetry ? retryText : input.value.trim();
-    if (!text) return;
+    // WEB-VISION: attachments ride a fresh (non-retry) send. Snapshot them here;
+    // they're cleared once the request is actually dispatched (not while queued).
+    const imgs = (!isRetry && attached.length) ? attached.slice() : [];
+    if (!text && !imgs.length) return;
     // A turn is already in flight: queue this one (one slot) instead of
     // silently dropping it — chip clicks and post-mortem asks used to vanish.
     // Echo the user's message now so the queue is visible; drain on finally.
     if (busy) {
+      if (imgs.length) { toast('Finishing the last reply — resend your image in a moment.'); return; }
       if (pending == null) {
         pending = text;
         if (!isRetry) { input.value = ''; appendMsg('user', text); }
@@ -435,7 +501,11 @@
       }
       return;
     }
-    if (!isRetry) { input.value = ''; appendMsg('user', text); }
+    if (!isRetry) {
+      input.value = '';
+      if (imgs.length) { attached = []; renderAttachments(); }
+      appendMsg('user', text || '🖼️ image');
+    }
     // Animated typing indicator (three-dot) instead of a static "Thinking…",
     // with a Cancel affordance so a slow turn isn't a helpless wait.
     const typing = appendMsg('bot',
@@ -455,7 +525,7 @@
     sendBtn.disabled = true;
     if (window.RCAgent3D) window.RCAgent3D.setThinking(true);   // agent avatar: 'analyze'
     try {
-      const r = await fetchJSON(ENDPOINT, { method: 'POST', body: { text }, timeoutMs: 50000, signal: ac.signal });
+      const r = await fetchJSON(ENDPOINT, { method: 'POST', body: (imgs.length ? { text, images: imgs } : { text }), timeoutMs: 50000, signal: ac.signal });
       typing.remove();
       if (r.status === 429) appendFailure('Rate limit hit — give it a few seconds.', text, 5000);
       else if (r.status === 503) {

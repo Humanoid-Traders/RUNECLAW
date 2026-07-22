@@ -148,6 +148,42 @@ test('unlinked chat forwards web:<uid> identity (no 409)', async () => {
   assert.strictEqual(seen[0].body.name, 'unlinked');
 });
 
+test('WEB-VISION: chat forwards validated images to the gateway', async () => {
+  seen.length = 0;
+  const r = await request('POST', '/api/chat', {
+    token: signUnlinked,
+    body: { text: 'what is this?', images: [{ media_type: 'image/jpeg', data: 'QUJD' }] },
+  });
+  assert.strictEqual(r.status, 200);
+  const chatCall = seen.find(s => s.url === '/gateway/chat');
+  assert.ok(chatCall, 'gateway /chat was called');
+  assert.strictEqual(chatCall.body.images.length, 1);
+  assert.strictEqual(chatCall.body.images[0].media_type, 'image/jpeg');
+  assert.strictEqual(chatCall.body.images[0].data, 'QUJD');
+});
+
+test('WEB-VISION: an image with no text is accepted (not 400)', async () => {
+  seen.length = 0;
+  const r = await request('POST', '/api/chat', {
+    token: signUnlinked,
+    body: { text: '', images: [{ media_type: 'image/png', data: 'QUJD' }] },
+  });
+  assert.strictEqual(r.status, 200);
+});
+
+test('WEB-VISION: a bad media type is filtered out; no image forwarded', async () => {
+  seen.length = 0;
+  const r = await request('POST', '/api/chat', {
+    token: signUnlinked,
+    body: { text: 'hi', images: [{ media_type: 'application/pdf', data: 'QUJD' }] },
+  });
+  assert.strictEqual(r.status, 200);
+  const chatCall = seen.find(s => s.url === '/gateway/chat');
+  assert.ok(chatCall, 'gateway /chat was called');
+  // The invalid image is dropped, so no images key is forwarded.
+  assert.strictEqual(chatCall.body.images, undefined);
+});
+
 test('unlinked trade propose forwards web:<uid> identity', async () => {
   seen.length = 0;
   const r = await request('POST', '/api/trade/propose', {

@@ -189,8 +189,23 @@ async def handle_chat(request: web.Request) -> web.Response:
     profile_note = build_profile_note(body.get("profile"))
     reply_lang = str(body.get("lang") or "").strip()[:12]
 
-    if not tg_id or not text:
-        return web.json_response({"error": "telegram_id and text required"}, status=400)
+    # WEB-VISION: optional image attachments (chart / positions screenshots).
+    # Admin/ULTRA-gated downstream in _llm_chat (is_admin and not public), so a
+    # non-admin's images are simply ignored there — the text still answers.
+    images = None
+    _raw_imgs = body.get("images")
+    if isinstance(_raw_imgs, list) and _raw_imgs:
+        images = []
+        for _it in _raw_imgs[:4]:
+            if isinstance(_it, dict) and _it.get("data"):
+                images.append({
+                    "media_type": str(_it.get("media_type") or "image/png")[:40],
+                    "data": str(_it["data"]),
+                })
+        images = images or None
+
+    if not tg_id or (not text and not images):
+        return web.json_response({"error": "telegram_id and text (or image) required"}, status=400)
     if len(text) > _MAX_TEXT_LEN:
         return web.json_response({"error": "message too long"}, status=400)
 
@@ -218,6 +233,35 @@ async def handle_chat(request: web.Request) -> web.Response:
                 "intent": "firewall_blocked"})
     except Exception:
         pass
+
+    # WEB-VISION: an image message goes straight to the vision-capable LLM path
+    # and skips the trade / skill intercepts (which key off text commands), so a
+    # pasted screenshot is always READ, never parsed as a command. Admin/ULTRA
+    # only — it rides the operator's Claude key, exactly like the Telegram photo
+    # handler; a non-admin gets a friendly note and no LLM spend.
+    if images:
+        if not _is_admin_id(tg_handler, tg_id):
+            return web.json_response({
+                "reply_html": "📷 Image analysis is available to the operator only.",
+                "intent": "vision_denied"})
+        from bot.nlp.sanitize import sanitize_chat_input as _san_v
+        _q = text or (
+            "Read this trading screenshot. If it's a chart, describe the "
+            "structure, trend, key levels and any setup or risk you see. If "
+            "it's a positions / PnL screen, summarise the positions, exposure "
+            "and risks. Be concise and specific; note anything that looks off.")
+        tg_handler.conversations.append(
+            tg_id, "user", text or "[image]",
+            metadata={"intent": "vision", "surface": "web"})
+        answer, meta = await tg_handler._llm_chat(
+            _san_v(_q), user_id=tg_id, user_name=name,
+            is_admin=True, profile_note=profile_note, reply_lang=reply_lang,
+            return_meta=True, images=images)
+        tg_handler.conversations.append(tg_id, "assistant", answer,
+                                        metadata={"surface": "web"})
+        return web.json_response({"reply_html": answer, "intent": "vision",
+                                  "model": (meta or {}).get("model", ""),
+                                  "provider": (meta or {}).get("provider", "")})
 
     # Manual trade via natural language — same intercept as _handle_message:
     # "buy SOL 71 sl 70 tp 76" proposes a pending trade (never executes).
