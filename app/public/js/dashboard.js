@@ -32,6 +32,7 @@
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
+    { id: 'studio',    label: 'Contract Studio', icon: 'icon-bolt' },
     { id: 'deepscan',  label: 'Deep Scan', icon: 'icon-target' },
     { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
     { id: 'leaderboard', label: 'Leaders', icon: 'icon-target' },
@@ -4152,6 +4153,84 @@
     }, { empty: { icon: 'icon-globe', text: 'No headlines yet — the radar fills on the next refresh.' } });
   }
 
+  // Contract Studio — AI drafts Solidity, then the heuristic security-flag pass
+  // marks what to review. A DRAFT with FLAGS, never an audit or a verdict: the
+  // disclaimer rides on every result (§4). No money-path here — deploy is a
+  // separate, gated flow.
+  async function renderContractStudio() {
+    container.innerHTML = viewHead('Contract Studio',
+      'Draft a Solidity contract with AI, then review the heuristic security flags — a DRAFT, never an audit');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend',
+        `<section class="panel">${loginGate('Log in to draft smart contracts with AI.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Describe your contract</h2>
+          <textarea id="cs-spec" class="input" rows="4" style="width:100%;box-sizing:border-box"
+            placeholder="e.g. an ERC-20 token called RUNE with a 1,000,000 cap and an owner-only mint"></textarea>
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
+            <label class="small muted">License <input id="cs-license" class="input" value="MIT" style="width:88px"></label>
+            <label class="small muted">Pragma <input id="cs-pragma" class="input" value="0.8.24" style="width:104px"></label>
+            <button class="btn btn--primary" id="cs-draft">Draft contract</button>
+            <span class="right small muted" id="cs-msg" style="margin-left:auto"></span>
+          </div>
+          <p class="small muted" style="margin-top:8px;font-style:italic">AI drafts code-level structure well but misses economic exploits — every draft is a starting point for review, not a finished contract.</p>
+        </section>
+        <section class="panel" id="cs-flagsp" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Security flags</h2><div id="cs-flags"></div></section>
+        <section class="panel" id="cs-codep" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Draft</h2><pre id="cs-code" style="overflow:auto;max-height:520px;white-space:pre-wrap;word-break:break-word"></pre></section>
+      </div>`);
+
+    // Severity → colour, inline so we don't depend on a specific chip class.
+    const sevColor = { high: 'var(--down,#f05252)', medium: 'var(--warn,#f0a020)', low: 'var(--text-2)', info: 'var(--text-2)' };
+    const sevChip = (s) => `<span class="chip" style="border-color:${sevColor[s] || 'var(--text-2)'};color:${sevColor[s] || 'var(--text-2)'};font-size:10px;padding:1px 6px">${esc(s)}</span>`;
+
+    const btn = document.getElementById('cs-draft');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const spec = (document.getElementById('cs-spec').value || '').trim();
+      const msg = document.getElementById('cs-msg');
+      if (!spec) { msg.textContent = 'Describe the contract first.'; return; }
+      const license = (document.getElementById('cs-license').value || 'MIT').trim();
+      const pragma = (document.getElementById('cs-pragma').value || '0.8.24').trim();
+      btn.disabled = true; msg.textContent = 'Drafting…';
+      const r = await fetchJSON('/api/contract/studio',
+        { method: 'POST', body: { spec, license, pragma }, timeoutMs: 65000 }).catch(() => null);
+      btn.disabled = false; msg.textContent = '';
+      if (!r || !r.ok || !r.data) {
+        if (r && r.status === 429) { msg.textContent = 'Slow down a moment, then retry.'; return; }
+        toast('Couldn\'t draft the contract — try again.'); return;
+      }
+      const d = r.data;
+      const flagsp = document.getElementById('cs-flagsp'); flagsp.hidden = false;
+      if (d.intent === 'quota_exceeded') {
+        document.getElementById('cs-flags').innerHTML =
+          '<p class="small">You\'ve used your free contract drafts for today. '
+          + '<a href="#account/aplan">Upgrade →</a> for unlimited drafts on the priority model.</p>';
+        return;
+      }
+      // Flags first — the review lens leads, the code follows.
+      const flags = Array.isArray(d.flags) ? d.flags : [];
+      const summary = d.summary || {};
+      const head = summary.count
+        ? `<p class="small muted">${summary.count} flag${summary.count === 1 ? '' : 's'} to review — heuristic pointers, not a verdict.</p>`
+        : '<p class="small muted">No heuristic flags fired. That is <b>not</b> a safety guarantee — still get an audit.</p>';
+      document.getElementById('cs-flags').innerHTML = head + flags.map((f) => `
+        <div class="news-alert">
+          <div>${sevChip(f.severity)} <b>${esc(f.title)}</b>${f.line ? ` <span class="small muted">line ${esc(String(f.line))}</span>` : ''}</div>
+          <div class="small muted">${esc(f.detail)}</div>
+          <div class="small">👉 ${esc(f.hint)}</div>
+        </div>`).join('')
+        + `<p class="small muted" style="margin-top:8px;font-style:italic">${esc(d.disclaimer || '')}</p>`;
+      // The draft itself — textContent so the Solidity is never interpreted as HTML.
+      const codep = document.getElementById('cs-codep'); codep.hidden = false;
+      document.getElementById('cs-code').textContent = d.solidity || '';
+      if (d.model) msg.textContent = '🤖 ' + d.model;
+    });
+  }
+
   async function renderLeaderboard() {
     container.innerHTML = viewHead('Leaderboard', 'Opt-in ranks by return % — anonymous handles, no dollar amounts');
     if (!LOGGED_IN) {
@@ -5505,6 +5584,7 @@
   const RENDER = { home: renderHome, chat: renderChat, hub: renderHub, markets: renderMarkets,
                    macro: renderMacro, guardian: renderGuardian,
                    signals: renderSignals, deepscan: renderDeepScan, news: renderNews,
+                   studio: renderContractStudio,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio, tax: renderTax,
                    reputation: renderReputation, counterparty: renderCounterparty, worlds: renderWorlds, dapps: renderDapps,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
