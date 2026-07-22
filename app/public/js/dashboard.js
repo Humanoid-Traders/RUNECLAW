@@ -4891,6 +4891,57 @@
     </section>`;
   }
 
+  // Guardian Readiness Score — one composed "is my agent safely constrained
+  // right now?" number with six sub-scores and the weakest link. Heuristic, no
+  // dollar amounts (§4). A null sub-score reads "not yet observed", never a pass.
+  const _BAND_COL = {
+    strong: 'var(--up,#31c48d)', fair: 'var(--warn,#f0a848)',
+    weak: 'var(--down,#f05252)', unknown: 'var(--muted,#8a94a6)',
+  };
+  function _subCol(sc) {
+    if (sc === null || sc === undefined) return 'var(--muted,#8a94a6)';
+    return sc >= 80 ? _BAND_COL.strong : sc >= 60 ? _BAND_COL.fair : _BAND_COL.weak;
+  }
+  function readinessCard(d) {
+    if (!d || typeof d !== 'object') return '';
+    const col = _BAND_COL[d.band] || _BAND_COL.unknown;
+    const scoreTxt = (d.score === null || d.score === undefined) ? '—' : d.score;
+    const subs = (d.subscores || []).map((s) => {
+      const missing = (s.score === null || s.score === undefined);
+      const scol = _subCol(s.score);
+      const w = missing ? 0 : Math.max(0, Math.min(100, s.score));
+      return `<div style="margin:8px 0">
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px">
+          <span>${esc(s.label)}</span>
+          <strong style="color:${scol}">${missing ? 'not yet observed' : s.score}</strong>
+        </div>
+        <div style="height:6px;border-radius:4px;background:var(--line,#2a2f3a);overflow:hidden;margin-top:3px">
+          <div style="height:100%;width:${w}%;background:${scol};transition:width var(--dur-3,.4s) var(--ease-out)"></div>
+        </div>
+        <div class="small muted" style="margin-top:3px">${esc(s.note || '')}</div>
+      </div>`;
+    }).join('');
+    const weak = (d.weakest_links || []).map((l) => {
+      const href = (l.fix && l.fix.href) || '#guardian';
+      const flabel = (l.fix && l.fix.label) || 'review';
+      return `<a href="${esc(href)}" class="chip" style="border-color:var(--down,#f05252)">
+        ${esc(l.label)}&nbsp;<strong>${l.score}</strong>&nbsp;<span class="muted">· ${esc(flabel)} →</span></a>`;
+    }).join(' ');
+    return `<section class="panel" style="border-color:${col}">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="font-size:40px;font-weight:700;line-height:1;color:${col}">${scoreTxt}<span style="font-size:15px;color:var(--muted,#8a94a6)">/100</span></div>
+        <div style="min-width:0">
+          <strong>🛡 Guardian readiness</strong>
+          <span class="chip" style="border-color:${col};color:${col};margin-left:6px"><strong>${esc(String(d.band || 'unknown').toUpperCase())}</strong></span>
+          <div class="small muted" style="margin-top:2px">${esc(String(d.observed))}/${esc(String(d.total_signals))} safety signals observed · heuristic read</div>
+        </div>
+      </div>
+      ${weak ? `<div style="margin-top:12px"><div class="small muted" style="margin-bottom:5px">Weakest links — fix these first:</div><div style="display:flex;gap:6px;flex-wrap:wrap">${weak}</div></div>` : ''}
+      <div style="margin-top:12px">${subs}</div>
+      <div class="small muted" style="margin-top:10px;font-style:italic">${esc(d.caveat || '')}</div>
+    </section>`;
+  }
+
   function guardianBlock(data) {
     const recs = (data && data.records) || [];
     const head = `<div style="margin-bottom:var(--s4)">${chainBanner(data.chain, data.window, data.updated_at)}</div>`
@@ -4910,6 +4961,9 @@
       </div>
       <div class="stack">
         <section class="panel" id="p-author" hidden></section>
+        <section class="panel" id="p-readiness"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Readiness score
+          <span class="right muted small">how constrained the agent is right now</span></h2>
+          <div id="c-readiness"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel panel--primary" id="p-flight"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Decision ledger
           <span class="right muted small">inputs · reasoning · model · risk gate · outcome</span></h2>
           <div id="c-flight"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></section>
@@ -4921,6 +4975,13 @@
     fetchJSON('/api/auth/me').then((me) => {
       if (me && me.ok && me.data && me.data.plan === 'admin') mountPolicyAuthoring(C('author'));
     }).catch(() => {});
+    renderPanel(C('readiness'), async () => {
+      // Own data — needs the JWT (auth: true). Fail-soft: the endpoint always
+      // returns a score object (nulls for unobserved axes), so a card renders.
+      const r = await fetchJSON('/api/guardian/readiness', { timeoutMs: 14000 });
+      if (!r || !r.ok || !r.data) return null;
+      return readinessCard(r.data);
+    }, { empty: { icon: 'icon-shield', text: 'The readiness score needs you signed in — it reads your own agent’s safety posture.' } });
     renderPanel(C('flight'), async () => {
       const r = await fetchJSON('/api/guardian/flight?limit=50', { auth: false, timeoutMs: 16000 });
       if (!r || !r.ok || !r.data) return null;
