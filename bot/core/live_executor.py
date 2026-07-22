@@ -2707,10 +2707,14 @@ class LiveExecutor:
             # A dominant opposing wall in the entry→TP path (a level far larger
             # than its neighbours, or a lopsided shelf of resting liquidity)
             # tends to stall or reject the move — the setup's edge leaks away.
-            # OBSERVE-FIRST house rule: default OFF; "warn" logs only; "block"
-            # enforces. Fail-open at every layer — a degraded/absent book, a
-            # fetch error, or a malformed verdict must NEVER block a trade.
-            _wall_mode = os.environ.get("ENTRY_BOOK_WALL_GATE", "off").strip().lower()
+            # OBSERVE-FIRST house rule: "off" skips entirely; "warn" logs only
+            # (never blocks); "block" enforces. DEFAULT is now "warn" — it
+            # starts gathering evidence (audit event entry_book_wall) with zero
+            # trade impact, the intended step before any operator flips it to
+            # "block". Fail-open at every layer — a degraded/absent book, a fetch
+            # error, or a malformed verdict must NEVER block a trade. Set
+            # ENTRY_BOOK_WALL_GATE=off to opt out of the observing fetch.
+            _wall_mode = os.environ.get("ENTRY_BOOK_WALL_GATE", "warn").strip().lower()
             if _wall_mode in ("warn", "block"):
                 try:
                     from bot.core.entry_quality import book_wall_verdict

@@ -80,6 +80,16 @@ class TestWallDetection:
         assert v["flag"] is False, v
 
 
+class TestEnablement:
+    def test_book_wall_gate_defaults_to_warn(self):
+        # Enablement: the gate now defaults to "warn" (observe-on, never blocks)
+        # rather than "off", so it collects evidence with zero trade impact.
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent
+               / "bot/core/live_executor.py").read_text(encoding="utf-8")
+        assert 'os.environ.get("ENTRY_BOOK_WALL_GATE", "warn")' in src
+
+
 class TestImbalanceDetection:
     def test_adverse_shelf_flags(self):
         # Heavy resting asks vs thin bids in the band → opposing shelf.
