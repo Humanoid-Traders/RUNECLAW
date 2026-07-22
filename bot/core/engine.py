@@ -1163,11 +1163,13 @@ class RuneClawEngine:
         and ships the last N records so the web can render and re-check them.
         """
         try:
-            from bot.guardian.flight_recorder import assemble_flight_records
+            from bot.guardian.flight_recorder import (
+                assemble_flight_records, assemble_incident_records)
             from bot.utils.website_sync import sync_flight_records_in_background
 
             entries = self.audit_chain.get_entries(limit=400)
             records = assemble_flight_records(entries, limit=50)
+            incidents = assemble_incident_records(entries, limit=40)
             ok, problems = self.audit_chain.verify(str(self.audit_chain._path))
             tip = entries[-1].entry_hash if entries else ""
             chain = {
@@ -1181,7 +1183,7 @@ class RuneClawEngine:
             except Exception:
                 gstatus = None
             sync_flight_records_in_background(
-                records, chain, self._intent_policy_summary(), gstatus)
+                records, chain, self._intent_policy_summary(), gstatus, incidents)
         except Exception as _fr_exc:
             logger.debug("Flight-record sync skipped: %s", _fr_exc)
 

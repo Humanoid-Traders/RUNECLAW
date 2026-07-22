@@ -261,7 +261,8 @@ def sync_signals_in_background(signals: list[dict]) -> None:
 
 def sync_flight_records(records: list[dict], chain: Optional[dict] = None,
                         policy: Optional[dict] = None,
-                        guardian_status: Optional[dict] = None) -> bool:
+                        guardian_status: Optional[dict] = None,
+                        incidents: Optional[list[dict]] = None) -> bool:
     """Push Guardian Flight Recorder records + engine-verified chain status +
     the active Intent-policy summary + the whole-layer Guardian posture.
 
@@ -274,13 +275,14 @@ def sync_flight_records(records: list[dict], chain: Optional[dict] = None,
     read-only Guardian console snapshot (chain health, per-module risk + armed
     flags, overall posture) so the web can mirror the Telegram /guardian view.
     """
-    if not records and not chain and not policy and not guardian_status:
+    if not records and not chain and not policy and not guardian_status and not incidents:
         return True
     result = _post("/api/bot/sync/flight", {
         "records": list(records or []),
         "chain": chain or {},
         "policy": policy or None,
         "guardian_status": guardian_status or None,
+        "incidents": list(incidents or []),
     })
     if result and result.get("ok"):
         log.info(f"Synced {result.get('stored', len(records or []))} flight record(s)")
@@ -291,11 +293,13 @@ def sync_flight_records(records: list[dict], chain: Optional[dict] = None,
 
 def sync_flight_records_in_background(records: list[dict], chain: Optional[dict] = None,
                                      policy: Optional[dict] = None,
-                                     guardian_status: Optional[dict] = None) -> None:
+                                     guardian_status: Optional[dict] = None,
+                                     incidents: Optional[list[dict]] = None) -> None:
     """Non-blocking flight-record sync (fire-and-forget)."""
     t = threading.Thread(
         target=sync_flight_records,
-        args=(list(records or []), chain, policy, guardian_status), daemon=True)
+        args=(list(records or []), chain, policy, guardian_status, list(incidents or [])),
+        daemon=True)
     t.start()
 
 

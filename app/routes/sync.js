@@ -563,6 +563,12 @@ router.post('/flight', async (req, res) => {
     const guardian_status = (body.guardian_status && typeof body.guardian_status === 'object')
       ? body.guardian_status : null;
     latestFlight = { records, chain, policy, guardian_status, updated_at: new Date().toISOString() };
+    // Safety incidents (blocks & recoveries) mirrored from the sealed chain.
+    // Only attach when the bot actually sent the field — an OLDER bot omits it,
+    // and leaving `incidents` absent lets the incidents route derive from
+    // rejected records during the deploy transition (a sent [] means "synced,
+    // genuinely none" and is left as-is).
+    if (Array.isArray(body.incidents)) latestFlight.incidents = body.incidents.slice(0, 60);
     // Persist so it survives cold starts (table may not exist on older DBs —
     // in-memory still serves in that case).
     try {
