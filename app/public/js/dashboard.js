@@ -44,6 +44,18 @@
   const container = document.getElementById('viewContainer');
   let currentView = '';
   let viewTimers = [];
+  // The #viewContainer node is persistent — renders only swap its innerHTML,
+  // never the node — so delegated listeners bound with container.addEventListener
+  // would ACCUMULATE on every (re-)render, most damagingly under the SSE soft
+  // refresh that re-renders Portfolio on each live event: one note edit then
+  // fires N duplicate PATCHes, one Share/Run/Join fires N times. onView() binds
+  // via a per-render AbortController (renderAbort) so the previous render's
+  // delegated listeners are discarded before the next render re-adds its own.
+  let renderAbort = null;
+  function onView(type, handler) {
+    container.addEventListener(type, handler,
+      renderAbort ? { signal: renderAbort.signal } : undefined);
+  }
 
   // ── Shared data caches ────────────────────────────────────────────────
   const cache = { scan: null, scanAt: 0, tickers: {}, portfolio: null, insightOk: null };
@@ -163,6 +175,11 @@
     // Free any live 3D agent viewer before its DOM host is wiped (reclaims the
     // WebGL context; the chat/hub views re-mount their own).
     if (window.RCAgent3D) window.RCAgent3D.disposeAll();
+    // Discard the previous render's delegated container listeners before the
+    // next render re-binds its own (see onView above) — this is what stops the
+    // per-render listener leak and the duplicate writes it caused.
+    if (renderAbort) renderAbort.abort();
+    renderAbort = new AbortController();
     RENDER[id]();
     // Localize the freshly-rendered view (headers etc.) to the active language.
     if (window.RCI18N) RCI18N.apply(container);
@@ -2675,7 +2692,7 @@
     }, { empty: { icon: 'icon-coin', text: 'No closed trades yet — your history and journal live here.', cta: { label: 'Place a paper trade', href: '#trade' } } });
 
     // Journal notes: save on change (PATCH, debounced by blur).
-    container.addEventListener('change', async (e) => {
+    onView('change', async (e) => {
       const inp = e.target.closest('input[data-trade-id]');
       if (!inp) return;
       const r = await fetchJSON(`/api/trades/${inp.dataset.tradeId}/notes`, { method: 'PATCH', body: { notes: inp.value.slice(0, 500) } }).catch(() => ({ ok: false }));
@@ -2688,7 +2705,7 @@
     // Telegram share intent.
     // Post-mortem coaching: hand the trade to the AI analyst (drawer opens in
     // place) with a prompt a trading coach would actually answer.
-    container.addEventListener('click', (e) => {
+    onView('click', (e) => {
       const btn = e.target.closest('.ask-ai');
       if (!btn || !window.RCChat) return;
       const { sym, dir, entry, exit, pnl } = btn.dataset;
@@ -2699,7 +2716,7 @@
         `and what should I look for before taking this setup again?`);
     });
 
-    container.addEventListener('click', async (e) => {
+    onView('click', async (e) => {
       const btn = e.target.closest('.share-trade');
       if (!btn) return;
       const { sym, dir, entry, exit } = btn.dataset;
@@ -3265,7 +3282,7 @@
     // The link flow lives HERE now (it used to bounce the user back to the
     // landing page): generate a 10-min token, show it with copy-to-clipboard and
     // the exact /link command to paste into the bot.
-    container.addEventListener('click', async (e) => {
+    onView('click', async (e) => {
       if (e.target.id === 'tgGenTok') {
         const area = document.getElementById('tgTokArea');
         e.target.disabled = true;
@@ -3387,7 +3404,7 @@
     }, { empty: { text: 'Credential connect is unavailable right now.' } });
     // Each venue card has its own form (data-venue) and message span, so the
     // handlers are delegated by class, not id — every card works independently.
-    container.addEventListener('submit', async (e) => {
+    onView('submit', async (e) => {
       const f = e.target.closest('.credForm');
       if (!f) return;
       e.preventDefault();
@@ -3399,7 +3416,7 @@
       if (msg) msg.textContent = r.ok ? 'Queued — the bot applies it within a minute.' : (r.data?.detail || r.data?.error || 'Failed.');
       if (r.ok) setTimeout(() => showView('account'), 1200);
     });
-    container.addEventListener('click', async (e) => {
+    onView('click', async (e) => {
       const b = e.target.closest('[data-discvenue]');
       if (!b) return;
       const venue = b.dataset.discvenue;
@@ -3436,7 +3453,7 @@
           <p class="muted small">Emergency stop disables live, pauses, and closes your open positions.</p>
         </div>`;
     }, { empty: { text: 'Controls unavailable.' } });
-    container.addEventListener('click', async (e) => {
+    onView('click', async (e) => {
       if (e.target.id === 'ctlSave') {
         const msg = document.getElementById('ctlMsg');
         msg.textContent = 'Applying…';
@@ -3508,7 +3525,7 @@
     const note = document.getElementById('dappNote');
     if (note && data) note.textContent = data.note || '';
 
-    container.addEventListener('click', (e) => {
+    onView('click', (e) => {
       const cb = e.target.closest && e.target.closest('[data-dcat]');
       const hb = e.target.closest && e.target.closest('[data-dchain]');
       if (cb) { curCat = cb.getAttribute('data-dcat'); paintCtl(); paintGrid(); }
@@ -3910,7 +3927,7 @@
       if (disc) disc.textContent = (data && data.disclaimer) || '';
     }
 
-    container.addEventListener('click', (e) => {
+    onView('click', (e) => {
       const yb = e.target.closest && e.target.closest('[data-taxyear]');
       if (yb) { curYear = yb.getAttribute('data-taxyear'); refresh(); return; }
       if (e.target.closest && e.target.closest('#taxCsv')) downloadCsv();
@@ -4022,7 +4039,7 @@
     }, { empty: { icon: 'icon-target', text: 'No ranked traders yet — pick a handle above and close a trade to be the first.' } });
 
     // Join / leave.
-    container.addEventListener('click', async (e) => {
+    onView('click', async (e) => {
       if (e.target.id === 'lbJoin') {
         const h = (document.getElementById('lbHandle').value || '').trim();
         const msg = document.getElementById('lbMsg');
@@ -4118,10 +4135,10 @@
           <input type="checkbox" value="${esc(s)}" ${i < 3 ? 'checked' : ''} style="margin-right:5px">${esc(s.replace(':USDT', '').replace('/USDT', ''))}</label>`).join('');
     };
     fillSyms();
-    container.addEventListener('change', (e) => { if (e.target.id === 'labDs') fillSyms(); });
+    onView('change', (e) => { if (e.target.id === 'labDs') fillSyms(); });
 
     let pollTimer = null;
-    container.addEventListener('click', async (e) => {
+    onView('click', async (e) => {
       if (e.target.id !== 'labRun') return;
       const msg = document.getElementById('labMsg');
       const syms = [...document.querySelectorAll('#labSyms input:checked')].map(i => i.value).slice(0, 4);
