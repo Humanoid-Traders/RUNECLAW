@@ -941,3 +941,7 @@ a.dapp-card:hover, a.lpos-item:hover, .nft-card:hover {
   border-radius: 50%; border: none; cursor: pointer; font-size: 12px; line-height: 1;
   background: var(--down); color: #fff; display: flex; align-items: center; justify-content: center;
 }
+/* Discovery chip for the vision capability + its "reading" state. */
+.chat-chip--vision { border-color: var(--gold-dim); color: var(--gold-bright); }
+.chat-chip--vision:hover { background: var(--gold-dim); }
+.chat-vision-label { color: var(--text-2); font-size: var(--fs-sm); }

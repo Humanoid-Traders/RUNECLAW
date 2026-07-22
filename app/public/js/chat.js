@@ -322,6 +322,18 @@
     // Only offer chips on an essentially-empty conversation (welcome only).
     if (body.querySelector('.chat-msg.user')) { hideChips(); return; }
     chipsEl.innerHTML = '';
+    // WEB-VISION discovery: a chip that opens the image picker, so users find
+    // the "read my chart" capability where they already look. Logged-in only
+    // (the attach UI, and the vision path, don't exist for anonymous chat).
+    if (!PUBLIC && fileInput) {
+      const vb = document.createElement('button');
+      vb.type = 'button';
+      vb.className = 'chip chat-chip chat-chip--vision';
+      vb.textContent = '📎 Read a chart';
+      vb.title = 'Attach or paste a chart / screenshot for the agent to read';
+      vb.addEventListener('click', () => fileInput.click());
+      chipsEl.appendChild(vb);
+    }
     CHIP_PROMPTS.forEach((p) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -508,8 +520,11 @@
     }
     // Animated typing indicator (three-dot) instead of a static "Thinking…",
     // with a Cancel affordance so a slow turn isn't a helpless wait.
+    // Vision turns get a labelled state ("Reading your screenshot…") so the
+    // wait reads as the agent actually looking at the image, not a generic hang.
     const typing = appendMsg('bot',
-      '<span class="typing-dots" aria-label="Assistant is typing"><span></span><span></span><span></span></span>',
+      (imgs.length ? '<span class="chat-vision-label">Reading your screenshot… </span>' : '')
+      + '<span class="typing-dots" aria-label="Assistant is typing"><span></span><span></span><span></span></span>',
       'pending');
     const ac = new AbortController();
     let cancelled = false;
