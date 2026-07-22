@@ -40,8 +40,33 @@ const CHAT_TIMEOUT_MS = 45000;
 router.post('/', chatLimit, async (req, res) => {
   try {
     const text = typeof (req.body || {}).text === 'string' ? req.body.text.trim() : '';
-    if (!text) return res.status(400).json({ error: 'text required' });
+    // WEB-VISION: optional image attachments. Validate shape + size here; the
+    // gateway/_llm_chat admin-gates who can actually use them. Cap 3 images,
+    // ~5MB base64 each (the 7mb body parser bounds the total).
+    let images;
+    const rawImgs = (req.body || {}).images;
+    if (Array.isArray(rawImgs) && rawImgs.length) {
+      images = [];
+      for (const it of rawImgs.slice(0, 3)) {
+        const data = it && typeof it.data === 'string' ? it.data : '';
+        const mt = it && typeof it.media_type === 'string' ? it.media_type : 'image/png';
+        if (data && data.length <= 5_000_000 && /^image\/(png|jpe?g|webp|gif)$/.test(mt)) {
+          images.push({ media_type: mt, data });
+        }
+      }
+      if (!images.length) images = undefined;
+    }
+    if (!text && !images) return res.status(400).json({ error: 'text or image required' });
     if (text.length > MAX_TEXT_LEN) return res.status(400).json({ error: 'Message too long' });
+    // An image message skips the local text-intercepts (alerts/replay/etc.) and
+    // goes straight to the bot's vision-capable chat path.
+    if (images) {
+      const ident = await resolveBotIdentity(req);
+      const r = await gateway.postGateway('/chat', {
+        telegram_id: ident.id, name: String(ident.email || '').split('@')[0], text, images,
+      }, CHAT_TIMEOUT_MS);
+      return gateway.relay(res, r);
+    }
     // "tell me when BTC drops below 100k" — alerts live in the WEB app (the
     // push channel is here), so handle them before the bot proxy. Evaluated
     // against public tickers; works even while the bot process is down.

@@ -104,6 +104,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// WEB-VISION: the chat route accepts optional image attachments (chart /
+// position screenshots, base64), which exceed the 1mb default. Give ONLY
+// /api/chat a larger parser — it runs first for that path, so the global 1mb
+// parser below skips the already-parsed body; every other route stays at 1mb.
+app.use('/api/chat', express.json({ limit: '7mb' }));
 app.use(express.json({ limit: '1mb' })); // Cap payload size
 // Cache policy: HTML must never be cached (deploys ship new markup that
 // references version-tagged assets, e.g. /styles.css?v=2) — a cached HTML +
