@@ -1398,13 +1398,14 @@ class TelegramHandler:
                       action="chat_error", result="FALLBACK")
                 continue
 
-        # All providers failed
+        # All providers failed. F-15: the raw provider exception (last_error)
+        # can carry a credential-bearing URL or an upstream 4xx body echoing a
+        # key — it goes to the audit log ONLY, never into the user-facing reply.
         audit(system_log, f"All chat LLM providers failed. Last: {last_error}",
               action="chat_error", result="ALL_FAILED")
         return _chat_ret(
-            "I'm having trouble thinking right now. "
-            f"Last error: {last_error[:80]}. "
-            "Try again in a minute.",
+            "I'm having trouble thinking right now — the AI is temporarily "
+            "unavailable. Try again in a minute.",
             None, return_meta)
 
     async def _handle_photo(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2920,6 +2921,7 @@ class TelegramHandler:
 
     # ── Per-asset-class performance ───────────────────────────
 
+    @guard("portfolio")
     async def _cmd_classpf(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Live performance bucketed by asset class (Crypto / Metal /
         Commodity / ETF / Pre-IPO / Stock) — the evidence base for growing
