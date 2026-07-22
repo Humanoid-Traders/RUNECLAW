@@ -3398,8 +3398,8 @@
       const raw = String(me.data.plan || 'basic').toLowerCase();
       const plan = raw === 'free' ? 'basic' : raw;
       const PLANS = [
-        { id: 'basic', name: 'Basic', pts: ['Paper trading with the real risk gate', 'Live charts, signals & AI chat', 'Strategy Lab backtests'] },
-        { id: 'pro', name: 'Pro', pts: ['Premium AI models answer your scans', 'Live trading eligibility (linked + approved)', 'Priority support'] },
+        { id: 'basic', name: 'Basic', pts: ['Paper trading with the real risk gate', 'Live charts, signals & AI chat (5 questions/day)', 'Strategy Lab backtests'] },
+        { id: 'pro', name: 'Pro', pts: ['Unlimited AI chat + premium models on your scans', 'Live trading eligibility (linked + approved)', 'Priority support'] },
         { id: 'elite', name: 'Elite', pts: ['Everything in Pro', 'Higher live caps', 'Early access to new agent features'] },
       ];
       const cards = PLANS.map(p => `
