@@ -28,6 +28,7 @@
     { id: 'reputation', label: 'Reputation', icon: 'icon-shield' },
     { id: 'counterparty', label: 'Counterparty', icon: 'icon-shield' },
     { id: 'worlds',    label: 'Worlds',    icon: 'icon-sparkle' },
+    { id: 'dapps',     label: 'dApps',     icon: 'icon-bolt' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
@@ -3421,6 +3422,64 @@
   }
 
   /* ═══════════════ LEADERBOARD ═══════════════ */
+  // dApp connectors hub — a curated, READ-ONLY directory of reputable DeFi/NFT
+  // dApps. Each card deep-links to the dApp's OWN official site where the user
+  // connects their own wallet and signs their own tx; RUNECLAW is a launchpad,
+  // it never routes or executes anything from here.
+  async function renderDapps() {
+    container.innerHTML = viewHead('dApps',
+      'A curated launchpad of trusted DeFi & NFT apps — you connect and sign on the app\'s own site');
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-dappctl"><div id="c-dappctl"><div class="skel"></div></div></section>
+        <section class="panel"><div id="c-dappgrid"><div class="skel"></div><div class="skel"></div></div></section>
+        <p class="small muted" id="dappNote" style="max-width:82ch"></p>
+      </div>`);
+
+    let data = null, curCat = 'all', curChain = 'all';
+    const load = async () => { const r = await fetchJSON('/api/dapps', { auth: false }); data = r.ok ? r.data : null; return data; };
+
+    const matches = (d) => (curCat === 'all' || d.category === curCat) && (curChain === 'all' || d.chains.includes(curChain));
+
+    function paintCtl() {
+      const el = C('dappctl'); if (!el || !data) return;
+      const chip = (active, val, label, kind) => `<button class="btn btn--sm ${active ? 'btn--primary' : 'btn--ghost'}" data-${kind}="${esc(val)}" type="button">${esc(label)}</button>`;
+      const cats = ['all', ...(data.categories || [])];
+      const chains = [{ key: 'all', label: 'All chains' }, ...((data.chains) || [])];
+      el.innerHTML = `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><span class="small muted">Category</span>
+          ${cats.map(c => chip(curCat === c, c, c === 'all' ? 'All' : c, 'dcat')).join('')}</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px"><span class="small muted">Chain</span>
+          ${chains.map(c => chip(curChain === c.key, c.key, c.label, 'dchain')).join('')}</div>`;
+    }
+
+    function paintGrid() {
+      const el = C('dappgrid'); if (!el) return;
+      if (!data) { el.innerHTML = `<p class="small muted">The dApp directory is unavailable right now.</p>`; return; }
+      const list = (data.dapps || []).filter(matches);
+      if (!list.length) { el.innerHTML = `<p class="small muted">No dApps match this filter.</p>`; return; }
+      const chainBadge = (c) => `<span class="chip" style="font-size:10px;padding:1px 6px">${esc(c)}</span>`;
+      el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:var(--s2)">${list.map(d => `
+          <a class="dapp-card" href="${esc(d.url)}" target="_blank" rel="noopener" style="display:block;padding:var(--s2);border:1px solid rgba(128,128,128,.2);border-radius:var(--radius,12px);text-decoration:none;color:inherit">
+            <div class="row" style="gap:8px;align-items:center"><span style="font-size:22px">${esc(d.emoji || '🔗')}</span><b>${esc(d.name)}</b><span class="chip chip--gold" style="font-size:10px;margin-left:auto">${esc(d.category)}</span></div>
+            <div class="small muted" style="margin:6px 0;min-height:2.6em">${esc(d.blurb)}</div>
+            <div class="row" style="gap:4px;flex-wrap:wrap">${(d.chains || []).slice(0, 6).map(chainBadge).join('')}</div>
+            <div class="small" style="margin-top:8px;color:var(--gold-bright)">Open →</div>
+          </a>`).join('')}</div>`;
+    }
+
+    await load();
+    paintCtl(); paintGrid();
+    const note = document.getElementById('dappNote');
+    if (note && data) note.textContent = data.note || '';
+
+    container.addEventListener('click', (e) => {
+      const cb = e.target.closest && e.target.closest('[data-dcat]');
+      const hb = e.target.closest && e.target.closest('[data-dchain]');
+      if (cb) { curCat = cb.getAttribute('data-dcat'); paintCtl(); paintGrid(); }
+      else if (hb) { curChain = hb.getAttribute('data-dchain'); paintCtl(); paintGrid(); }
+    });
+  }
+
   // Web3 Worlds — the user's on-chain identity (ENS name + avatar) and their
   // NFTs split into metaverse "worlds" (LAND / names / wearables, each linking
   // into the official world) vs the rest of their collectibles. Read-only: it
@@ -4879,7 +4938,7 @@
                    macro: renderMacro, guardian: renderGuardian,
                    signals: renderSignals, deepscan: renderDeepScan, news: renderNews,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio, tax: renderTax,
-                   reputation: renderReputation, counterparty: renderCounterparty, worlds: renderWorlds,
+                   reputation: renderReputation, counterparty: renderCounterparty, worlds: renderWorlds, dapps: renderDapps,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
 
