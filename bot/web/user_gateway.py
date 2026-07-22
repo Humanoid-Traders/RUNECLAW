@@ -762,6 +762,24 @@ async def handle_trade_confirm(request: web.Request) -> web.Response:
     return web.json_response({"result_html": result})
 
 
+async def handle_trade_live_mode(request: web.Request) -> web.Response:
+    """Authoritative live-capability for an identity — the SAME decision the
+    propose/confirm path makes (_trade_mode), covering both linked Telegram
+    users (operator allowlist + /live) and web-only ids (fail-closed web-live
+    gate). The web layer gates its 2FA step-up on THIS, not on a stale
+    user_controls mirror that is empty for exactly those two live paths.
+    Read-only; guarded like every other per-user endpoint."""
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    mode, live_allowed, _reason = _trade_mode(request.app, tg_handler, tg_id)
+    return web.json_response({"mode": mode, "live_allowed": bool(live_allowed)})
+
+
 async def handle_trade_copilot(request: web.Request) -> web.Response:
     """POST /gateway/trade/copilot — a deterministic second opinion on a
     proposed trade BEFORE the user confirms. Read-only advice; places nothing.
@@ -2078,6 +2096,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/authority/revoke", handle_authority_revoke)
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
+    app.router.add_get("/trade/live_mode", handle_trade_live_mode)
     app.router.add_post("/trade/cancel", handle_trade_cancel)
     app.router.add_post("/trade/copilot", handle_trade_copilot)
     # Intent Compiler authoring (operator-only; _is_admin_id-gated per handler).

@@ -90,22 +90,34 @@ router.post('/confirm', tradeLimit, async (req, res) => {
     }
     const tradeId = String((req.body || {}).trade_id || '').trim();
     if (!TRADE_ID_RE.test(tradeId)) return res.status(400).json({ error: 'Invalid trade_id' });
-    // 2FA step-up: a confirm on a LIVE-capable account is a real-money move —
-    // require a fresh code when the account has 2FA enrolled, so a stolen web
-    // session can't place trades. Paper confirms (live_enabled=0) stay
-    // frictionless. The gateway still enforces paper-only for web-only accounts.
-    const [urows] = await pool.execute(
-      `SELECT u.totp_enabled, u.totp_secret, c.live_enabled
-         FROM users u LEFT JOIN user_controls c ON c.user_id = u.id
-        WHERE u.id = ?`, [req.user.user_id]);
-    const urow = urows[0] || {};
-    if (urow.live_enabled) {
-      const blk = stepUpBlock(urow.totp_enabled, urow.totp_secret,
-        (req.body || {}).totp_code,
-        'Enter your 6-digit authenticator code to confirm a live trade.');
-      if (blk) { secLog('WEB_TRADE_CONFIRM_2FA', req, `trade_id=${tradeId}`); return res.status(blk.status).json(blk.body); }
-    }
     const ident = await resolveBotIdentity(req);
+    // 2FA step-up: a confirm is a real-money move only when the identity is
+    // actually LIVE-capable — and that is decided by the BOT (operator allowlist
+    // + /live for linked users, or the fail-closed web-live gate for web-only
+    // ids), NOT the web-side user_controls.live_enabled mirror. That mirror is
+    // written only for web-originated control changes, so it is empty for a user
+    // who enabled live in Telegram AND for every web-only live user — keying the
+    // step-up off it let those live confirms skip 2FA. Ask the gateway for the
+    // authoritative capability (the same _trade_mode the confirm itself uses) and
+    // require a fresh code when the account has 2FA enrolled. Paper confirms stay
+    // frictionless (important for the one-tap paper flow).
+    const [urows] = await pool.execute(
+      `SELECT totp_enabled, totp_secret FROM users WHERE id = ?`, [req.user.user_id]);
+    const urow = urows[0] || {};
+    if (urow.totp_enabled) {
+      let liveCapable = true;   // fail SAFE: a gateway hiccup requires the code
+      try {
+        const lm = await gateway.getGateway(
+          `/trade/live_mode?telegram_id=${encodeURIComponent(ident.id)}`, 8000);
+        liveCapable = !!(lm && lm.status === 200 && lm.data && lm.data.live_allowed);
+      } catch (_) { /* keep liveCapable = true (fail safe) */ }
+      if (liveCapable) {
+        const blk = stepUpBlock(urow.totp_enabled, urow.totp_secret,
+          (req.body || {}).totp_code,
+          'Enter your 6-digit authenticator code to confirm a live trade.');
+        if (blk) { secLog('WEB_TRADE_CONFIRM_2FA', req, `trade_id=${tradeId}`); return res.status(blk.status).json(blk.body); }
+      }
+    }
     secLog('WEB_TRADE_CONFIRM', req, `trade_id=${tradeId}`);
     const r = await gateway.postGateway('/trade/confirm', {
       telegram_id: ident.id, trade_id: tradeId,

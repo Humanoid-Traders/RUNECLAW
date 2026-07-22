@@ -18,6 +18,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 
 const seen = []; // requests the mock gateway received
+let mockLiveAllowed = false; // what /gateway/trade/live_mode reports (per-test)
 let mockGateway;
 let appServer;
 let base;
@@ -46,6 +47,11 @@ function startMockGateway() {
           res.end(JSON.stringify({ messages: [] }));
         } else if (req.url === '/gateway/trade/propose') {
           res.end(JSON.stringify({ pending_trade: { trade_id: 'TI-test1234', mode: 'PAPER' } }));
+        } else if (req.url.startsWith('/gateway/trade/live_mode')) {
+          // Authoritative live-capability the confirm route consults to decide
+          // whether a 2FA step-up is required. Flipped per-test via mockLiveAllowed.
+          res.end(JSON.stringify({
+            mode: mockLiveAllowed ? 'LIVE' : 'PAPER', live_allowed: mockLiveAllowed }));
         } else if (req.url === '/gateway/trade/confirm') {
           res.statusCode = 403;
           res.end(JSON.stringify({ error: 'not_proposer' }));
@@ -313,6 +319,61 @@ test('confirm passes 4xx through from the gateway', async () => {
   });
   assert.strictEqual(r.status, 403);
   assert.strictEqual(r.data.error, 'not_proposer');
+});
+
+// AUDIT-FIX-3: the confirm 2FA step-up must key off the bot's AUTHORITATIVE
+// live capability (/trade/live_mode), not the removed user_controls.live_enabled
+// mirror — which was empty for Telegram-`/live` users and web-only live users,
+// letting their live confirms skip the code. Enroll TOTP on the linked user and
+// verify: (a) live-capable + no code => blocked, gateway confirm NOT reached;
+// (b) not live-capable => step-up skipped, confirm proceeds to the gateway.
+test('2FA step-up on live confirm keys off gateway live capability, not a stale mirror', async () => {
+  const totp = require('../lib/totp');
+  const secret = totp.generateSecret();
+  // Enroll 2FA directly on the linked user's row (MemoryDB has no TOTP DDL path).
+  const [lr] = await pool.execute('SELECT * FROM users WHERE telegram_id = ?', ['777']);
+  lr[0].totp_enabled = 1;
+  lr[0].totp_secret = secret;
+
+  // (a) Gateway reports LIVE-capable + no code supplied => 401 step-up, and the
+  // gateway confirm endpoint is never called.
+  mockLiveAllowed = true;
+  seen.length = 0;
+  let r = await request('POST', '/api/trade/confirm', {
+    token: signLinked, body: { trade_id: 'TI-test1234' },
+  });
+  assert.strictEqual(r.status, 401);
+  assert.strictEqual(r.data.error, 'two_factor_required');
+  assert.ok(seen.some(s => s.url.startsWith('/gateway/trade/live_mode')), 'live_mode was consulted');
+  assert.ok(!seen.some(s => s.url === '/gateway/trade/confirm'), 'no live confirm without a code');
+
+  // (b) A fresh valid code passes the step-up and the confirm reaches the gateway.
+  const code = totp.hotp(secret, Math.floor(Date.now() / 30000));
+  seen.length = 0;
+  r = await request('POST', '/api/trade/confirm', {
+    token: signLinked, body: { trade_id: 'TI-test1234', totp_code: code },
+  });
+  assert.strictEqual(r.status, 403);           // downstream not_proposer (expected)
+  assert.strictEqual(r.data.error, 'not_proposer');
+  assert.ok(seen.some(s => s.url === '/gateway/trade/confirm'), 'valid code => confirm forwarded');
+});
+
+test('2FA step-up is skipped for a non-live-capable (paper) confirm — one-tap paper stays frictionless', async () => {
+  const [lr] = await pool.execute('SELECT * FROM users WHERE telegram_id = ?', ['777']);
+  lr[0].totp_enabled = 1;                       // 2FA enrolled…
+  // …but the gateway reports PAPER (not live-capable) => no code required.
+  mockLiveAllowed = false;
+  seen.length = 0;
+  const r = await request('POST', '/api/trade/confirm', {
+    token: signLinked, body: { trade_id: 'TI-test1234' },   // no totp_code
+  });
+  assert.strictEqual(r.status, 403);            // reached the gateway (not blocked)
+  assert.strictEqual(r.data.error, 'not_proposer');
+  assert.ok(seen.some(s => s.url === '/gateway/trade/confirm'), 'paper confirm forwarded without a code');
+
+  // Un-enroll so the shared user row doesn't force step-up in later tests.
+  lr[0].totp_enabled = 0; lr[0].totp_secret = null;
+  mockLiveAllowed = false;
 });
 
 test('trade requires JWT', async () => {

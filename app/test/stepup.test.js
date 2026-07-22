@@ -46,8 +46,15 @@ const routeSrc = (f) => fs.readFileSync(path.join(__dirname, '..', 'routes', f),
 test('trade/confirm gates live-capable accounts with step-up', () => {
   const s = routeSrc('webtrade.js');
   assert.match(s, /stepUpBlock/);
-  // Only live-capable accounts are gated — paper confirms stay frictionless.
-  assert.match(s, /if \(urow\.live_enabled\)/);
+  // AUDIT-FIX-3: step-up keys off the bot's AUTHORITATIVE live capability
+  // (/trade/live_mode -> live_allowed), NOT the stale user_controls.live_enabled
+  // mirror (which was empty for Telegram-/live and web-only live users, letting
+  // their live confirms skip the code). Enrolled + live-capable is gated; paper
+  // confirms stay frictionless.
+  assert.match(s, /if \(urow\.totp_enabled\)/);
+  assert.match(s, /trade\/live_mode/);
+  assert.match(s, /live_allowed/);
+  assert.doesNotMatch(s, /if \(urow\.live_enabled\)/);   // the buggy proxy is gone
 });
 
 test('controls gates ENABLING live (not disabling / de-risking) with step-up', () => {
