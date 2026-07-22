@@ -53,6 +53,7 @@
   // delegated listeners are discarded before the next render re-adds its own.
   let renderAbort = null;
   let _radar3d = null;   // live 3D radar handle — destroyed on view change (its rAF loop must stop)
+  let _charts = [];      // live RCCharts (donut/underwater) handles — same teardown discipline
   function onView(type, handler) {
     container.addEventListener(type, handler,
       renderAbort ? { signal: renderAbort.signal } : undefined);
@@ -156,6 +157,7 @@
     viewTimers.forEach(clearInterval);
     viewTimers = [];
     if (_radar3d) { try { _radar3d.destroy(); } catch (_) {} _radar3d = null; }
+    if (_charts.length) { _charts.forEach(c => { try { c.destroy(); } catch (_) {} }); _charts = []; }
     renderNav(id);
     // Soft refresh (live SSE nudges): update in place — no scroll-to-top jump
     // and no replayed entrance stagger. Only real navigation gets the full
@@ -2236,6 +2238,12 @@
       <div class="stack">
         <section class="panel panel--primary" id="p-pstats"><div id="c-pstats"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-curve"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Equity curve</h2><div id="c-curve"><div class="skel"></div></div></section>
+        <section class="panel" id="p-underwater" hidden>
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Drawdown — underwater curve
+            <span class="badge" style="margin-left:auto" title="How far below its running peak your equity has been, over time — the pain chart pro desks watch. Derived from your equity snapshots. Visualization only.">derived</span></h2>
+          <canvas id="underwaterCanvas" style="width:100%;height:180px;display:block"></canvas>
+          <p class="small muted" id="underwaterLegend" style="margin-top:var(--s2)"></p>
+        </section>
         <section class="panel" id="p-lpos">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Open positions &amp; stop-loss
             <span class="badge" style="margin-left:auto" title="Whether each stop-loss is actually live ON THE EXCHANGE (protected) or bot-managed — the same truth the Telegram bot shows. Read-only.">read-only</span></h2>
@@ -2250,6 +2258,14 @@
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Net worth — everywhere
             <span class="badge" style="margin-left:auto" title="Read-only aggregation — RUNECLAW can read these balances, never move them">read-only</span></h2>
           <div id="c-networth"><div class="skel"></div></div>
+        </section>
+        <section class="panel" id="p-alloc" hidden>
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Allocation — where your funds sit
+            <span class="badge" style="margin-left:auto" title="Your real balances by source — each connected exchange and each on-chain wallet chain, as a share of the whole. Read-only visualization.">read-only</span></h2>
+          <div class="row" style="gap:var(--s3);align-items:center;flex-wrap:wrap">
+            <canvas id="allocCanvas" style="width:200px;height:200px;flex:0 0 auto"></canvas>
+            <div id="allocLegend" class="stack" style="gap:6px;flex:1 1 12rem;min-width:12rem"></div>
+          </div>
         </section>
         <section class="panel" id="p-holdings">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>Funds by venue &amp; wallet
@@ -2345,10 +2361,72 @@
       const snaps = r.data?.snapshots || [];
       if (snaps.length < 2) return null;
       const ce = r.data?.capital_events || 0;
+      // Same snapshots feed the drawdown "underwater" chart — one fetch, mounted
+      // as a side-effect into its own panel (a canvas that self-cleans on nav).
+      mountUnderwater(snaps);
       return equitySvg(snaps)
         + (ce ? `<p class="muted small" style="margin-top:var(--s2)">Capital basis changed ${ce} time${ce === 1 ? '' : 's'}
             (deposit, withdrawal, or paper→live switch) — the curve shows the current period only, so funding changes never draw as trading losses.</p>` : '');
     }, { empty: { icon: 'icon-chart', text: 'The equity curve draws once you have a few snapshots — trade and check back.' } });
+
+    // Drawdown underwater curve — derived from the same equity snapshots. Canvas
+    // (RCCharts.underwater), reduced-motion safe, torn down on view change.
+    function mountUnderwater(snaps) {
+      try {
+        const panel = document.getElementById('p-underwater');
+        const canvas = document.getElementById('underwaterCanvas');
+        if (!panel || !canvas || !window.RCCharts) return;
+        const pts = snaps.map(s => parseFloat(s.equity)).filter(v => isFinite(v));
+        if (pts.length < 2) return;
+        // Deepest drawdown, for the caption.
+        let peak = -Infinity, worst = 0;
+        for (const v of pts) { if (v > peak) peak = v; if (peak > 0) worst = Math.min(worst, (v - peak) / peak * 100); }
+        panel.hidden = false;
+        const h = window.RCCharts.underwater(canvas, {});
+        _charts.push(h);
+        h.update({ points: pts });
+        const legend = document.getElementById('underwaterLegend');
+        if (legend) legend.textContent = worst < -0.05
+          ? `Deepest drawdown ${worst.toFixed(1)}% below peak across ${pts.length} snapshots. Visualization only — nothing here trades.`
+          : `No meaningful drawdown yet across ${pts.length} snapshots. Visualization only — nothing here trades.`;
+      } catch (_) { /* the underwater chart is decorative — never block the view */ }
+    }
+
+    // Allocation donut — real balances by source (each connected exchange, each
+    // on-chain wallet chain) as a share of the whole. Canvas (RCCharts.donut),
+    // reduced-motion safe, torn down on view change. This is a PRIVATE per-user
+    // surface, so it may show dollars.
+    function mountAllocation(d) {
+      try {
+        const panel = document.getElementById('p-alloc');
+        const canvas = document.getElementById('allocCanvas');
+        if (!panel || !canvas || !window.RCCharts) return;
+        const PAL = ['#4db6ff', '#31c48d', '#f6a609', '#a78bfa', '#f05252',
+                     '#38bdf8', '#f472b6', '#84cc16', '#fb923c', '#22d3ee'];
+        const segs = [];
+        (d.venues || []).forEach(v => {
+          if (v.ok && v.equity_usd > 0) segs.push({ label: (v.venue || 'venue').toUpperCase(), value: +v.equity_usd });
+        });
+        const chains = (d.wallet && d.wallet.chains) || [];
+        chains.forEach(c => { if (c.total_usd > 0) segs.push({ label: c.label || c.chain, value: +c.total_usd }); });
+        if (segs.length < 1) return;               // nothing real to allocate — leave hidden
+        segs.sort((a, b) => b.value - a.value).forEach((s, i) => { s.color = PAL[i % PAL.length]; });
+        const total = segs.reduce((a, s) => a + s.value, 0);
+        panel.hidden = false;
+        const h = window.RCCharts.donut(canvas, {});
+        _charts.push(h);
+        h.update({ segments: segs, centerLabel: '$' + fmtK(total), centerSub: 'real' });
+        const legend = document.getElementById('allocLegend');
+        if (legend) {
+          legend.innerHTML = segs.map(s => {
+            const pct = total > 0 ? (s.value / total * 100) : 0;
+            return `<div class="kv-row" style="gap:8px;align-items:center">
+              <span style="display:inline-flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:2px;background:${s.color};display:inline-block"></span>${esc(s.label)}</span>
+              <b class="num">$${fmt(s.value, 0)} <span class="muted small">${pct.toFixed(0)}%</span></b></div>`;
+          }).join('') + '<p class="small muted" style="margin-top:6px">Read-only — RUNECLAW can read these balances, never move them.</p>';
+        }
+      } catch (_) { /* the allocation donut is decorative — never block the view */ }
+    }
 
     // Open positions with STOP-LOSS PROTECTION TRUTH — the web mirror of the
     // Telegram bot's /open_positions. For each position it shows whether the
@@ -2431,6 +2509,9 @@
       const r = await fetchJSON('/api/holdings', { timeoutMs: 40000 });
       const d = r.data;
       if (!r.ok || !d) return null;
+      // Same holdings feed the allocation donut — one fetch, mounted into its
+      // own canvas panel (self-cleaning on nav).
+      mountAllocation(d);
       const rows = [];
       // Venues (connected exchanges).
       if (d.venues && d.venues.length) {
