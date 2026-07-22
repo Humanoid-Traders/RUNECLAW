@@ -188,15 +188,18 @@ def build_and_sign(*, network: str, to: Optional[str], value_wei: int, nonce: in
     CREATION — and ``data`` carries the init bytecode (that's how Contract Studio
     deploys a drafted contract). NEVER returns or logs the signing key. Refuses
     off-testnet chains and a missing library/key — fail-closed."""
-    account = _signing_lib()
-    if account is None:
-        return {"ok": False, "error": "signing library not installed"}
+    # Refuse a non-testnet chain FIRST — before the library/key checks — so a
+    # mainnet request is rejected even when the signing library is absent
+    # (fail-closed: the testnet-only guarantee never depends on an optional dep).
     net = gate.resolve_network(network)
     if not net or not net.get("testnet"):
         return {"ok": False, "error": "signing is testnet-only"}
     chain_id = int(net["chain_id"])
     if chain_id not in _TESTNET_CHAIN_IDS:
         return {"ok": False, "error": "not a testnet chain"}
+    account = _signing_lib()
+    if account is None:
+        return {"ok": False, "error": "signing library not installed"}
     key = _resolve_key(env)
     if not key:
         return {"ok": False, "error": "no signing key configured"}
