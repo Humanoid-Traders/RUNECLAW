@@ -2690,6 +2690,41 @@ class LiveExecutor:
                                 "entering into a book this wide gives away the "
                                 "edge; nothing was placed.")
 
+            # ── QC-2b SAFEGUARD 0c: order-book wall gate ──
+            # A dominant opposing wall in the entry→TP path (a level far larger
+            # than its neighbours, or a lopsided shelf of resting liquidity)
+            # tends to stall or reject the move — the setup's edge leaks away.
+            # OBSERVE-FIRST house rule: default OFF; "warn" logs only; "block"
+            # enforces. Fail-open at every layer — a degraded/absent book, a
+            # fetch error, or a malformed verdict must NEVER block a trade.
+            _wall_mode = os.environ.get("ENTRY_BOOK_WALL_GATE", "off").strip().lower()
+            if _wall_mode in ("warn", "block"):
+                try:
+                    from bot.core.entry_quality import book_wall_verdict
+                    _ob = await active_exchange.fetch_order_book(symbol, limit=25)
+                    _verdict = book_wall_verdict(
+                        idea.direction.value if hasattr(idea.direction, "value")
+                        else str(idea.direction),
+                        current_price, idea.take_profit,
+                        (_ob or {}).get("bids"), (_ob or {}).get("asks"))
+                    if _verdict.get("flag"):
+                        audit(trade_log,
+                              f"{symbol} book-wall {_verdict.get('reason')} "
+                              f"(mode={_wall_mode})",
+                              action="entry_book_wall",
+                              result="BLOCKED" if _wall_mode == "block" else "WARN",
+                              data={"asset": symbol, "reason": _verdict.get("reason"),
+                                    **(_verdict.get("metrics") or {})})
+                        if _wall_mode == "block":
+                            return (f"EXECUTION BLOCKED: {symbol} order book shows "
+                                    f"{_verdict.get('reason')} in the entry→target "
+                                    "path — the move would likely stall there; "
+                                    "nothing was placed.")
+                except Exception as _wall_exc:
+                    # Fail-open: never let a book read take a trade down.
+                    trade_log.debug("book-wall gate skipped for %s: %s",
+                                    symbol, _wall_exc)
+
             # ── SAFEGUARD 1: Pre-trade price validation ──
             # Block trades where the market has already moved past the SL level.
             # This prevents opening a position that will be instantly stopped out.
