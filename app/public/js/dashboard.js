@@ -5362,6 +5362,21 @@
     };
     const gwei = (wei) => (wei == null ? '—' : (Number(wei) / 1e9).toFixed(2) + ' gwei');
 
+    // The signer address is the same across EVM testnets, but the explorer that
+    // shows its balance/nonce/history differs per chain — so the address link
+    // follows the selected network. Hosts come from the bot (NETWORKS), validated
+    // https before use; rel=noopener on the outbound link.
+    let explorerByNet = {};
+    let signerAddr = '';
+    const addrLink = (net) => {
+      if (!signerAddr) return '<span class="muted">not configured</span>';
+      const host = explorerByNet[net];
+      const a = esc(signerAddr);
+      return (host && /^https:\/\//.test(host))
+        ? `<a href="${esc(host.replace(/\/+$/, ''))}/address/${a}" target="_blank" rel="noopener">${a} ↗</a>`
+        : a;
+    };
+
     async function load() {
       const box = panel.querySelector('#sgn-status');
       const r = await fetchJSON('/api/web3/sign/status', { timeoutMs: 12000 }).catch(() => null);
@@ -5372,7 +5387,11 @@
       const d = r.data;
       const nets = Array.isArray(d.testnets) ? d.testnets : [];
       const opts = nets.map((n) => `<option value="${esc(n.network)}"${n.rpc_configured ? '' : ' data-norpc="1"'}>${esc(n.label)}${n.rpc_configured ? '' : ' — no RPC'}</option>`).join('');
-      const addr = d.signer_address ? esc(d.signer_address) : '<span class="muted">not configured</span>';
+      explorerByNet = {};
+      nets.forEach((n) => { if (n.explorer) explorerByNet[n.network] = n.explorer; });
+      signerAddr = d.signer_address || '';
+      const firstNet = nets[0] ? nets[0].network : '';
+      const addr = addrLink(firstNet);
       const ready = d.feature_enabled && d.signing_enabled && d.signer_library_installed
         && d.signer_key_present && d.envelope_enforcing;
       box.innerHTML = `
@@ -5383,7 +5402,7 @@
           <span class="muted">Signing key</span><span>${yn(d.signer_key_present)}</span>
           <span class="muted">Envelope enforcing</span><span>${yn(d.envelope_enforcing)}</span>
         </div>
-        <div class="small muted" style="margin-bottom:8px">Signer address <code style="word-break:break-all">${addr}</code></div>
+        <div class="small muted" style="margin-bottom:8px">Signer address <code id="sgn-addr" style="word-break:break-all">${addr}</code></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
           <label class="small muted">Network <select id="sgn-net" class="input" style="min-width:150px">${opts}</select></label>
           <button class="btn" id="sgn-prepare">Prepare (nonce + gas)</button>
@@ -5407,6 +5426,8 @@
       if (e.target && e.target.id === 'sgn-net') {   // network changed → stale prepare
         prepared = null;
         const pe = panel.querySelector('#sgn-prep'); if (pe) pe.innerHTML = '';
+        // the address link points at the newly-selected chain's explorer.
+        const ae = panel.querySelector('#sgn-addr'); if (ae) ae.innerHTML = addrLink(e.target.value);
       }
     });
     panel.addEventListener('click', async (e) => {
