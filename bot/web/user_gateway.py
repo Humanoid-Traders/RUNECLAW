@@ -2220,6 +2220,105 @@ async def handle_guardian_review_tighten(request: web.Request) -> web.Response:
         return web.json_response({"error": "tightening failed"}, status=400)
 
 
+async def handle_web3_sign(request: web.Request) -> web.Response:
+    """WEB3-LIVE-EXEC slice 2 — admin-only, TESTNET-ONLY live SIGN + broadcast of
+    a native-value transfer to an envelope-allowlisted destination. Triple-gated
+    default-OFF (WEB3_LIVE_EXEC_ENABLED + WEB3_LIVE_EXEC_SIGN_ENABLED + a
+    configured signer key + the eth-account library + an enforcing envelope), and
+    still run through the Authority Envelope authorize() as a transfer. Mainnet is
+    refused here regardless of any flag. NEVER returns or logs the signing key;
+    F-15 on every error path."""
+    import time as _time
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "web3 signing is admin-only"}, status=403)
+
+    from bot.web import web3_signer as _signer
+    network = str(body.get("network") or "sepolia")
+    dest = str(body.get("to") or body.get("dest") or "").strip()
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        _store = get_user_authority_store()
+        enforcing = bool(_store.is_enforcing(tg_id))
+    except Exception:
+        _store, enforcing = None, False
+
+    # 1) Signing preconditions — testnet-only, own flag, key + library present.
+    decision = _signer.evaluate_sign(is_admin=True, network=network,
+                                     envelope_enforcing=enforcing)
+    if not decision.allowed:
+        return web.json_response({"error": "web3_sign_denied", "reason": decision.reason,
+                                  "checklist": decision.checklist}, status=403)
+
+    # 2) The Authority Envelope authorizes THIS outflow (transfer to dest).
+    try:
+        notional = float(body.get("amount_usd")) if body.get("amount_usd") is not None else None
+    except (TypeError, ValueError):
+        notional = None
+    try:
+        from bot.guardian.authority import authorize
+        env = _store.get(tg_id) if _store else None
+        result = authorize(env, {"kind": "transfer", "asset": str(body.get("asset") or "ETH"),
+                                 "notional_usd": notional, "dest": dest or None},
+                           now_ts=_time.time(), spent_today_usd=0.0)
+        if result.get("decision") != "allow":
+            return web.json_response({"error": "authority_denied",
+                                      "reasons": list(result.get("reasons") or ["not authorized"])},
+                                     status=403)
+        env_id = result.get("envelope_id")
+    except Exception:
+        return web.json_response({"error": "authority_check_failed"}, status=403)
+
+    # 3) Sign (audited eth-account) + broadcast to the configured testnet RPC.
+    try:
+        value_wei = int(body.get("value_wei") or 0)
+        nonce = int(body.get("nonce"))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "value_wei and nonce are required integers"},
+                                 status=400)
+    signed = _signer.build_and_sign(network=network, to=dest, value_wei=value_wei,
+                                    nonce=nonce, gas=int(body.get("gas") or 21000))
+    if not signed.get("ok"):
+        return web.json_response({"error": "sign_failed", "reason": signed.get("error")},
+                                 status=400)
+    net = decision.network or {}
+    bcast = await _signer.broadcast(signed["raw"], _signer.rpc_url_for(network),
+                                    net.get("chain_id"))
+
+    # 4) Record to the Guardian review queue (fail-safe — never blocks the send).
+    try:
+        from bot.guardian.review_queue import get_review_queue
+        get_review_queue().record({"user_id": tg_id, "kind": "web3_sign", "network": network,
+                                   "action": {"side": "transfer", "to": dest,
+                                              "amount_usd": notional,
+                                              "tx_hash": signed.get("tx_hash"),
+                                              "broadcast": bool(bcast.get("ok"))},
+                                   "envelope_id": env_id, "ts": _time.time()})
+    except Exception:
+        pass
+
+    audit(system_log, f"Web3 SIGN (admin) testnet {network} -> {dest[:10]}",
+          action="web3_sign", result="OK" if bcast.get("ok") else "SIGNED",
+          data={"network": network, "broadcast": bool(bcast.get("ok"))})
+    return web.json_response({
+        "signed": True,
+        "broadcast": bool(bcast.get("ok")),
+        "network": net.get("label"),
+        "chain_id": net.get("chain_id"),
+        "testnet": net.get("testnet"),
+        "from": signed.get("from"),
+        "to": dest,
+        "tx_hash": bcast.get("tx_hash") or signed.get("tx_hash"),
+        "envelope": {"id": env_id},
+        "note": bcast.get("error") or "Signed and broadcast to testnet. Testnet-only in "
+                "this slice — mainnet signing is a separate, later, separately-gated slice.",
+    })
+
+
 def build_gateway(engine, tg_handler) -> web.Application:
     """Build the /gateway sub-app. Caller mounts it under the dashboard app."""
     app = web.Application(middlewares=[secret_middleware])
@@ -2247,6 +2346,8 @@ def build_gateway(engine, tg_handler) -> web.Application:
     # WEB3-LIVE-EXEC slice 1: admin-only, envelope-gated on-chain PREVIEW (no
     # signer, no broadcast — the safety spine for future live signing).
     app.router.add_post("/web3/execute", handle_web3_execute)
+    # WEB3-LIVE-EXEC slice 2: admin-only, TESTNET-ONLY live sign + broadcast.
+    app.router.add_post("/web3/sign", handle_web3_sign)
     # Guardian pre-trade review queue: admin-only read + tighten-only mutation.
     app.router.add_get("/guardian/review", handle_guardian_review)
     app.router.add_post("/guardian/review/tighten", handle_guardian_review_tighten)

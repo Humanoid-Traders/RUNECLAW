@@ -56,6 +56,9 @@ _DEFAULT_MANAGED = (
     "BYBIT_API_KEY", "BYBIT_API_SECRET",
     "BINGX_API_KEY", "BINGX_API_SECRET",
     "ONCHAIN_API_KEY",
+    # WEB3-LIVE-EXEC slice 2: the admin-only on-chain SIGNING key. Encrypted at
+    # rest here so it survives a wiped .env; never logged or returned in the clear.
+    "WEB3_SIGNER_PRIVATE_KEY",
     # Website pairing secrets: losing either silently severs the web app from
     # the bot — chat/web-trade die (WEB_GATEWAY_SECRET) or dashboard sync is
     # rejected (BOT_SYNC_SECRET) — while the bot itself keeps trading fine.
