@@ -76,6 +76,10 @@ body {
   background: var(--bg); color: var(--text);
   font-family: var(--font-ui); font-size: var(--fs-base); line-height: 1.55;
   min-height: 100vh; -webkit-font-smoothing: antialiased;
+  /* Mobile safety net: one stray wide element must never scroll the whole page
+     sideways. Every wide surface (tables, charts) has its own overflow wrapper,
+     so nothing legitimate is clipped by this. */
+  overflow-x: hidden;
 }
 a { color: var(--gold); text-decoration: none; }
 a:hover { color: var(--gold-bright); }
@@ -278,7 +282,9 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .stat { min-width: 0; }
 .stat .k { font-size: var(--fs-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); margin-bottom: 2px; }
 .stat .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: var(--fs-md); color: var(--text); }
-.stat .v.big { font-size: var(--fs-hero); line-height: 1.1; letter-spacing: -0.01em; }
+/* The headline figure (equity / net worth). clamp() so a long currency value
+   like $1,234,567.89 doesn't overflow a ~288px stat card on a small phone. */
+.stat .v.big { font-size: clamp(24px, 8vw, var(--fs-hero)); line-height: 1.1; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .stat .d { font-size: var(--fs-sm); }
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--s4); }
 
@@ -538,7 +544,16 @@ a.mc-chip:hover { border-color: var(--accent, var(--up)); }
   .tabbar a { min-height: 48px; }
   .nav-links a, .topbar .top-actions a { min-height: 44px; display: inline-flex; align-items: center; }
   .mc-chip, .lpos-item a { min-height: 40px; }
-  .input, select.input, textarea.input { font-size: 16px; }
+  /* 16px stops iOS Safari's focus-zoom; min-height gives the compact inline
+     inputs (chart symbol, universe search, journal note, deep-scan) a real
+     touch target instead of the ~28px their small padding leaves them at. */
+  .input, select.input, textarea.input { font-size: 16px; min-height: 40px; }
+  textarea.input { min-height: 64px; }
+  /* Chat header glyph buttons (close ✕, TTS 🔊) and the attachment remove ✕
+     are tiny by default — give them a proper hit area on touch. */
+  .chat-close, .chat-tts { min-width: 40px; min-height: 40px; display: inline-flex;
+    align-items: center; justify-content: center; padding: 6px; }
+  .chat-attach button { min-width: 28px; min-height: 28px; }
 }
 
 /* The trading loop — a real sequence, so numbered steps carry meaning. */

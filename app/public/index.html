@@ -40,11 +40,42 @@
   .token-display { font-family: var(--font-data); font-size: var(--fs-base); letter-spacing: .06em; background: var(--bg); border: 1px dashed var(--gold); border-radius: var(--radius-sm); padding: var(--s3); text-align: center; cursor: pointer; }
   .token-display.copied { border-color: var(--up); color: var(--up); }
   .acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); margin-bottom: var(--s4); }
+  /* On a narrow phone the two account cards each get ~140px — too tight for the
+     token display + labels. Stack them below 520px. */
+  @media (max-width: 520px) { .acct-grid { grid-template-columns: 1fr; } }
   .steps-list { margin: var(--s2) 0 0 18px; color: var(--text-2); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 6px; }
   .nav-links { display: flex; align-items: center; gap: var(--s2); }
   .nav-links a { color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; padding: 7px 11px; border-radius: var(--radius-sm); }
   .nav-links a:hover { color: var(--text); background: var(--surface-2); }
-  @media (max-width: 639px) { .nav-links a:not(.btn) { display: none; } }
+  /* Mobile disclosure menu: a native <details> so the header links (Dashboard,
+     Track record, Proof, Leaderboard, Letter, Docs) stay reachable on phones
+     instead of dead-ending. Hidden on desktop where the inline links show. */
+  .nav-menu { display: none; position: relative; }
+  .nav-menu > summary {
+    list-style: none; cursor: pointer; color: var(--text-2);
+    font-size: var(--fs-sm); font-weight: 600; padding: 9px 12px;
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+    display: inline-flex; align-items: center; gap: 6px; min-height: 40px;
+  }
+  .nav-menu > summary::-webkit-details-marker { display: none; }
+  .nav-menu[open] > summary { color: var(--text); border-color: var(--gold); }
+  .nav-menu-panel {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+    display: flex; flex-direction: column; min-width: 200px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 6px; gap: 2px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.4);
+  }
+  .nav-menu-panel a {
+    color: var(--text-2); font-size: var(--fs-sm); font-weight: 500;
+    padding: 10px 12px; border-radius: var(--radius-sm); min-height: 44px;
+    display: flex; align-items: center;
+  }
+  .nav-menu-panel a:hover { color: var(--text); background: var(--surface-2); }
+  @media (max-width: 639px) {
+    .nav-links a:not(.btn) { display: none; }
+    .nav-menu { display: block; }
+  }
   /* Real-time 3D agent in the hero — invisible until agent.glb is present, so
      this never alters the landing until the model artwork is added. */
   .hero-agent3d { display: none; }
@@ -68,6 +99,17 @@
     <a href="/leaderboard" data-i18n="nav.leaderboard">Leaderboard</a>
     <a href="/letter" data-i18n="nav.letter">Agent Letter</a>
     <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener" data-i18n="nav.docs">Docs</a>
+    <details class="nav-menu">
+      <summary aria-label="Open menu">☰ <span data-i18n="nav.menu">Menu</span></summary>
+      <div class="nav-menu-panel">
+        <a href="/dashboard" data-i18n="nav.dashboard">Dashboard</a>
+        <a href="/track" data-i18n="nav.track">Track record</a>
+        <a href="/proof" data-i18n="nav.proof">Proof of PnL</a>
+        <a href="/leaderboard" data-i18n="nav.leaderboard">Leaderboard</a>
+        <a href="/letter" data-i18n="nav.letter">Agent Letter</a>
+        <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener" data-i18n="nav.docs">Docs</a>
+      </div>
+    </details>
     <a class="btn btn--primary btn--sm" href="#auth-panel" data-i18n="nav.get_started">Get started</a>
   </div>
 </nav>

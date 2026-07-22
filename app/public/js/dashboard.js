@@ -2263,7 +2263,7 @@
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Allocation — where your funds sit
             <span class="badge" style="margin-left:auto" title="Your real balances by source — each connected exchange and each on-chain wallet chain, as a share of the whole. Read-only visualization.">read-only</span></h2>
           <div class="row" style="gap:var(--s3);align-items:center;flex-wrap:wrap">
-            <canvas id="allocCanvas" style="width:200px;height:200px;flex:0 0 auto"></canvas>
+            <canvas id="allocCanvas" style="width:min(200px,44vw);aspect-ratio:1;flex:0 0 auto"></canvas>
             <div id="allocLegend" class="stack" style="gap:6px;flex:1 1 12rem;min-width:12rem"></div>
           </div>
         </section>
