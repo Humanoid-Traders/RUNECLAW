@@ -255,3 +255,35 @@ def test_prepare_and_status_routes_registered():
     src = inspect.getsource(user_gateway.build_gateway)
     assert 'add_get("/web3/sign/status", handle_web3_sign_status)' in src
     assert 'add_post("/web3/sign/prepare", handle_web3_prepare)' in src
+
+
+# ── block-explorer links (one click from a testnet sign to the on-chain record) ─
+
+def test_explorer_tx_url_builds_per_network_links():
+    from bot.web.web3_exec_gate import explorer_tx_url
+    h = "0x" + "a" * 64
+    assert explorer_tx_url("sepolia", h) == f"https://sepolia.etherscan.io/tx/{h}"
+    assert explorer_tx_url("base-sepolia", h) == f"https://sepolia.basescan.org/tx/{h}"
+    assert explorer_tx_url("optimism-sepolia", h).startswith("https://sepolia-optimism.etherscan.io/tx/")
+
+
+def test_explorer_tx_url_refuses_unknown_or_malformed():
+    from bot.web.web3_exec_gate import explorer_tx_url
+    assert explorer_tx_url("does-not-exist", "0x" + "a" * 64) == ""  # unknown net
+    assert explorer_tx_url("sepolia", "not-a-hash") == ""           # non-0x hash
+    assert explorer_tx_url("sepolia", "") == ""                     # empty hash
+
+
+def test_every_testnet_has_an_explorer():
+    from bot.web import web3_exec_gate as gate
+    for name, n in gate.NETWORKS.items():
+        if n.get("testnet"):
+            assert n.get("explorer", "").startswith("https://"), f"{name} missing explorer"
+
+
+def test_sign_handler_returns_an_explorer_url():
+    src = inspect.getsource(user_gateway.handle_web3_sign)
+    assert "explorer_url" in src and "explorer_tx_url" in src
+    # only when the broadcast actually succeeded — never a link to a tx that
+    # never hit the chain.
+    assert 'if bcast.get("ok") else ""' in src

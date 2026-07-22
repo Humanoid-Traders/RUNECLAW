@@ -5452,10 +5452,14 @@
           msg(''); return;
         }
         const d = r.data;
-        const hash = d.tx_hash ? esc(d.tx_hash) : '—';
+        // Prefer a clickable block-explorer link when the tx broadcast; fall back
+        // to the bare hash. rel=noopener + the explorer host is validated bot-side.
+        const txCell = (d.explorer_url && /^https:\/\//.test(d.explorer_url))
+          ? `<a href="${esc(d.explorer_url)}" target="_blank" rel="noopener">${esc(d.tx_hash || 'view on explorer')} ↗</a>`
+          : (d.tx_hash ? esc(d.tx_hash) : '—');
         out.innerHTML = `<div class="small" style="border:1px solid var(--up,#31c48d);border-radius:10px;padding:10px">
           <div><strong>${d.broadcast ? 'Broadcast' : 'Signed'}</strong> on ${esc(d.network || network)} ${d.testnet ? '(testnet)' : ''}</div>
-          <div class="muted" style="margin-top:4px;word-break:break-all">tx ${hash}</div>
+          <div class="muted" style="margin-top:4px;word-break:break-all">tx ${txCell}</div>
           ${d.note ? `<div class="muted" style="margin-top:4px">${esc(d.note)}</div>` : ''}</div>`;
         prepared = null;                      // consumed — force a fresh nonce next time
         msg(d.broadcast ? 'Broadcast to testnet.' : 'Signed.');
