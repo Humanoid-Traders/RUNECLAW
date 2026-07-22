@@ -1281,8 +1281,22 @@ class RiskEngine:
 
         try:
             # 6b. Leverage-aware margin risk cap
-            # SL distance % × leverage must not exceed max_margin_risk_pct
+            # SL distance % × leverage must not exceed max_margin_risk_pct.
+            # Use the leverage the executor will ACTUALLY size with: a runtime
+            # /leverage override wins over the env default (the executor's
+            # _compute_target_leverage reads RUNTIME.leverage_override first).
+            # Per-user prefs and dynamic scaling only REDUCE from here, so the
+            # override is the conservative worst case this cap must bound —
+            # evaluating at the lower env default let an override above it size
+            # past the cap unchecked. No override → identical to before.
             leverage = CONFIG.exchange.default_leverage
+            try:
+                from bot.config import RUNTIME
+                _lev_override = RUNTIME.leverage_override
+                if _lev_override is not None:
+                    leverage = max(1, int(_lev_override))
+            except Exception:
+                pass
             if leverage > 1 and idea.entry_price > 0:
                 sl_dist_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price * 100
                 margin_risk = sl_dist_pct * leverage
