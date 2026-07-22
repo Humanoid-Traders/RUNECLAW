@@ -4942,6 +4942,52 @@
     </section>`;
   }
 
+  // Incident ledger — the safety controls made visible: what stopped a trade
+  // (block), what unwound risk (recovery), what was flagged. Read-only mirror of
+  // the sealed chain; no dollar amounts (§4).
+  const _KIND_META = {
+    block: { icon: '🛑', label: 'Blocked', col: 'var(--down,#f05252)' },
+    recovery: { icon: '🪂', label: 'Recovered', col: 'var(--up,#31c48d)' },
+    flag: { icon: '⚠️', label: 'Flagged', col: 'var(--warn,#f0a848)' },
+  };
+  function incidentsCard(d) {
+    if (!d || typeof d !== 'object') return '';
+    const items = Array.isArray(d.incidents) ? d.incidents : [];
+    const c = d.counts || {};
+    const tally = [
+      c.block ? `<span style="color:${_KIND_META.block.col}">🛑 ${c.block} blocked</span>` : '',
+      c.recovery ? `<span style="color:${_KIND_META.recovery.col}">🪂 ${c.recovery} recovered</span>` : '',
+      c.flag ? `<span style="color:${_KIND_META.flag.col}">⚠️ ${c.flag} flagged</span>` : '',
+    ].filter(Boolean).join(' · ');
+    if (!items.length) {
+      return `<div class="empty small muted" style="padding:var(--s4)">${
+        esc(d.note || 'No safety incidents recorded — the controls have had nothing to stop or recover.')}</div>`;
+    }
+    const rows = items.map((i) => {
+      const m = _KIND_META[i.kind] || _KIND_META.flag;
+      const sev = riskCol(i.severity);
+      const seq = (i.chain && i.chain.sequence != null) ? `#${i.chain.sequence}` : '';
+      return `<div style="display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line,#2a2f3a)">
+        <div style="font-size:18px;line-height:1.2">${m.icon}</div>
+        <div style="min-width:0;flex:1">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline">
+            <strong style="color:${m.col}">${esc(m.label)}</strong>
+            <span class="chip" style="border-color:${sev};color:${sev};font-size:10px;padding:1px 6px">${esc(String(i.category || ''))}</span>
+            ${i.symbol ? `<span class="muted small">${esc(i.symbol)}</span>` : ''}
+            <span class="right muted small" style="margin-left:auto">${esc(fmtAgo(i.ts))} ${seq ? `· <span style="opacity:.6">${esc(seq)}</span>` : ''}</span>
+          </div>
+          ${i.detail ? `<div class="small muted" style="margin-top:2px">${esc(i.detail)}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    return `<div>
+      <div class="small muted" style="margin-bottom:6px">${tally || 'Safety events'} ${
+        d.derived ? '· <span style="opacity:.7">(rejections shown; full incident stream after next sync)</span>' : ''}</div>
+      ${rows}
+      <div class="small muted" style="margin-top:8px;font-style:italic">Every entry is sealed in the tamper-evident chain — the AI proposes, the controls stop or recover, the recorder proves.</div>
+    </div>`;
+  }
+
   function guardianBlock(data) {
     const recs = (data && data.records) || [];
     const head = `<div style="margin-bottom:var(--s4)">${chainBanner(data.chain, data.window, data.updated_at)}</div>`
@@ -4964,6 +5010,9 @@
         <section class="panel" id="p-readiness"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Readiness score
           <span class="right muted small">how constrained the agent is right now</span></h2>
           <div id="c-readiness"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-incidents"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-alert"></use></svg>Incident ledger
+          <span class="right muted small">what the controls stopped &amp; recovered</span></h2>
+          <div id="c-incidents"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel panel--primary" id="p-flight"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Decision ledger
           <span class="right muted small">inputs · reasoning · model · risk gate · outcome</span></h2>
           <div id="c-flight"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></section>
@@ -4982,6 +5031,11 @@
       if (!r || !r.ok || !r.data) return null;
       return readinessCard(r.data);
     }, { empty: { icon: 'icon-shield', text: 'The readiness score needs you signed in — it reads your own agent’s safety posture.' } });
+    renderPanel(C('incidents'), async () => {
+      const r = await fetchJSON('/api/guardian/incidents?limit=40', { auth: false, timeoutMs: 14000 });
+      if (!r || !r.ok || !r.data) return null;
+      return incidentsCard(r.data);
+    }, { empty: { icon: 'icon-alert', text: 'No safety incidents recorded yet — the controls have had nothing to stop or recover.' } });
     renderPanel(C('flight'), async () => {
       const r = await fetchJSON('/api/guardian/flight?limit=50', { auth: false, timeoutMs: 16000 });
       if (!r || !r.ok || !r.data) return null;

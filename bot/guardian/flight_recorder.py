@@ -339,6 +339,119 @@ def assemble_flight_records(entries: Any, limit: int = 50) -> list[dict]:
     return out
 
 
+# ── Incident ledger ──────────────────────────────────────────────────────────
+#
+# The Guardian layer seals more than trade DECISIONs into the chain: it also
+# seals the moments a safety control ACTED — a firewall verdict, a risk-gate
+# rejection, an escape plan, a sentinel/twin warning, an intent-policy or
+# authority denial, a self-critique halt. assemble_flight_records surfaces only
+# DECISION/OUTCOME; this surfaces those safety events, normalised, so the website
+# can show "what the AI wanted → what stopped it → what recovered". Read-only:
+# a mirror of already-sealed events, never a new control.
+
+_INCIDENT_KIND = {
+    "FIREWALL": "block", "AUTH_DENIED": "block", "CRITIQUE_HALT": "block",
+    "POLICY_DECISION": "flag", "ESCAPE": "recovery", "TWIN": "flag",
+    "SENTINEL": "flag",
+}
+_INCIDENT_CATEGORY = {
+    "FIREWALL": "Prompt-injection firewall",
+    "AUTH_DENIED": "Authority denied",
+    "CRITIQUE_HALT": "Self-critique halt",
+    "POLICY_DECISION": "Intent policy",
+    "ESCAPE": "Escape plan",
+    "TWIN": "Portfolio twin",
+    "SENTINEL": "Risk sentinel",
+}
+_SEV_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3}
+
+
+def _incident_from_guardian(etype: str, e: dict, payload: dict):
+    """Normalise one sealed guardian event → an incident dict, or None if the
+    event was a clean pass (a routine check that did NOT act is not an incident).
+    Fail-open: any shape surprise returns None rather than raising."""
+    risk = str(payload.get("risk") or "").lower()
+    # Filter routine clean checks out of the ledger.
+    if etype == "FIREWALL" and not (risk in ("medium", "high") or payload.get("blocked")):
+        return None
+    if etype in ("TWIN", "SENTINEL") and risk not in ("medium", "high"):
+        return None
+    if etype == "ESCAPE" and not (payload.get("recommended") or payload.get("position_count")):
+        return None
+    if etype == "POLICY_DECISION":
+        denied = (str(payload.get("decision") or "").lower() in ("deny", "block", "reject")
+                  or payload.get("allowed") is False)
+        kind = "block" if denied else "flag"
+        if not denied and risk not in ("medium", "high"):
+            return None
+    else:
+        kind = _INCIDENT_KIND.get(etype, "flag")
+    severity = risk if risk in _SEV_RANK else ("high" if kind == "block" else "medium")
+    # Best-effort one-liner drawn strictly from the sealed payload — no dollars.
+    detail = ""
+    for k in ("reason", "action", "top_group", "recommended", "summary", "note"):
+        v = payload.get(k)
+        if isinstance(v, str) and v:
+            detail = v
+            break
+    if not detail and isinstance(payload.get("concerns"), list) and payload["concerns"]:
+        c0 = payload["concerns"][0]
+        detail = c0 if isinstance(c0, str) else (c0.get("text") or c0.get("label") or "") if isinstance(c0, dict) else ""
+    if etype == "ESCAPE" and not detail:
+        steps = payload.get("steps")
+        detail = f"{len(steps)} unwind step(s)" if isinstance(steps, list) else "exit plan ready"
+    return {
+        "id": e.get("entry_hash") or f"{etype}-{e.get('sequence')}",
+        "ts": payload.get("timestamp") or e.get("timestamp", ""),
+        "kind": kind,
+        "category": _INCIDENT_CATEGORY.get(etype, etype.title()),
+        "severity": severity,
+        "symbol": str(payload.get("symbol") or ""),
+        "detail": str(detail or "")[:200],
+        "chain": {"sequence": e.get("sequence"), "entry_hash": e.get("entry_hash", "")},
+    }
+
+
+def assemble_incident_records(entries: Any, limit: int = 40) -> list[dict]:
+    """Safety incidents (blocks & recoveries), newest first, from the sealed
+    chain: guardian events that ACTED, plus risk-gate rejections (DECISION
+    records whose outcome starts REJECTED). Pure and fail-open — a bad entry is
+    skipped, never fatal. No dollar amounts are emitted (§4-safe to surface)."""
+    if not entries:
+        return []
+    try:
+        norm = [_entry_dict(e) for e in entries]
+    except Exception:
+        return []
+    out: list[dict] = []
+    for e in norm:
+        try:
+            etype = e.get("event_type")
+            payload = e.get("payload") or {}
+            if etype in _INCIDENT_KIND:
+                inc = _incident_from_guardian(etype, e, payload)
+                if inc:
+                    out.append(inc)
+            elif etype == "DECISION" and str(payload.get("outcome") or "").startswith("REJECTED"):
+                risk = payload.get("risk") or {}
+                failed = risk.get("checks_failed") or []
+                detail = risk.get("reason") or (failed[0] if failed else "risk gate rejected the trade")
+                out.append({
+                    "id": e.get("entry_hash") or f"REJECT-{e.get('sequence')}",
+                    "ts": payload.get("timestamp") or e.get("timestamp", ""),
+                    "kind": "block",
+                    "category": "Risk-gate rejection",
+                    "severity": "high",
+                    "symbol": str(payload.get("symbol") or ""),
+                    "detail": str(detail)[:200],
+                    "chain": {"sequence": e.get("sequence"), "entry_hash": e.get("entry_hash", "")},
+                })
+        except Exception:
+            continue
+    out.reverse()  # newest first
+    return out[:limit]
+
+
 def verify_entries(entries: Any) -> tuple[bool, list[str]]:
     """Re-derive the hash chain over an in-memory list of entries.
 

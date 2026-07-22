@@ -94,4 +94,57 @@ router.get('/flight/:decisionId', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/guardian/incidents?limit=40
+ * The safety-engine incident ledger — blocks (firewall / risk-gate rejection /
+ * auth-denied / self-critique halt / intent-policy deny) and recoveries (escape
+ * plans), plus twin/sentinel flags — mirrored read-only from the sealed chain.
+ * Falls back to deriving blocks from REJECTED flight records for older bots that
+ * don't yet send an `incidents` array. Percent/flags only, no dollar amounts.
+ */
+router.get('/incidents', async (req, res) => {
+  try {
+    const flight = await getLatestFlight();
+    let limit = parseInt(req.query.limit, 10);
+    if (!Number.isFinite(limit) || limit < 1) limit = 40;
+    limit = Math.min(limit, 100);
+
+    let incidents = (flight && Array.isArray(flight.incidents)) ? flight.incidents : null;
+    let derived = false;
+    if (!incidents) {
+      // Fallback: surface rejected decisions as block incidents.
+      const recs = (flight && Array.isArray(flight.records)) ? flight.records : [];
+      incidents = recs
+        .filter((r) => r && String(r.outcome || '').startsWith('REJECTED'))
+        .map((r) => ({
+          id: (r.chain && r.chain.entry_hash) || r.decision_id || '',
+          ts: r.timestamp || '',
+          kind: 'block', category: 'Risk-gate rejection', severity: 'high',
+          symbol: r.symbol || '',
+          detail: (r.risk && (r.risk.reason
+            || (Array.isArray(r.risk.checks_failed) && r.risk.checks_failed[0]))) || 'rejected',
+          chain: r.chain || null,
+        }));
+      derived = true;
+    }
+    incidents = incidents.slice(0, limit);
+    const tally = { block: 0, recovery: 0, flag: 0 };
+    for (const i of incidents) { if (i && tally[i.kind] !== undefined) tally[i.kind]++; }
+
+    res.json({
+      read_only: true,
+      incidents,
+      counts: tally,
+      derived,                          // true = fallback (rejections only)
+      guardian_status: (flight && flight.guardian_status) || null,
+      updated_at: (flight && flight.updated_at) || null,
+      note: incidents.length ? undefined
+        : 'No safety incidents recorded — the controls have had nothing to stop or recover.',
+    });
+  } catch (err) {
+    console.error('Guardian incidents error:', err.message);
+    res.status(500).json({ error: 'Failed to read incidents' });
+  }
+});
+
 module.exports = router;
