@@ -175,6 +175,7 @@ app.use('/api/tax', require('./routes/tax'));
 app.use('/api/reputation', require('./routes/reputation'));
 app.use('/api/counterparty', require('./routes/counterparty'));
 app.use('/api/web3', require('./routes/web3'));
+app.use('/api/dapps', require('./routes/dapps'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
