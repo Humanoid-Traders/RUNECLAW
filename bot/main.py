@@ -311,6 +311,33 @@ def run_telegram() -> None:
             # protective stop fails to place. No-op unless per-user live is on.
             await _per_user_credential_preflight(engine, app.bot)
 
+            # Poller-supervision watchdog. The engine has a restart loop (below)
+            # but the Telegram updater did NOT — if polling stalled (a 409
+            # getUpdates conflict from two instances overlapping on a redeploy, a
+            # network blip, a transient Telegram error) the bot went silent and
+            # never recovered until a full restart. This ticks the updater's
+            # health and revives polling if it has stopped while we are NOT
+            # shutting down. Fully fail-open; never raises into the boot path.
+            poller_state = {"stopping": False}
+
+            async def _poller_watchdog() -> None:
+                from bot.core.boot_health import poller_should_restart
+                interval = int(os.environ.get("POLLER_WATCHDOG_SEC", "30") or 30)
+                while not poller_state["stopping"]:
+                    await asyncio.sleep(interval)
+                    try:
+                        running = bool(getattr(app.updater, "running", False))
+                        if poller_should_restart(running, poller_state["stopping"]):
+                            audit(system_log,
+                                  "Telegram poller stopped unexpectedly — restarting polling",
+                                  action="poller_restart", result="RECOVERING")
+                            print("  WARNING: Telegram poller stalled, restarting polling...")
+                            await app.updater.start_polling(drop_pending_updates=True)
+                    except Exception as exc:  # never let the watchdog die
+                        system_log.debug("poller watchdog tick failed: %s", exc)
+
+            watchdog_task = asyncio.create_task(_poller_watchdog())
+
             # Keep running forever — restart engine if it crashes
             while True:
                 try:
@@ -330,6 +357,13 @@ def run_telegram() -> None:
                     await asyncio.sleep(10)
                     engine_task = asyncio.create_task(engine.run())
         finally:
+            # Tell the watchdog we are shutting down BEFORE stopping the updater,
+            # so it never fights the intentional stop by re-starting polling.
+            try:
+                poller_state["stopping"] = True
+                watchdog_task.cancel()
+            except NameError:
+                pass  # boot failed before the watchdog was created
             await handler.stop_monitor()
             if dashboard_runner:
                 await dashboard_runner.cleanup()
@@ -432,9 +466,22 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.mode == "telegram":
-        if not CONFIG.telegram.bot_token:
-            print("ERROR: TELEGRAM_BOT_TOKEN not set. Cannot start bot.")
+        # Loud env preflight: name EVERY missing secret at once (not just the
+        # first check that trips), so a wiped-.env redeploy is diagnosed in one
+        # line instead of a guessing game. The secrets vault (config.py) has
+        # already run its self-heal by now, so this reflects the post-restore
+        # state. Critical-missing is fatal; important-missing degrades a web
+        # surface but the bot still trades, so we log and continue.
+        from bot.core.boot_health import env_preflight, format_preflight
+        _pf = env_preflight(os.environ)
+        _msg = format_preflight(_pf)
+        if _pf["critical"]:
+            print(f"ERROR: {_msg}")
+            audit(system_log, _msg, action="startup", result="ENV_MISSING")
             sys.exit(1)
+        if _pf["important"]:
+            print(f"WARNING: {_msg}")
+            audit(system_log, _msg, action="startup", result="ENV_DEGRADED")
         run_telegram()
     elif args.mode == "scan":
         asyncio.run(run_scan())
