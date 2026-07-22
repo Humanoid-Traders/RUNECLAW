@@ -48,16 +48,19 @@ def test_no_stale_sonnet_46_in_routing():
     assert "claude-sonnet-4-6" not in set(_all_routing_models())
 
 
-def test_free_tier_routes_only_to_free_providers():
-    # Free/default users (no BYOK key) must resolve to providers with a real free
-    # tier — never Alibaba's paid hackathon endpoint (which was the old SCAN/CHAT
-    # default and silently required $30 of credits). Gemini + Groq are free.
+def test_free_tier_routes_only_to_free_or_operator_funded_providers():
+    # Free/default users (no BYOK key) must resolve to a provider with a real free
+    # tier (Gemini/Groq/…) OR the operator-funded, quota-capped chat model (Grok) —
+    # NEVER Alibaba's paid hackathon endpoint (the old SCAN/CHAT default that
+    # silently required $30 of credits with no per-user quota fence).
     from bot.llm.provider import LLMProvider
-    free_ok = {LLMProvider.GEMINI, LLMProvider.GROQ, LLMProvider.OLLAMA,
-               LLMProvider.RUNECLAW, LLMProvider.TOGETHER, LLMProvider.OPENROUTER}
+    allowed = {LLMProvider.GEMINI, LLMProvider.GROQ, LLMProvider.OLLAMA,
+               LLMProvider.RUNECLAW, LLMProvider.TOGETHER, LLMProvider.OPENROUTER,
+               LLMProvider.GROK}   # Grok is operator-funded + 5/day quota-bounded
     for tier, cfg in DEFAULT_TIER_ROUTING.items():
-        assert cfg["provider"] in free_ok, (
-            f"free-tier {tier} routes to non-free {cfg['provider']}")
+        assert cfg["provider"] in allowed, (
+            f"free-tier {tier} routes to disallowed {cfg['provider']}")
+        assert cfg["provider"] != LLMProvider.ALIBABA
 
 
 def test_no_deprecated_model_ids_in_routing():

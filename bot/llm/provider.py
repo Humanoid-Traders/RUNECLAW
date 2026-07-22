@@ -36,6 +36,7 @@ class LLMProvider(str, Enum):
     OLLAMA        = "ollama"          # Local Ollama — fully private, no cost
     OPENROUTER    = "openrouter"      # OpenRouter — routes to 100+ models
     ALIBABA       = "alibaba"         # Alibaba Cloud / DashScope — Qwen models
+    GROK          = "grok"            # xAI Grok (api.x.ai, OpenAI-compatible)
     RUNECLAW      = "runeclaw"        # In-house fine-tuned RUNECLAW model (self-hosted)
     CUSTOM        = "custom"          # Any OpenAI-compatible base URL
 
@@ -173,6 +174,19 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
         "notes": "Alibaba Cloud Qwen via Bitget Hackathon endpoint. $30 credits included.",
         "get_key_url": "https://dashscope.console.aliyun.com/apiKey",
     },
+    LLMProvider.GROK: {
+        "base_url": "https://api.x.ai/v1",
+        "default_model": os.getenv("XAI_MODEL", "grok-4.3"),
+        "recommended_models": ["grok-4.3", "grok-4.5", "grok-4.1-fast"],
+        "sdk": "openai",
+        "free_tier": False,        # paid, but operator-funded as the FREE-USER chat model
+        "speed": "fast",
+        "cost": "low",             # grok-4.3 ≈ $1.25 in / $2.50 out per MTok (2026-07)
+        "notes": ("xAI Grok. Operator-funded as the free-user chat model (quota-capped, "
+                  "5 questions/day) — grok-4.3 at ~$1.25/$2.50 per MTok. Set the exact "
+                  "id via XAI_MODEL if it differs."),
+        "get_key_url": "https://console.x.ai/",
+    },
     LLMProvider.RUNECLAW: {
         # The in-house fine-tuned RUNECLAW model (Llama 3.1 8B + LoRA), served
         # from any OpenAI-compatible runtime the operator controls. Default is
@@ -245,9 +259,9 @@ DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
         "reason": "1M+ context, strong at reflection/analysis, free tier for occasional use",
     },
     LLMTier.CHAT: {
-        "provider": LLMProvider.GROQ,
-        "model": "openai/gpt-oss-20b",
-        "reason": "Fast, free user-facing responses — Anthropic is reserved for admin",
+        "provider": LLMProvider.GROK,
+        "model": os.getenv("XAI_MODEL", "grok-4.3"),
+        "reason": "Free-user chat runs on operator-funded xAI Grok (quota-capped 5/day); falls back to Groq/primary if XAI_API_KEY is unset",
     },
 }
 
@@ -421,6 +435,7 @@ _PROVIDER_KEY_ENV = {
     LLMProvider.MISTRAL: "MISTRAL_API_KEY",
     LLMProvider.TOGETHER: "TOGETHER_API_KEY",
     LLMProvider.OPENROUTER: "OPENROUTER_API_KEY",
+    LLMProvider.GROK: "XAI_API_KEY",
     LLMProvider.RUNECLAW: "RUNECLAW_LLM_API_KEY",
 }
 
@@ -569,6 +584,7 @@ def resolve_tier_config(
                         LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
                         LLMProvider.OPENAI: "OPENAI_API_KEY",
                         LLMProvider.ALIBABA: "ALIBABA_API_KEY",
+                        LLMProvider.GROK: "XAI_API_KEY",
                         LLMProvider.RUNECLAW: "RUNECLAW_LLM_API_KEY",
                     }
                     fallback_env = key_env_map.get(tier_provider, "")
