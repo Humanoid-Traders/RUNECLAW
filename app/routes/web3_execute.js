@@ -87,6 +87,37 @@ router.post('/sign', async (req, res) => {
 });
 
 /**
+ * POST /api/web3/cross-plan — CROSS-2 guided yield execution PREVIEW (admin-only).
+ *
+ * Read-only: compiles a scanned move into an execution plan and runs the triple-
+ * gate (scanner + yield policy + Authority Envelope) server-side. Never signs.
+ * When the verdict is 'execute', the operator signs the first-leg transfer via
+ * POST /api/web3/sign — this endpoint only decides and previews.
+ */
+router.post('/cross-plan', async (req, res) => {
+  try {
+    if (!gateway.isConfigured()) {
+      return res.status(503).json({ error: 'Yield execution not configured' });
+    }
+    const b = req.body || {};
+    if (!b.move || typeof b.move !== 'object') {
+      return res.status(400).json({ error: 'move object required' });
+    }
+    const ident = await resolveBotIdentity(req);
+    const r = await gateway.postGateway('/cross/plan', {
+      telegram_id: ident.id,
+      move: b.move,
+      to_chain: String(b.to_chain || ''),
+      dest: String(b.dest || ''),
+    }, 15000);
+    return gateway.relay(res, r);
+  } catch (err) {
+    console.error('Cross-yield plan proxy error:', err.message);
+    return res.status(502).json({ error: 'Yield execution unavailable' });
+  }
+});
+
+/**
  * POST /api/web3/deploy — Contract Studio slice 5 (admin-only, TESTNET-ONLY).
  *
  * One-click deploy of a compiled contract's init bytecode: a contract-CREATION

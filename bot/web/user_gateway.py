@@ -679,6 +679,57 @@ async def handle_contract_deploy(request: web.Request) -> web.Response:
     })
 
 
+async def handle_cross_plan(request: web.Request) -> web.Response:
+    """CROSS-2 — guided cross-chain yield execution PREVIEW (admin-only, read-only).
+
+    Compiles a single scanned move into an execution plan and runs the triple-
+    gate (scanner-worth + yield-policy + Authority-Envelope) plus the locked
+    hard-gates (stables-only, non-custodial, recallable). This ONLY decides and
+    previews — it never signs or broadcasts. When it returns verdict=execute, the
+    operator signs the first-leg transfer through the existing gated testnet
+    signer (POST /web3/sign). Fail-closed; the signing key is never touched."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "yield execution is admin-only"}, status=403)
+
+    move = body.get("move") if isinstance(body.get("move"), dict) else None
+    to_chain = str(body.get("to_chain") or "").strip()
+    dest = str(body.get("dest") or "").strip()
+    if not move:
+        return web.json_response({"error": "move object required"}, status=400)
+
+    import time as _time
+    from bot.guardian.yield_plan import evaluate_yield_move, DEFAULT_YIELD_POLICY
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        _store = get_user_authority_store()
+        envelope = _store.get(tg_id) if _store else None
+    except Exception:
+        envelope = None
+
+    decision = evaluate_yield_move(
+        move=move, to_chain=to_chain, dest=dest, envelope=envelope,
+        now_ts=_time.time(), spent_today_usd=0.0)
+    return web.json_response({
+        "verdict": decision["verdict"],
+        "gates": decision["gates"],
+        "reasons": decision["reasons"],
+        "first_leg": decision["first_leg"],
+        "stables_only_ok": decision["stables_only_ok"],
+        "horizon_days": decision["horizon_days"],
+        "policy": [dict(r) for r in DEFAULT_YIELD_POLICY],
+        "read_only": True,
+        "note": ("Preview only — nothing is signed here. When the verdict is "
+                 "'execute', sign the first-leg transfer through the admin "
+                 "testnet signer; bridge + deposit legs are a later slice."),
+        "intent": "cross_yield_plan",
+    })
+
+
 def _setup_from_new_idea(engine, ideas_before: set) -> dict | None:
     """A READ-ONLY setup hint for the web chat's one-tap "Trade this".
 
@@ -2668,6 +2719,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/contract/studio", handle_contract_studio)
     app.router.add_post("/contract/compile", handle_contract_compile)
     app.router.add_post("/contract/deploy", handle_contract_deploy)
+    app.router.add_post("/cross/plan", handle_cross_plan)
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/positions", handle_positions)
