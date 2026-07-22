@@ -592,7 +592,7 @@ def _idea_payload(app, tg_handler, tg_id: str, idea, margin_usd) -> dict:
         "sl_pct": round(abs(entry - sl) / entry * 100, 2),
         "tp_pct": round(abs(tp - entry) / entry * 100, 2),
         "margin_usd": margin_usd,
-        "order_type": "limit",
+        "order_type": getattr(idea, "order_type", "limit") or "limit",
         "mode": mode,
         "live_allowed": live_allowed,
         "live_reason": live_reason,
@@ -600,7 +600,7 @@ def _idea_payload(app, tg_handler, tg_id: str, idea, margin_usd) -> dict:
 
 
 def _propose_from_text(app, tg_handler, engine, tg_id: str, text: str,
-                       name: str = "") -> web.Response:
+                       name: str = "", order_type: str = "limit") -> web.Response:
     from bot.skills.manual_trade import (parse_manual_trade, build_manual_idea,
                                          register_manual_idea)
     err = _guard_user(tg_handler, tg_id, command="trade", name=name)
@@ -612,7 +612,8 @@ def _propose_from_text(app, tg_handler, engine, tg_id: str, text: str,
                                  status=400)
     direction, symbol, entry, sl, tp, margin_usd = parsed
     try:
-        idea = build_manual_idea(direction, symbol, entry, sl, tp)
+        idea = build_manual_idea(direction, symbol, entry, sl, tp,
+                                 order_type=order_type)
     except ValueError as e:
         return web.json_response({"error": "invalid_trade",
                                   "detail": _html.escape(str(e))}, status=400)
@@ -638,6 +639,12 @@ async def handle_trade_propose(request: web.Request) -> web.Response:
 
     # Accept raw text ("buy SOL 71 sl 70 tp 76") or structured fields; both are
     # normalized through the ONE shared parser so validation cannot drift.
+    # Order type: 'market' (open now) or 'limit' (rest at entry). Default limit
+    # keeps the platform's historical maker-only behaviour; the parser grammar
+    # has no place for it, so it rides alongside the reassembled text.
+    from bot.skills.manual_trade import normalize_order_type
+    order_type = normalize_order_type(body.get("order_type"))
+
     text = str(body.get("text") or "").strip()
     if not text:
         try:
@@ -659,7 +666,7 @@ async def handle_trade_propose(request: web.Request) -> web.Response:
                 status=400)
         text = f"{direction} {symbol} {entry} sl {sl} tp {tp}{margin_txt}"
     return _propose_from_text(request.app, tg_handler, engine, tg_id, text,
-                              name=name)
+                              name=name, order_type=order_type)
 
 
 async def handle_trade_confirm(request: web.Request) -> web.Response:

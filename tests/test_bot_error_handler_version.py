@@ -110,6 +110,19 @@ class TestRegistration:
         src = Path(__file__).resolve().parent.parent / "bot/skills/telegram_handler.py"
         assert '("version", self._cmd_version)' in src.read_text(encoding="utf-8")
 
+    def test_build_app_sizes_http_pool_for_concurrency(self):
+        # Incident: telegram.error.TimedOut on a single update while other work
+        # was in flight. concurrent_updates(True) with PTB's default 1-connection
+        # pool + 1s pool timeout raises TimedOut under any burst. build_app must
+        # widen the pool and socket timeouts so a merely-slow moment reaching
+        # Telegram does not surface as a "something broke" to the operator.
+        src = (Path(__file__).resolve().parent.parent
+               / "bot/skills/telegram_handler.py").read_text(encoding="utf-8")
+        assert ".connection_pool_size(" in src
+        assert ".pool_timeout(" in src
+        assert ".read_timeout(" in src
+        assert ".write_timeout(" in src
+
     def test_version_matches_pyproject(self):
         from bot import __version__
         pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
