@@ -2059,6 +2059,96 @@ async def handle_staking_fixed_execute(request: web.Request) -> web.Response:
 
 # ── App factory ──────────────────────────────────────────────────────────────
 
+async def handle_web3_execute(request: web.Request) -> web.Response:
+    """WEB3-LIVE-EXEC slice 1 — admin-only, envelope-gated DRY-RUN PREVIEW of an
+    on-chain action. It NEVER signs or broadcasts: it proves the full gate +
+    Authority-Envelope authorization path and returns a preview (the way the
+    proof-of-PnL anchor dry-run does). Signing and broadcast ship in a later,
+    separately-gated slice — this handler must never call a signer or send a tx.
+
+    The on-chain action is authorized as a TRANSFER: value leaving the account to
+    a destination, so the envelope must have withdraw_allowed AND the destination
+    (router/recipient) on its allowlist — the correct discipline for any real
+    outflow, exercised here before a single wei can ever move.
+    """
+    import time as _time
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    # Admin-only in this phase.
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "web3 execution is admin-only"}, status=403)
+
+    from bot.web import web3_exec_gate as _gate
+    network = str(body.get("network") or "sepolia")
+    broadcast = bool(body.get("broadcast"))
+    action_in = {
+        "side": str(body.get("side") or "swap"),
+        "from_token": str(body.get("from_token") or "").upper(),
+        "to_token": str(body.get("to_token") or "").upper(),
+        "amount_usd": body.get("amount_usd"),
+        "dest": str(body.get("dest") or ""),
+    }
+
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        _store = get_user_authority_store()
+        enforcing = bool(_store.is_enforcing(tg_id))
+    except Exception:
+        _store, enforcing = None, False
+
+    # 1) Preconditions (feature flag, admin, testnet-first, preview-only, envelope).
+    decision = _gate.evaluate(is_admin=True, network=network,
+                              envelope_enforcing=enforcing, broadcast=broadcast)
+    if not decision.allowed:
+        return web.json_response({"error": "web3_gate_denied", "reason": decision.reason,
+                                  "checklist": decision.checklist}, status=403)
+
+    # 2) The Authority Envelope authorizes THIS specific outflow (transfer).
+    env_id = None
+    try:
+        from bot.guardian.authority import authorize
+        env = _store.get(tg_id) if _store else None
+        notional = None
+        try:
+            if action_in["amount_usd"] is not None:
+                notional = float(action_in["amount_usd"])
+        except (TypeError, ValueError):
+            notional = None
+        auth_action = {"kind": "transfer",
+                       "asset": action_in["to_token"] or action_in["from_token"],
+                       "notional_usd": notional, "dest": action_in["dest"] or None}
+        result = authorize(env, auth_action, now_ts=_time.time(), spent_today_usd=0.0)
+        if result.get("decision") != "allow":
+            return web.json_response({"error": "authority_denied",
+                                      "reasons": list(result.get("reasons") or ["not authorized"])},
+                                     status=403)
+        env_id = result.get("envelope_id")
+    except Exception:
+        return web.json_response({"error": "authority_check_failed"}, status=403)
+
+    # 3) DRY-RUN PREVIEW ONLY — no signer exists and none is called here.
+    net = decision.network or {}
+    audit(system_log, f"Web3 exec PREVIEW (admin) {action_in['side']} on {network}",
+          action="web3_exec_preview", result="OK", data={"network": network})
+    return web.json_response({
+        "dry_run": True,
+        "broadcast": False,
+        "network": net.get("label"),
+        "chain_id": net.get("chain_id"),
+        "testnet": net.get("testnet"),
+        "action": action_in,
+        "envelope": {"id": env_id, "mode": (_store.mode(tg_id) if _store else "off")},
+        "estimate": {"note": "on-chain route quote + gas estimate arrive with the "
+                             "signer slice; this preview proves the gate + envelope path"},
+        "note": "Preview only — RUNECLAW did not sign or broadcast anything. Real "
+                "signing ships in a later, separately-gated, still admin-only, "
+                "still envelope-enforced slice.",
+    })
+
+
 def build_gateway(engine, tg_handler) -> web.Application:
     """Build the /gateway sub-app. Caller mounts it under the dashboard app."""
     app = web.Application(middlewares=[secret_middleware])
@@ -2083,6 +2173,9 @@ def build_gateway(engine, tg_handler) -> web.Application:
     # Fixed-term staking (WEB-2): operator-only, double-confirm w/ lock end.
     app.router.add_get("/staking/fixed", handle_staking_fixed_options)
     app.router.add_post("/staking/fixed", handle_staking_fixed_execute)
+    # WEB3-LIVE-EXEC slice 1: admin-only, envelope-gated on-chain PREVIEW (no
+    # signer, no broadcast — the safety spine for future live signing).
+    app.router.add_post("/web3/execute", handle_web3_execute)
     # LLM connect (WEB-1): per-user BYOK key + admin ULTRA toggle.
     app.router.add_get("/llm", handle_llm_status)
     app.router.add_post("/llm", handle_llm_set)

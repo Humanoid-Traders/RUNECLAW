@@ -183,6 +183,7 @@ app.use('/api/spot', require('./routes/spot'));
 app.use('/api/tax', require('./routes/tax'));
 app.use('/api/reputation', require('./routes/reputation'));
 app.use('/api/counterparty', require('./routes/counterparty'));
+app.use('/api/web3', require('./routes/web3_execute'));   // admin-only preview (mounted first: specific POST /execute)
 app.use('/api/web3', require('./routes/web3'));
 app.use('/api/dapps', require('./routes/dapps'));
 
