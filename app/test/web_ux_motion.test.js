@@ -75,3 +75,17 @@ test('landing marks below-the-fold sections for scroll-reveal', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.ok((html.match(/class="section reveal-on-scroll"/g) || []).length >= 3);
 });
+
+test('staggered child reveal is CSS-only, keyed off the parent, reduced-motion safe', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  // The feature grid and loop steps opt into the stagger.
+  assert.match(html, /class="feature-grid rc-stagger"/);
+  assert.match(html, /class="loop-steps rc-stagger"/);
+  // Children hide only while the parent section is still hidden, then reveal
+  // with incremental per-child transition delays once the parent is in view.
+  assert.match(css, /\.reveal-on-scroll \.rc-stagger > \*\s*\{[^}]*opacity:\s*0/);
+  assert.match(css, /\.reveal-on-scroll\.rc-inview \.rc-stagger > \*\s*\{[^}]*opacity:\s*1/);
+  assert.match(css, /\.reveal-on-scroll\.rc-inview \.rc-stagger > \*:nth-child\(2\)\s*\{[^}]*transition-delay/);
+  // No motion means no stagger: children are simply visible, no transition.
+  assert.match(css, /prefers-reduced-motion: reduce\)\s*\{\s*\.reveal-on-scroll \.rc-stagger > \*\s*\{[^}]*opacity:\s*1[^}]*transition:\s*none/);
+});
