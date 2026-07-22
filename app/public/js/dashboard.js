@@ -5356,7 +5356,7 @@
     panel.hidden = false;
     panel.innerHTML = `
       <h2 class="panel-title">✍️ Testnet live signer
-        <span class="right muted small">admin · TESTNET-ONLY · triple default-OFF</span></h2>
+        <span class="right muted small">admin · TESTNET-ONLY · mainnet hard-blocked · envelope-enforced</span></h2>
       <div id="sgn-status"><div class="skel"></div><div class="skel"></div></div>`;
     const yn = (v) => v
       ? '<span class="chip" style="border-color:var(--up,#31c48d);color:var(--up,#31c48d);font-size:10px;padding:1px 6px">on</span>'
