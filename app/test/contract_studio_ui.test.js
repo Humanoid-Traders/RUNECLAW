@@ -63,6 +63,21 @@ test('the draft panel lets you take the code out (copy + download .sol)', () => 
   assert.match(dash, /new Blob\(\[code\]/);
 });
 
+test('the draft panel can compile-check the draft (no money-path)', () => {
+  // Compile is a pure build check — bytecode readiness + solc errors, no deploy.
+  assert.match(dash, /id="cs-compile"/);
+  assert.match(dash, /fetchJSON\('\/api\/contract\/compile'/);
+  assert.match(dash, /body: \{ solidity: code \}/);
+  // it reads the compile result, and compiling is never presented as "safe".
+  assert.match(dash, /✓ Compiles/);
+  assert.match(dash, /Compiling is not a/);
+  assert.match(dash, /safety guarantee — still get an audit before mainnet/);
+  const fn = dash.slice(dash.indexOf('function renderContractStudio('));
+  const body = fn.slice(0, fn.indexOf('async function renderLeaderboard('));
+  assert.ok(!/signTransaction|sendRawTransaction|broadcast|value_wei/.test(body),
+    'compile-check only — still no signing or value movement in the studio view');
+});
+
 test('the dashboard.js cache-buster is bumped', () => {
   assert.match(html, /dashboard\.js\?v=\d\d+/);
 });

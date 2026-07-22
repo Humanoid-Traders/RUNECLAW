@@ -157,6 +157,112 @@ def flags_summary(flags: list[SecurityFlag]) -> dict:
     }
 
 
+def _detect_pragma_version(source: str) -> str | None:
+    """Best-effort exact solc version from a pinned `pragma solidity X.Y.Z;`.
+    Returns None for a floating/absent/`^`/range pragma — the caller then falls
+    back to the newest installed compiler. Pure; never raises."""
+    m = re.search(r"pragma\s+solidity\s+([0-9]+\.[0-9]+\.[0-9]+)\s*;", source or "")
+    return m.group(1) if m else None
+
+
+def compile_source(source: str, *, optimize: bool = True,
+                   solc_version: str | None = None) -> dict:
+    """Compile a Solidity source and report whether it builds, plus its bytecode
+    and ABI. This is the prerequisite for the (separate, gated) testnet-deploy
+    slice — a draft you cannot compile cannot be deployed.
+
+    LAZY + FAIL-SOFT, mirroring the optional ``eth-account`` signer: the Solidity
+    compiler (``py-solc-x``) is an operator-installed extra, so this NEVER hard-
+    imports it and NEVER raises. When the compiler or a solc binary is absent it
+    returns ``available=False`` with a clear reason instead of exploding. Pure
+    computation — it signs nothing and moves no value.
+
+    Returns a dict:
+      ok:         bool  — compiled with no error-severity diagnostics + bytecode
+      available:  bool  — the compiler toolchain is usable (solcx + a solc binary)
+      contracts:  [{name, bytecode, abi}]  — one per contract found
+      diagnostics:[{severity, message}]    — errors and warnings from solc
+      error:      str|None                 — coarse failure reason (see below)
+
+    ``error`` is one of: ``empty_source``, ``compiler_unavailable`` (no solcx),
+    ``no_solc_installed`` (solcx present but no compiler binary), ``compile_failed``
+    (solc reported errors), or None on success.
+    """
+    src = (source or "").strip()
+    if not src:
+        return {"ok": False, "available": True, "contracts": [],
+                "diagnostics": [], "error": "empty_source"}
+    try:
+        import solcx  # optional operator-installed extra
+    except Exception:
+        return {"ok": False, "available": False, "contracts": [],
+                "diagnostics": [], "error": "compiler_unavailable"}
+    try:
+        ver = solc_version or _detect_pragma_version(src)
+        if ver is None:
+            installed = list(solcx.get_installed_solc_versions())
+            if not installed:
+                return {"ok": False, "available": False, "contracts": [],
+                        "diagnostics": [], "error": "no_solc_installed"}
+            ver = str(max(installed))
+        std_in = {
+            "language": "Solidity",
+            "sources": {"Contract.sol": {"content": src}},
+            "settings": {
+                "optimizer": {"enabled": bool(optimize), "runs": 200},
+                "outputSelection": {
+                    "*": {"*": ["abi", "evm.bytecode.object"]}},
+            },
+        }
+        out = solcx.compile_standard(std_in, solc_version=str(ver))
+    except Exception as exc:
+        # solcx raises on hard errors / a missing binary. Surface the message as
+        # a diagnostic rather than leaking a stack trace to the user.
+        msg = str(exc)
+        err = "no_solc_installed" if "not installed" in msg.lower() else "compile_failed"
+        avail = err != "no_solc_installed"
+        return {"ok": False, "available": avail, "contracts": [],
+                "diagnostics": [{"severity": "error", "message": msg[:600]}],
+                "error": err}
+
+    diagnostics = [
+        {"severity": (d.get("severity") or "error"),
+         "message": (d.get("formattedMessage") or d.get("message") or "")[:600]}
+        for d in (out.get("errors") or [])
+    ]
+    contracts = []
+    for _file, defs in (out.get("contracts") or {}).items():
+        for name, c in (defs or {}).items():
+            byte = (((c.get("evm") or {}).get("bytecode") or {}).get("object") or "")
+            contracts.append({"name": name, "bytecode": byte, "abi": c.get("abi") or []})
+    has_error = any(d["severity"] == "error" for d in diagnostics)
+    has_bytecode = any(c["bytecode"] for c in contracts)
+    ok = (not has_error) and has_bytecode
+    return {"ok": ok, "available": True, "contracts": contracts,
+            "diagnostics": diagnostics,
+            "error": None if ok else "compile_failed"}
+
+
+def summarize_compile(result: dict) -> dict:
+    """Compact UI summary of a :func:`compile_source` result — pure, never raises.
+    Keeps the compliance framing: a clean compile means it BUILDS, never that it
+    is safe (that's still the auditor's call), so the disclaimer travels with it."""
+    result = result or {}
+    diags = result.get("diagnostics") or []
+    errors = sum(1 for d in diags if d.get("severity") == "error")
+    warnings = sum(1 for d in diags if d.get("severity") == "warning")
+    return {
+        "ok": bool(result.get("ok")),
+        "available": bool(result.get("available")),
+        "error": result.get("error"),
+        "error_count": errors,
+        "warning_count": warnings,
+        "contract_names": [c.get("name") for c in (result.get("contracts") or [])],
+        # Compiling ≠ safe — an audit is still required. Carry the disclaimer.
+        "disclaimer": AUDIT_DISCLAIMER,
+    }
+
+
 def build_generation_prompt(spec: str, *, license: str = "MIT",
                             pragma: str = "0.8.24") -> str:
     """The system prompt for drafting a Solidity contract from a natural-language
