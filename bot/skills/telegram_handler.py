@@ -299,9 +299,23 @@ class TelegramHandler:
         # commands and inline buttons get no reply until the scan finishes. The
         # money path stays correct under concurrency via the engine's per-symbol
         # entry locks + close locks + the kill-switch re-check before execute().
+        # HTTP resilience (incident: telegram.error.TimedOut on a single update
+        # while other work was in flight). concurrent_updates(True) runs many
+        # handlers at once, each hitting Telegram's API, but PTB's default
+        # HTTPXRequest allows only ONE pooled connection with a 1s acquisition
+        # timeout — so under any burst a handler that waits >1s for a free
+        # connection raises TimedOut even though nothing is actually broken.
+        # Size the pool to the concurrency and give the socket/pool generous
+        # timeouts so a merely-slow moment reaching Telegram no longer surfaces
+        # as a scary "something broke" to the operator.
         app = (Application.builder()
                .token(CONFIG.telegram.bot_token)
                .concurrent_updates(True)
+               .connection_pool_size(256)
+               .pool_timeout(20.0)
+               .connect_timeout(15.0)
+               .read_timeout(20.0)
+               .write_timeout(20.0)
                .post_init(self._register_command_menu)
                .build())
         # Store engine in bot_data so standalone skill handlers can access it
