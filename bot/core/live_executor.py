@@ -408,6 +408,9 @@ class LiveExecutor:
         # agent_private_key}).
         self.user_id = user_id
         self._credentials = credentials
+        # NB3: this user's pinned standard leverage (reduce-only vs the operator
+        # cap). None → use the operator default. Set by the engine on bind.
+        self._user_leverage_pref = None
         # Venue spec (bot/core/venues.py). For a per-user executor the venue is
         # whichever exchange the user connected (passed by the engine from the
         # credential store, default "bitget"); the operator's shared executor
@@ -594,6 +597,16 @@ class LiveExecutor:
             _override = None
         default_lev = max(1, int(_override if _override is not None
                                  else cfg.default_leverage))
+        # NB3: a BYOK live user can pin their OWN standard leverage, applied
+        # reduce-only against the operator cap (never above it). Absent/invalid
+        # pref → unchanged. Fail-safe: any error keeps the operator default.
+        _user_pref = getattr(self, "_user_leverage_pref", None)
+        if _user_pref is not None:
+            try:
+                from bot.core.leverage import resolve_user_leverage
+                default_lev = resolve_user_leverage(_user_pref, default_lev)
+            except Exception:
+                pass
         if not getattr(cfg, "dynamic_leverage_enabled", False):
             return default_lev
         try:

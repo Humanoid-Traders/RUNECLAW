@@ -3170,8 +3170,52 @@ class TelegramHandler:
         """
         from bot.config import CONFIG as _CFG, RUNTIME as _RT
         args = [a.lower() for a in (ctx.args or [])]
+        # NB3: a non-admin BYOK user manages their OWN standard leverage
+        # (reduce-only vs the operator default); the GLOBAL standard stays
+        # admin-only. A user setting/resetting only touches their per-user pref.
         if args and not self._is_admin(update):
-            await self._reply(update, "🔒 Changing leverage is admin-only.")
+            from bot.core import user_leverage_store as _lev_store
+            from bot.core.leverage import resolve_user_leverage
+            _tg_id = self._get_tg_id(update)
+            if args[:1] == ["reset"]:
+                _lev_store.clear(_tg_id)
+                try:
+                    _ex = self.engine._user_executors.get(str(_tg_id))
+                    if _ex is not None:
+                        _ex._user_leverage_pref = None
+                except Exception:
+                    pass
+                await self._reply(update,
+                    "⚙️ Your leverage preference is cleared — back to the "
+                    f"operator standard (<b>{_CFG.exchange.default_leverage}x</b>).")
+                return
+            if args[:1] == ["set"] and len(args) >= 2:
+                try:
+                    _val = int(float(args[1].rstrip("x")))
+                except ValueError:
+                    await self._reply(update, "Usage: /leverage set <n>")
+                    return
+                _stored = _lev_store.set_pref(_tg_id, _val)
+                if _stored is None:
+                    await self._reply(update,
+                        "Couldn't save that — use a whole number ≥ 1, "
+                        "e.g. <code>/leverage set 3</code>.")
+                    return
+                try:
+                    _ex = self.engine._user_executors.get(str(_tg_id))
+                    if _ex is not None:
+                        _ex._user_leverage_pref = _stored
+                except Exception:
+                    pass
+                _eff = resolve_user_leverage(_stored, _CFG.exchange.default_leverage)
+                _note = "" if _eff == _stored else \
+                    f" (capped at the operator {_CFG.exchange.default_leverage}x)"
+                await self._reply(update,
+                    f"⚙️ Your standard leverage is now <b>{_eff}x</b>{_note}.\n"
+                    "Applies to your NEW live positions; open positions keep "
+                    "theirs. Reset with <code>/leverage reset</code>.")
+                return
+            await self._reply(update, "Usage: /leverage set <n> · /leverage reset")
             return
         if args[:1] == ["set"] and len(args) >= 2:
             try:

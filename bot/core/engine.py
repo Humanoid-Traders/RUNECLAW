@@ -1330,6 +1330,13 @@ class RuneClawEngine:
             ex._ws_feed = self.ws_feed
             # Record realized slippage into the shared tracker (no-op until set).
             ex._slippage_tracker = getattr(self, "slippage", None)
+            # NB3: apply this user's pinned leverage (reduce-only vs the operator
+            # cap; None → operator default). Best-effort — never blocks binding.
+            try:
+                from bot.core import user_leverage_store as _lev_store
+                ex._user_leverage_pref = _lev_store.get(user_id)
+            except Exception:
+                ex._user_leverage_pref = None
             self._user_executors[key] = ex
             audit(system_log, f"Per-user live executor bound for user {user_id}",
                   action="per_user_executor", result="BOUND", data={"user": key})
