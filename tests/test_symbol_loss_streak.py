@@ -11,7 +11,6 @@ cooldown uses (already checked first thing in _analyze_signal).
 
 import types
 
-import pytest
 
 import bot.core.engine as eng_mod
 from bot.config import CONFIG

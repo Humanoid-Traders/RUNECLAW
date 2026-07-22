@@ -5,10 +5,8 @@ W-P2-2, TG-1 through TG-8.
 
 from __future__ import annotations
 
-import re
 import unittest
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
 
 import numpy as np
 

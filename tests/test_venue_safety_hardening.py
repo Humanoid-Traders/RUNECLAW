@@ -16,7 +16,6 @@ Three fixes:
 
 import inspect
 
-import pytest
 
 from bot.core.live_executor import LiveExecutor
 from bot.core.venues import get_venue

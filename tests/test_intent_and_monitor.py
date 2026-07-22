@@ -4,7 +4,6 @@ Tests for Move 1 (NL Intent Router) and Move 2 (Proactive Alert Monitor).
 
 from __future__ import annotations
 
-import asyncio
 import time
 import pytest
 

@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import bot.core.live_executor as live_executor_mod
-from bot.core.live_executor import LiveExecutor, LivePosition, _RECENT_LOCAL_OPEN_GRACE
+from bot.core.live_executor import LiveExecutor, _RECENT_LOCAL_OPEN_GRACE
 from bot.utils.models import TradeIdea, Direction
 
 

@@ -7,10 +7,7 @@ and integration with the engine.
 
 from __future__ import annotations
 
-import json
-import os
 import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -19,14 +16,11 @@ import pytest
 from bot.learning.models import (
     ChangeClassification,
     DecisionMemory,
-    FeedbackType,
     HumanFeedback,
     ImprovementProposal,
     LearningTier,
     MacroEventMemory,
-    ModelComparison,
     PatternType,
-    PromptVersion,
     ReflectionMemory,
     StrategyScorecard,
 )

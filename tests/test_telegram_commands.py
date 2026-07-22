@@ -7,9 +7,8 @@ Uses mocked Telegram Update/Context objects to call handler methods directly.
 
 from __future__ import annotations
 
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
 # ── Fixtures ──────────────────────────────────────────────────────
 

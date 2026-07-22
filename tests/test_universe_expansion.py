@@ -18,8 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from bot.config import ETF_PERPETUALS, STOCK_PERPETUALS, TRADFI_PERPETUALS
-from bot.core.market_scanner import (_classify_symbol, _is_stock_suffix_base,
-                                     category_for_symbol)
+from bot.core.market_scanner import (_classify_symbol, _is_stock_suffix_base)
 
 
 # ── config catalog refresh ───────────────────────────────────────────

@@ -3,8 +3,6 @@
 R1 readiness sources every input; R2 flipping the opt-in changes the checklist;
 R3 set_user_enabled is web-only; R4 the human card lists all five checks.
 """
-import tempfile
-import os
 
 import pytest
 

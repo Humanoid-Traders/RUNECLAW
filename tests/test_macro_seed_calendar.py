@@ -7,7 +7,7 @@ committed seed so a bad edit can't ship.
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest

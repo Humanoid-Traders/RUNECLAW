@@ -6,8 +6,8 @@ and for the /whynot rejection explainer skill.
 import os
 import yaml
 import pytest
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 # Paths
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

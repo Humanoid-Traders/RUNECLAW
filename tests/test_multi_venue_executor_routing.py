@@ -16,7 +16,6 @@ ccxt is only constructed locally (no network).
 
 from unittest.mock import patch
 
-import pytest
 from cryptography.fernet import Fernet
 
 from bot.core.engine import RuneClawEngine

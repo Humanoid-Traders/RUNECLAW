@@ -6,7 +6,6 @@ rotation keeps BACKUP_KEEP; the daily hook throttles; restore is manual
 (the module contains no code that overwrites live state from an archive).
 """
 
-import json
 import tarfile
 
 import pytest

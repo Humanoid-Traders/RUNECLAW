@@ -42,7 +42,7 @@ def check(condition: bool, label: str) -> None:
 # ═══════════════════════════════════════════════════════════════
 print("\n1. MACRO-EVENT GATE")
 
-from bot.core.macro_events import MacroEventProvider, MacroContext, MacroSeverity
+from bot.core.macro_events import MacroEventProvider, MacroSeverity
 
 # 1a. Blind provider (no calendar) → BLOCK
 blind = MacroEventProvider()
@@ -89,7 +89,6 @@ check(ctx_stale.is_stale is True, "stale flag set")
 os.unlink(stale_path)
 
 # 1f. Funding rate synthetic event → BLOCK
-from datetime import datetime as _dt2
 _far_future = [(datetime.now(UTC) + timedelta(days=30)).isoformat()]
 funding_prov = MacroEventProvider(
     live_feed=lambda: [{
@@ -129,7 +128,7 @@ print("\n3. COMPLIANCE (five-lock)")
 
 from bot.compliance.compliance_engine import (
     ComplianceEngine, Permission, SubjectProfile,
-    ApprovalToken, AuthorizationDecision, default_demo_profile,
+    default_demo_profile,
 )
 
 ce = ComplianceEngine()

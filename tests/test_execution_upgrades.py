@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import time
-import pytest
-from unittest.mock import patch, MagicMock
 
 from bot.risk.order_router import SmartOrderRouter
 from bot.risk.portfolio import PortfolioTracker, TrailingStopConfig

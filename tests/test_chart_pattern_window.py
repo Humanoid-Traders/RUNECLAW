@@ -20,7 +20,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import bot.skills.chart_renderer as cr
 

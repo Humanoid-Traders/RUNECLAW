@@ -7,14 +7,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
 
 from bot.macro.calendar import MacroCalendar, build_2026_calendar
 from bot.macro.models import (
     MacroEvent,
     MacroEventType,
     MacroRiskState,
-    MacroStateSnapshot,
 )
 
 

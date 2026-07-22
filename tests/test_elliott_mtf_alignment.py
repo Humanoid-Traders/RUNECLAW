@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import inspect
 
-import numpy as np
 
 from bot.core.elliott import mtf_wave_map
 

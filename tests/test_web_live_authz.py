@@ -6,8 +6,6 @@ allows + records spend; Z2 symbol not allowed denies; Z3 over per-trade cap
 denies; Z4 daily cap across trades denies; Z5 no envelope denies; Z6 unknown
 notional (auto-sized) denies against a cap. Fail-closed throughout.
 """
-import os
-import tempfile
 import types
 
 import pytest

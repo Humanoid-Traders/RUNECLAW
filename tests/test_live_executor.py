@@ -6,7 +6,6 @@ All exchange interactions are mocked via unittest.mock (no real Bitget calls).
 
 from __future__ import annotations
 
-import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 

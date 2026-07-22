@@ -4,7 +4,6 @@ Smart Batching, and Adaptive Frequency.
 """
 
 import time
-import pytest
 from datetime import UTC, datetime
 
 from bot.core.llm_cache import SemanticLLMCache

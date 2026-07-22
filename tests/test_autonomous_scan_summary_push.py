@@ -23,7 +23,7 @@ derives directly.
 """
 
 import types
-from datetime import datetime, timezone
+from datetime import timezone
 
 import bot.core.engine as eng_mod
 from bot.config import CONFIG

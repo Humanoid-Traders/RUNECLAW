@@ -19,9 +19,8 @@ hardcoded fallback chains only include Anthropic when is_admin is True.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
-import pytest
 
 from bot.llm.provider import (
     ADMIN_TIER_ROUTING,

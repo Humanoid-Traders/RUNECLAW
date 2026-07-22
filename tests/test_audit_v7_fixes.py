@@ -15,7 +15,6 @@ Wave 1 — safe, fail-closed fixes:
        effect (pyramid SL->breakeven) and before the EXECUTING transition.
 """
 
-import math
 from datetime import datetime, timedelta
 from unittest.mock import patch
 

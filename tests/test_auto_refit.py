@@ -6,7 +6,6 @@ calls are stubbed (monkeypatched module functions) so we test the cadence + the
 fail-open behaviour without touching the real learners or disk.
 """
 
-import bot.learning.auto_refit as ar
 from bot.learning.auto_refit import LearningAutoRefit
 
 
