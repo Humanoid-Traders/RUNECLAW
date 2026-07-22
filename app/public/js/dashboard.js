@@ -2237,6 +2237,11 @@
             <span class="badge" style="margin-left:auto" title="Best cross-source rate per idle asset — non-custodial preferred so you keep custody. Recommendation only, nothing is moved">read-only</span></h2>
           <div id="c-idleyield"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-crossyield">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Worth moving? — cross-chain yield planner
+            <span class="badge" style="margin-left:auto" title="Whether relocating idle capital to a better rate out-earns the gas + bridge cost, and after how many days it breaks even. Estimates only — nothing is moved">read-only</span></h2>
+          <div id="c-crossyield"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-replay">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>What-if replay
             <span class="badge" style="margin-left:auto" title="Real recorded agent trades, mirrored at your stake — hypothetical, not account history">hypothetical</span></h2>
@@ -2452,6 +2457,34 @@
           <p class="small muted" style="margin-top:var(--s2)">${nc} non-custodial rate(s) live (Lido/Aave via DefiLlama).
             Recommendation only — RUNECLAW never moves your funds.</p>`;
     }, { empty: { icon: 'icon-coin', text: 'Idle-yield scans your wallet assets once one is reachable.' } });
+
+    // Cross-chain yield planner — is relocating idle capital to the best rate
+    // worth the gas + bridge cost, and when does it break even? Estimates only.
+    renderPanel(C('crossyield'), async () => {
+      const r = await fetchJSON('/api/crossyield', { timeoutMs: 32000 });
+      const d = r.data;
+      if (!r.ok || !d || d.available === false) return null;
+      if (d.wallet_linked === false) return `<p class="muted">${esc(d.note || 'Link a wallet to plan cross-chain yield moves.')}</p>`;
+      const plans = (d.plans || []);
+      if (!plans.length) return `<p class="muted">${esc(d.note || 'No idle assets to plan a move for right now.')}</p>`;
+      const _WORTH = {
+        yes: { chip: '✅ worth it', col: 'var(--up,#31c48d)' },
+        marginal: { chip: '➖ marginal', col: 'var(--warn,#f0a848)' },
+        no: { chip: '✕ not worth it', col: 'var(--down,#f05252)' },
+      };
+      const rows = plans.slice(0, 10).map((p) => {
+        const w = _WORTH[p.worth] || _WORTH.no;
+        const be = p.breakeven_days == null ? '—' : `${p.breakeven_days}d`;
+        const net = p.net_year_usd;
+        return `<div class="kv-row" style="align-items:flex-start">
+            <span>🌉 <b>${esc(p.asset)}</b> <span class="muted small">$${fmt(p.amount_usd, 0)}${p.from_chain ? ' · ' + esc(p.from_chain) : ''}</span><br>
+              <span class="muted small">+${fmt(p.delta_apy, 2)}% at ${esc(p.best_source || 'best rate')} · move ≈$${fmt(p.move_cost.total_usd, 2)} · breakeven ${be}</span></span>
+            <b class="num" style="color:${w.col}">${w.chip}<br><span class="muted small">${net >= 0 ? '+' : '-'}$${fmt(Math.abs(net), 2)}/yr net</span></b>
+          </div>`;
+      }).join('');
+      return rows
+        + `<p class="small muted" style="margin-top:var(--s2)">${esc(d.caveat || '')}</p>`;
+    }, { empty: { icon: 'icon-globe', text: 'The move planner lights up once your wallet holds idle assets with a better rate available.' } });
 
     // Risk sentry — proactive watch over the standing book (envelope drift,
     // over-cap, concentration, crowding, daily spend). Detection-only.

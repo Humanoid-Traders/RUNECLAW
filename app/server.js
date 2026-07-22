@@ -163,6 +163,7 @@ app.use('/api/defi', require('./routes/defi'));
 app.use('/api/networth', require('./routes/networth'));
 app.use('/api/holdings', require('./routes/holdings'));
 app.use('/api/idleyield', require('./routes/idleyield'));
+app.use('/api/crossyield', require('./routes/cross_yield'));
 app.use('/api/authority', require('./routes/authority'));
 app.use('/api/sentry', require('./routes/sentry'));
 app.use('/api/positions', require('./routes/positions'));
