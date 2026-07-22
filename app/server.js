@@ -133,6 +133,7 @@ app.use('/api/macro', require('./routes/macro'));
 // Readiness composes several read-only signals; mount the specific path BEFORE
 // the /api/guardian prefix so it wins the match.
 app.use('/api/guardian/readiness', require('./routes/guardian_readiness'));
+app.use('/api/guardian/review', require('./routes/guardian_review'));
 app.use('/api/guardian', require('./routes/guardian'));
 app.use('/api/signals', signalsRouter);
 app.use('/api/credentials', credentialsRouter);

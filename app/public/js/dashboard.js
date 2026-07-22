@@ -5146,6 +5146,42 @@
     </div>`;
   }
 
+  // Admin-only pre-trade review queue: proposed on-chain actions recorded before
+  // any signer slice could act. Read-only; amounts shown because this is a
+  // private operator surface. Nothing here signs, broadcasts, or authorizes.
+  function reviewQueueCard(d) {
+    if (!d || typeof d !== 'object') return '';
+    const items = Array.isArray(d.entries) ? d.entries : [];
+    if (!items.length) {
+      return `<div class="empty small muted" style="padding:var(--s4)">No proposed on-chain actions yet. When an admin runs an execution preview, it queues here for review before any signer slice could ever act on it.</div>`;
+    }
+    const when = (ts) => (ts ? fmtAgo(new Date((ts > 1e12 ? ts : ts * 1000)).toISOString()) : '');
+    const rows = items.map((i) => {
+      const a = i.action || {};
+      const st = i.status === 'reviewed'
+        ? '<span class="chip" style="border-color:var(--up,#31c48d);color:var(--up,#31c48d);font-size:10px;padding:1px 6px">reviewed</span>'
+        : '<span class="chip" style="border-color:var(--warn,#f6a609);color:var(--warn,#f6a609);font-size:10px;padding:1px 6px">pending</span>';
+      const amt = (a.amount_usd != null && isFinite(+a.amount_usd)) ? '$' + fmt(+a.amount_usd, 2) : '—';
+      const pair = `${esc(String(a.side || 'action').toUpperCase())} ${esc(a.from_token || '')}${a.to_token ? ' → ' + esc(a.to_token) : ''}`;
+      return `<div style="display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line,#2a2f3a)">
+        <div style="font-size:18px;line-height:1.2">🧾</div>
+        <div style="min-width:0;flex:1">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline">
+            <strong>${pair}</strong>
+            <span class="muted small">${esc(i.network || '')}</span>${st}
+            <span class="right muted small" style="margin-left:auto">${esc(when(i.ts))}</span>
+          </div>
+          <div class="small muted" style="margin-top:2px">${amt}${a.dest ? ' · to ' + esc(String(a.dest).slice(0, 12)) + '…' : ''} · envelope ${esc(i.envelope_id || '—')}</div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div>
+      <div class="small muted" style="margin-bottom:6px">${(d.pending || 0)} pending · admin-only · read-only</div>
+      ${rows}
+      <div class="small muted" style="margin-top:8px;font-style:italic">Every proposed on-chain action lands here first. Review can only <em>tighten</em> the Authority Envelope — never authorize. Nothing here signs or broadcasts.</div>
+    </div>`;
+  }
+
   function guardianBlock(data) {
     const recs = (data && data.records) || [];
     const head = `<div style="margin-bottom:var(--s4)">${chainBanner(data.chain, data.window, data.updated_at)}</div>`
@@ -5165,6 +5201,9 @@
       </div>
       <div class="stack">
         <section class="panel" id="p-author" hidden></section>
+        <section class="panel" id="p-review" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Pre-trade review queue
+          <span class="right muted small">admin · proposed on-chain actions</span></h2>
+          <div id="c-review"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-readiness"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Readiness score
           <span class="right muted small">how constrained the agent is right now</span></h2>
           <div id="c-readiness"><div class="skel"></div><div class="skel"></div></div></section>
@@ -5180,7 +5219,20 @@
     // server re-checks plan==='admin' and the bot re-verifies the caller, so this
     // client gate is only about what to SHOW.
     fetchJSON('/api/auth/me').then((me) => {
-      if (me && me.ok && me.data && me.data.plan === 'admin') mountPolicyAuthoring(C('author'));
+      if (me && me.ok && me.data && me.data.plan === 'admin') {
+        mountPolicyAuthoring(C('author'));
+        // Admin-only pre-trade review queue (read-only). Proposed on-chain
+        // actions recorded before any signer slice could act on them.
+        const rp = document.getElementById('p-review');
+        if (rp) {
+          rp.hidden = false;
+          renderPanel(C('review'), async () => {
+            const r = await fetchJSON('/api/guardian/review', { timeoutMs: 14000 });
+            if (!r || !r.ok || !r.data) return null;
+            return reviewQueueCard(r.data);
+          }, { empty: { icon: 'icon-shield', text: 'No proposed on-chain actions yet — they queue here for review before any signer could act.' } });
+        }
+      }
     }).catch(() => {});
     renderPanel(C('readiness'), async () => {
       // Own data — needs the JWT (auth: true). Fail-soft: the endpoint always
