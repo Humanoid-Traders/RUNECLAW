@@ -48,4 +48,39 @@ router.post('/execute', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/web3/sign — WEB3-LIVE-EXEC slice 2 (admin-only, TESTNET-ONLY).
+ *
+ * The first slice that actually SIGNS + broadcasts an on-chain transaction — a
+ * native-value transfer to an envelope-allowlisted destination, on a testnet
+ * only. The bot gateway is authoritative: it re-checks admin, runs the signing
+ * gate (its own default-OFF flag + a configured key + the eth-account library +
+ * an enforcing envelope), runs authorize(), signs, and broadcasts to the
+ * configured testnet RPC. The signing key never leaves the bot; the web layer
+ * only forwards the resolved identity and the transfer parameters.
+ */
+router.post('/sign', async (req, res) => {
+  try {
+    if (!gateway.isConfigured()) {
+      return res.status(503).json({ error: 'Web3 signing not configured' });
+    }
+    const b = req.body || {};
+    const ident = await resolveBotIdentity(req);
+    const r = await gateway.postGateway('/web3/sign', {
+      telegram_id: ident.id,
+      network: String(b.network || 'sepolia'),
+      to: String(b.to || b.dest || ''),
+      value_wei: b.value_wei,
+      nonce: b.nonce,
+      gas: b.gas,
+      amount_usd: b.amount_usd,
+      asset: String(b.asset || 'ETH'),
+    }, 20000);
+    return gateway.relay(res, r);
+  } catch (err) {
+    console.error('Web3 sign proxy error:', err.message);
+    return res.status(502).json({ error: 'Web3 signing unavailable' });
+  }
+});
+
 module.exports = router;
