@@ -2074,17 +2074,21 @@ class TelegramHandler:
             # the Portfolio card (which now routes to the SAME account via
             # engine.viewer_executor) can never disagree — the reported
             # 38%-vs-52% mismatch.
-            from bot.skills.live_stats import live_win_stats
+            from bot.skills.live_stats import live_win_stats, streak_badge
             _start_stats = live_win_stats(executor.closed_positions if executor else [])
             if _start_stats["total"]:
                 win_rate = f"{_start_stats['win_rate']:.0f}"
             else:
                 win_rate = "N/A"
+            # TG-2: a win/loss streak chip next to the win rate — a small, real
+            # signal of current form (only shows at >= 2 in a row).
+            _streak_badge = streak_badge(_start_stats.get("streak"))
         else:
             display_equity = state.equity_usd
             open_pos = state.open_positions
             _filled_count = state.open_positions   # paper: template shows this
             win_rate = f"{state.win_rate:.0%}".replace("%", "")
+            _streak_badge = ""
 
         SEP = "\u2500" * 16
         status_icon = "\U0001f7e2" if not cb_active else "\U0001f534"
@@ -2111,8 +2115,10 @@ class TelegramHandler:
         pending_str = f' | Pending orders: <code>{_pending_count}</code>' if _pending_count > 0 else ''
         pending_str_zh = f' | 掛單: <code>{_pending_count}</code>' if _pending_count > 0 else ''
 
-        # Format win rate with % sign
+        # Format win rate with % sign, plus the streak chip when there is one.
         wr_display = f"{win_rate}%" if win_rate != "N/A" else "N/A"
+        if _streak_badge:
+            wr_display += f" · {_streak_badge}"
 
         body = t('welcome_ready', lang,
                  name=user_name,
