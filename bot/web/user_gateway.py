@@ -1882,7 +1882,8 @@ async def handle_llm_set(request: web.Request) -> web.Response:
     if not BYOKManager._validate_key_format(provider, api_key):
         return web.json_response(
             {"error": "bad_key_format",
-             "detail": f"That key doesn't look like a {provider_str} API key."},
+             "detail": "That key looks malformed — check for extra spaces or "
+                       "line breaks from copy/paste, and that it's the full key."},
             status=400)
     from bot.db.models import (ensure_settings_parent, get_user_settings,
                                save_user_settings, settings_user_id)

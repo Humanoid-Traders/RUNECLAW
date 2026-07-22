@@ -1163,17 +1163,32 @@ class BYOKManager:
 
     @staticmethod
     def _validate_key_format(provider: LLMProvider, key: str) -> bool:
-        """Basic format checks — not a complete validator."""
-        patterns = {
-            LLMProvider.OPENAI:     r"^sk-[A-Za-z0-9\-_]{20,}$",
-            LLMProvider.ANTHROPIC:  r"^sk-ant-[A-Za-z0-9\-_]{20,}$",
-            LLMProvider.GROQ:       r"^gsk_[A-Za-z0-9]{20,}$",
-            LLMProvider.GEMINI:     r"^AIza[A-Za-z0-9\-_]{30,}$",
-        }
-        pattern = patterns.get(provider)
-        if pattern is None:
-            return True  # Unknown provider — allow any key
-        return bool(re.match(pattern, key))
+        """A MINIMAL sanity check — deliberately NOT a per-provider validator.
+
+        Provider key formats drift constantly and a hard per-provider regex here
+        only produces FALSE REJECTIONS of perfectly valid keys: OpenAI now issues
+        ``sk-proj-``/``sk-svcacct-``/``sk-admin-`` keys, Google issues Gemini keys
+        that do not all carry the ``AIza`` prefix, OpenRouter uses ``sk-or-v1-``,
+        Mistral keys are bare 32-char tokens with no prefix, and so on. The real
+        source of truth is the provider's own API the first time the key is used —
+        so we accept anything that looks like a plausible opaque token and let the
+        live call be the arbiter. We reject only the obviously-broken: empty, too
+        short/long, or carrying whitespace or control characters (a pasted key
+        with a stray newline/space is the one thing worth catching early).
+
+        The ``provider`` argument is kept for signature stability and future
+        per-provider hints; it intentionally does not gate acceptance today.
+        """
+        k = (key or "").strip()
+        if not (8 <= len(k) <= 512):
+            return False
+        # A real API key is one opaque token — no internal spaces/tabs/newlines…
+        if any(ch.isspace() for ch in k):
+            return False
+        # …and no control characters (catches mangled copy/paste).
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in k):
+            return False
+        return True
 
 
 # Singleton for use across the app

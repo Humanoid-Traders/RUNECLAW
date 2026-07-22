@@ -158,11 +158,39 @@ async def test_bad_provider_and_bad_key_format_rejected(monkeypatch, isolated_db
         r = await c.post("/llm", headers=HDRS, json={
             "telegram_id": "7", "provider": "ollama", "api_key": "x" * 30})
         assert r.status == 400
+        # Only the obviously-broken is refused now — a key with embedded
+        # whitespace (a mangled copy/paste), not a per-provider prefix guess.
         r = await c.post("/llm", headers=HDRS, json={
-            "telegram_id": "7", "provider": "gemini", "api_key": "not-a-key"})
+            "telegram_id": "7", "provider": "gemini", "api_key": "AIza with a space"})
         assert r.status == 400
-        # Nothing was stored on either refusal.
+        # …and a too-short token.
+        r = await c.post("/llm", headers=HDRS, json={
+            "telegram_id": "7", "provider": "gemini", "api_key": "short"})
+        assert r.status == 400
+        # Nothing was stored on any refusal.
         assert isolated_db.get_user_settings(7).llm_api_key == ""
+
+
+async def test_valid_keys_of_any_plausible_shape_are_accepted(monkeypatch, isolated_db):
+    # Provider key formats drift (OpenAI sk-proj-…, Gemini keys without AIza,
+    # OpenRouter sk-or-v1-…, bare Mistral tokens). The connect flow must accept
+    # any plausible opaque token and let the live provider call be the arbiter —
+    # a stale prefix regex here only false-rejects valid keys (the reported bug).
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    monkeypatch.setenv("WEB_GATEWAY_SECRET", SECRET)
+    cases = [
+        ("openai", "sk-proj-" + "A1b2C3d4" * 8),        # modern project key
+        ("gemini", "ya29." + "Z" * 40),                  # non-AIza Google token
+        ("mistral", "b" * 32),                           # bare 32-char token
+        ("openrouter", "sk-or-v1-" + "0" * 40),          # OpenRouter shape
+    ]
+    async with client_for(FakeHandler(AUTHED)) as c:
+        for prov, key in cases:
+            r = await c.post("/llm", headers=HDRS, json={
+                "telegram_id": "7", "provider": prov, "api_key": key})
+            assert r.status == 200, f"{prov} key of shape {key[:10]}… was rejected"
+            # each overwrites the same row — the stored key is the one just sent.
+            assert isolated_db.get_user_settings(7).llm_api_key == key
 
 
 async def test_clear_disconnects(monkeypatch, isolated_db):
