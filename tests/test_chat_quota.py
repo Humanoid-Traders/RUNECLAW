@@ -17,7 +17,31 @@ from bot.web import chat_quota
 def isolated_store(monkeypatch, tmp_path):
     monkeypatch.setattr(chat_quota, "_STORE_PATH", tmp_path / "quota.json")
     monkeypatch.delenv("FREE_CHAT_DAILY_LIMIT", raising=False)
+    # The quota is dormant unless the Grok budget it protects is funded — force it
+    # ON for these enforcement tests (production activates it via XAI_API_KEY).
+    monkeypatch.setenv("FREE_CHAT_QUOTA_ENABLED", "1")
     return tmp_path
+
+
+def test_quota_dormant_without_funded_grok_budget(monkeypatch, tmp_path):
+    # No XAI_API_KEY and no explicit enable → the cap is OFF (nothing to protect);
+    # free chat falls back to the genuinely-free tiers, uncapped.
+    monkeypatch.setattr(chat_quota, "_STORE_PATH", tmp_path / "q.json")
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.delenv("FREE_CHAT_QUOTA_ENABLED", raising=False)
+    assert chat_quota.quota_enabled() is False
+    for _ in range(20):
+        assert chat_quota.consume("web:x", "basic")["allowed"] is True
+
+
+def test_quota_activates_when_grok_key_present(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_quota, "_STORE_PATH", tmp_path / "q.json")
+    monkeypatch.delenv("FREE_CHAT_QUOTA_ENABLED", raising=False)
+    monkeypatch.setenv("XAI_API_KEY", "xai-abc")
+    assert chat_quota.quota_enabled() is True
+    # explicit off still wins over key presence.
+    monkeypatch.setenv("FREE_CHAT_QUOTA_ENABLED", "off")
+    assert chat_quota.quota_enabled() is False
 
 
 def test_free_user_gets_exactly_the_limit_then_refused(isolated_store):

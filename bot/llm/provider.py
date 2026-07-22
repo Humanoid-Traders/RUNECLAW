@@ -176,15 +176,16 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     },
     LLMProvider.GROK: {
         "base_url": "https://api.x.ai/v1",
-        "default_model": os.getenv("XAI_MODEL", "grok-4.3"),
-        "recommended_models": ["grok-4.3", "grok-4.5", "grok-4.1-fast"],
+        "default_model": os.getenv("XAI_MODEL", "grok-4.5"),
+        "recommended_models": ["grok-4.5", "grok-4.3", "grok-4.1-fast"],
         "sdk": "openai",
         "free_tier": False,        # paid, but operator-funded as the FREE-USER chat model
         "speed": "fast",
-        "cost": "low",             # grok-4.3 ≈ $1.25 in / $2.50 out per MTok (2026-07)
-        "notes": ("xAI Grok. Operator-funded as the free-user chat model (quota-capped, "
-                  "5 questions/day) — grok-4.3 at ~$1.25/$2.50 per MTok. Set the exact "
-                  "id via XAI_MODEL if it differs."),
+        "cost": "medium",          # grok-4.5 ≈ $2 in / $6 out per MTok (2026-07)
+        "notes": ("xAI Grok (api.x.ai, OpenAI-compatible). Operator-funded as the "
+                  "free-user chat model (quota-capped, 5 questions/day) — default "
+                  "grok-4.5 (~$2/$6 per MTok); grok-4.3 is cheaper (~$1.25/$2.50). "
+                  "Set the exact id via XAI_MODEL."),
         "get_key_url": "https://console.x.ai/",
     },
     LLMProvider.RUNECLAW: {
@@ -260,7 +261,7 @@ DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
     },
     LLMTier.CHAT: {
         "provider": LLMProvider.GROK,
-        "model": os.getenv("XAI_MODEL", "grok-4.3"),
+        "model": os.getenv("XAI_MODEL", "grok-4.5"),
         "reason": "Free-user chat runs on operator-funded xAI Grok (quota-capped 5/day); falls back to Groq/primary if XAI_API_KEY is unset",
     },
 }

@@ -82,9 +82,11 @@ LLM_PRICING_FAMILIES: list[tuple[str, dict[str, float]]] = [
     # they book $0 and disarm the daily budget guard.
     ("openai/gpt-oss",   {"in": 0.15, "out": 0.60}),
     ("gpt-oss",          {"in": 0.15, "out": 0.60}),
-    # xAI Grok (2026-07): grok-4.3 ≈ $1.25/$2.50; 4.5 higher, 4.1-fast lower —
-    # the mid figure arms the budget guard for any grok-* variant.
-    ("grok",             {"in": 1.25, "out": 2.50}),
+    # xAI Grok (2026-07). More-specific ids first so 4.5 isn't under-priced by the
+    # generic grok fallback — an under-priced model soft-disarms the budget guard.
+    ("grok-4.5",         {"in": 2.00, "out": 6.00}),
+    ("grok-4.3",         {"in": 1.25, "out": 2.50}),
+    ("grok",             {"in": 2.00, "out": 6.00}),   # unknown grok → price high
     ("qwen",             {"in": 0.40, "out": 1.20}),
     ("deepseek",         {"in": 0.14, "out": 0.28}),
     ("mistral",          {"in": 2.00, "out": 6.00}),
