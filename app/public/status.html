@@ -29,6 +29,22 @@
   .chip.mut { background: rgba(255,255,255,.06); color: var(--text-3); }
   .age { color: var(--text-3); font-size: var(--fs-xs); font-family: var(--font-data); }
   .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
+  .tl-wrap { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4) var(--s5); margin-bottom: var(--s4); }
+  .tl-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; gap: var(--s3); flex-wrap: wrap; }
+  .tl-head .t { font-family: var(--font-data); color: var(--text-2); font-size: var(--fs-sm); }
+  .tl-head .up { font-family: var(--font-data); color: var(--up); font-size: var(--fs-sm); }
+  .tl-bar { display: flex; gap: 2px; }
+  .tl-cell { flex: 1; height: 26px; border-radius: 2px; background: rgba(255,255,255,.06); transition: transform .12s ease; }
+  .tl-cell:hover { transform: scaleY(1.12); }
+  .tl-cell.good { background: rgba(47,191,113,.55); }
+  .tl-cell.warn { background: rgba(230,176,60,.6); }
+  .tl-cell.bad { background: rgba(224,82,82,.7); }
+  .tl-legend { display: flex; gap: var(--s4); margin-top: 8px; color: var(--text-3); font-size: var(--fs-xs); font-family: var(--font-data); }
+  .tl-legend span::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .tl-legend .g::before { background: rgba(47,191,113,.55); }
+  .tl-legend .w::before { background: rgba(230,176,60,.6); }
+  .tl-legend .b::before { background: rgba(224,82,82,.7); }
+  .tl-legend .n::before { background: rgba(255,255,255,.1); }
 </style>
 </head>
 <body>
@@ -43,6 +59,7 @@
   <p class="lede">Component health computed from <b>real timestamps at request time</b> —
   never hand-set, never rounded up to healthy. The same honesty rule as the
   track record: if something is stale, this page says so.</p>
+  <div id="timeline"></div>
   <div id="root"><div class="empty">Checking components…</div></div>
 </div>
 
@@ -85,8 +102,35 @@
           '<div class="empty">Could not reach the status API — which itself tells you something. Retry shortly.</div>';
       });
   }
+  function cellCls(s) {
+    return s === 'ok' ? 'good' : s === 'degraded' ? 'bad'
+      : s === 'partial' ? 'warn' : '';
+  }
+  function loadHistory() {
+    fetch('/api/public/status/history', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var buckets = (d && d.buckets) || [];
+        if (!buckets.length) { document.getElementById('timeline').innerHTML = ''; return; }
+        var up = (d.uptime_pct != null) ? esc(d.uptime_pct) + '% healthy' : 'building history…';
+        var cells = buckets.map(function (b) {
+          var title = new Date(b.start).toLocaleTimeString() + ' — ' + esc(b.status);
+          return '<div class="tl-cell ' + cellCls(b.status) + '" title="' + esc(title) + '"></div>';
+        }).join('');
+        document.getElementById('timeline').innerHTML =
+          '<div class="tl-wrap"><div class="tl-head"><span class="t">Last 24 hours</span>'
+          + '<span class="up">' + up + '</span></div>'
+          + '<div class="tl-bar">' + cells + '</div>'
+          + '<div class="tl-legend"><span class="g">operational</span>'
+          + '<span class="w">partial</span><span class="b">degraded</span>'
+          + '<span class="n">no data</span></div></div>';
+      })
+      .catch(function () { /* timeline is best-effort; the live cards still load */ });
+  }
   load();
+  loadHistory();
   setInterval(load, 60000);
+  setInterval(loadHistory, 60000);
 })();
 </script>
 </body>
