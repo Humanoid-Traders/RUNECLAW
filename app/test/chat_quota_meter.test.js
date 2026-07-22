@@ -30,9 +30,17 @@ test('the chat reads the quota from the response and gates the meter to free use
 test('the meter shows the remaining count and an upgrade CTA on the last question', () => {
   assert.match(chat, /free questions left today/);
   assert.match(chat, /_q\.remaining > 0/);
-  // last free question → upgrade link to the account/plans surface.
+  // last free question → upgrade link deep-linked to the Membership panel.
   assert.match(chat, /upgrade for unlimited/);
-  assert.match(chat, /href="\/dashboard#account"/);
+  assert.match(chat, /href="\/dashboard#account\/aplan"/);
+});
+
+test('the Membership plans answer the chat cap the meter surfaces', () => {
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
+  // Basic names the daily cap; Pro sells unlimited — the value prop the free
+  // user hit is reflected right where the upgrade CTA lands.
+  assert.match(dash, /AI chat \(5 questions\/day\)/);
+  assert.match(dash, /Unlimited AI chat/);
 });
 
 test('the meter is dormant when the cap is off (no quota field on the response)', () => {

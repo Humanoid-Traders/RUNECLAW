@@ -586,7 +586,7 @@
           meter.style.cssText = 'margin-top:4px;opacity:.75;font-size:11px';
           meter.innerHTML = _q.remaining > 0
             ? `⚡ ${_q.remaining} of ${_q.limit} free questions left today`
-            : '⚡ Last free question today — <a href="/dashboard#account">upgrade for unlimited →</a>';
+            : '⚡ Last free question today — <a href="/dashboard#account/aplan">upgrade for unlimited →</a>';
           bubble.appendChild(meter);
         }
         if (r.data.setup) appendSetupAction(r.data.setup);
