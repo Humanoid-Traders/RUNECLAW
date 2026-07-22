@@ -52,6 +52,17 @@ test('the dashboard mounts an admin-gated testnet signer console', () => {
   assert.match(dash, /'\/api\/web3\/sign'/);
 });
 
+test('the signer status names the actual failure (503/502/403), not a catch-all', () => {
+  // A dark signer panel should say WHY: gateway secret unset (503), bot gateway
+  // unreachable (502), or not-admin (403) — each with the concrete fix.
+  assert.match(dash, /st === 503/);
+  assert.match(dash, /WEB_GATEWAY_SECRET/);
+  assert.match(dash, /st === 502/);
+  assert.match(dash, /BOT_GATEWAY_URL/);
+  assert.match(dash, /st === 403/);
+  assert.match(dash, /admin-only/);
+});
+
 test('the console never handles a private key and shows only the public address', () => {
   const fn = dash.slice(dash.indexOf('function mountTestnetSigner('));
   const body = fn.slice(0, fn.indexOf('\n  /* ═══════════════ Boot'));

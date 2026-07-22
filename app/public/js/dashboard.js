@@ -5613,7 +5613,16 @@
       const box = panel.querySelector('#sgn-status');
       const r = await fetchJSON('/api/web3/sign/status', { timeoutMs: 12000 }).catch(() => null);
       if (!r || !r.ok || !r.data) {
-        box.innerHTML = `<div class="small muted">Signer status unavailable. It requires the bot gateway and admin access.</div>`;
+        // Name the actual reason instead of a catch-all, so the operator knows
+        // exactly what to fix. The web route returns 503 (gateway secret not
+        // set on the web app), 502 (bot gateway unreachable), 403 (not admin).
+        const st = r && r.status;
+        let why;
+        if (st === 503) why = 'The web app is not linked to the bot yet — set <code>WEB_GATEWAY_SECRET</code> (≥32 chars, same value on both) and redeploy.';
+        else if (st === 502) why = 'The bot gateway is unreachable — check the bot is running and <code>BOT_GATEWAY_URL</code> points to it.';
+        else if (st === 403) why = 'The testnet signer is admin-only — sign in with the operator account.';
+        else why = 'Signer status unavailable — it requires the bot gateway and admin access.';
+        box.innerHTML = `<div class="small muted">${why}</div>`;
         return;
       }
       const d = r.data;
