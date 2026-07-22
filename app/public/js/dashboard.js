@@ -3495,6 +3495,7 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel" id="p-w3id"><div id="c-w3id"><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>On-chain badges</h2><div id="c-w3badges"><div class="skel"></div></div></section>
         <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Metaverse worlds</h2><div id="c-w3worlds"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Your collectibles</h2><div id="c-w3gallery"><div class="skel"></div><div class="skel"></div></div></section>
       </div>`);
@@ -3534,6 +3535,22 @@
             <div class="small muted num">${sub}</div></div>
           <a class="btn btn--ghost btn--sm" href="#portfolio" style="margin-left:auto">Wallet</a>
         </div>`;
+    })();
+
+    // On-chain badges (wallet-native reputation).
+    (async () => {
+      const el = C('w3badges'); if (!el) return;
+      const r = await fetchJSON('/api/web3/profile');
+      const d = r.ok ? r.data : null;
+      if (!d) { el.innerHTML = `<p class="small muted">Badges are unavailable right now.</p>`; return; }
+      if (!d.linked) { el.innerHTML = `<p class="small muted">Link a wallet to start earning on-chain badges.</p>`; return; }
+      const badge = (b) => `<div title="${esc(b.detail || '')}" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(128,128,128,.2);border-radius:10px;opacity:${b.earned ? '1' : '.45'}">
+          <span style="font-size:20px;filter:${b.earned ? 'none' : 'grayscale(1)'}">${esc(b.emoji)}</span>
+          <div style="min-width:0"><div class="small"><b>${esc(b.label)}</b>${b.earned ? ' <span class="chip chip--ok" style="font-size:9px">earned</span>' : ' <span class="chip" style="font-size:9px">locked</span>'}</div>
+            <div class="small muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:26ch">${esc(b.detail || '')}</div></div>
+        </div>`;
+      el.innerHTML = `<div class="small muted mb-2">Earned <b>${d.earned}</b> of ${d.total} — each from what your wallet verifiably holds now.</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">${(d.badges || []).map(badge).join('')}</div>`;
     })();
 
     // Collectibles → worlds + gallery.

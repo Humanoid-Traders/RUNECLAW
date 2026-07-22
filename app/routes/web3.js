@@ -11,10 +11,11 @@
 const express = require('express');
 const { authMiddleware } = require('../auth');
 const { rateLimit, userKey } = require('../lib/rate_limit');
-const { walletAddressOf } = require('../lib/wallet');
+const { walletAddressOf, getWalletPortfolio } = require('../lib/wallet');
 const { resolveIdentity } = require('../lib/ens');
 const { getWalletNfts } = require('../lib/opensea');
 const { classifyWorlds } = require('../lib/worlds');
+const { computeBadges } = require('../lib/badges');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -52,6 +53,41 @@ router.get('/collectibles', async (req, res) => {
   } catch (err) {
     console.error('Web3 collectibles error:', err.message);
     res.status(502).json({ error: 'Collectibles unavailable' });
+  }
+});
+
+// GET /api/web3/profile — the caller's wallet-native identity + on-chain badges.
+// Composes ENS identity, on-chain portfolio, and NFT holdings; each signal
+// fails soft so one slow source never sinks the profile.
+router.get('/profile', async (req, res) => {
+  try {
+    const address = await walletAddressOf(req.user.user_id);
+    if (!address) return res.json({ read_only: true, linked: false });
+    const identity = await resolveIdentity(address);
+
+    const portfolio = await getWalletPortfolio(address).catch(() => null);
+    const chainsWithBalance = portfolio && Array.isArray(portfolio.chains)
+      ? portfolio.chains.filter(c => Number(c.total_usd) > 0).length : 0;
+    const assetSymbols = portfolio && Array.isArray(portfolio.assets)
+      ? portfolio.assets.map(a => a.symbol) : [];
+
+    const nft = await getWalletNfts(address).catch(() => null);
+    const items = nft && nft.available ? (nft.items || []) : [];
+    const worlds = classifyWorlds(items);
+    const landKinds = worlds.worlds.map(w => w.kind);
+    const nftCount = nft && nft.available ? (nft.count || items.length) : 0;
+
+    const badges = computeBadges({ ens: identity.ens, landKinds, nftCount, chainsWithBalance, assetSymbols });
+
+    res.json({
+      read_only: true, linked: true,
+      identity: { address: identity.address, short: identity.short, ens: identity.ens, avatar: identity.avatar },
+      badges: badges.badges, earned: badges.earned, total: badges.total,
+      note: 'Badges are earned only from what your wallet verifiably holds right now — no self-reported claims.',
+    });
+  } catch (err) {
+    console.error('Web3 profile error:', err.message);
+    res.status(502).json({ error: 'Profile unavailable' });
   }
 });
 
