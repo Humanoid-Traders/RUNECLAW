@@ -36,6 +36,18 @@ test('the studio route never signs, deploys or moves value', () => {
     'text generation only — no money-path in the studio route');
 });
 
+test('the compile route proxies to the gateway and is authed + rate-limited', () => {
+  assert.match(route, /router\.post\('\/compile'/);
+  assert.match(route, /postGateway\('\/contract\/compile'/);
+  assert.match(route, /compileLimit/);
+  // it forwards the source and a size bound, never signs anything.
+  assert.match(route, /solidity/);
+  assert.match(route, /MAX_SOURCE_LEN/);
+  const compileFn = route.slice(route.indexOf("router.post('/compile'"));
+  assert.ok(!/signTransaction|sendRawTransaction|private_key|broadcast/.test(compileFn),
+    'compile is pure computation — no money-path in the compile route');
+});
+
 test('the route is mounted in server.js', () => {
   assert.match(server, /app\.use\('\/api\/contract', require\('\.\/routes\/contract'\)\)/);
 });

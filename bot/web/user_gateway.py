@@ -524,6 +524,48 @@ async def handle_contract_studio(request: web.Request) -> web.Response:
     })
 
 
+async def handle_contract_compile(request: web.Request) -> web.Response:
+    """Compile a Solidity draft and report whether it BUILDS, with its bytecode +
+    ABI and any solc diagnostics. The prerequisite for the (separate, gated)
+    testnet-deploy slice — you cannot deploy a draft that will not compile.
+
+    Compilation is PURE computation — it signs nothing and moves no value — but
+    solc is blocking + CPU-heavy, so it runs off the event loop. Fail-soft: if
+    the operator hasn't installed the optional compiler, this returns a clear
+    'compiler not available' rather than an error. Compiling ≠ safe: the audit
+    disclaimer still travels with the result (§4)."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    name = str(body.get("name") or "").strip()[:64]
+    source = str(body.get("solidity") or body.get("source") or "").strip()
+    optimize = bool(body.get("optimize", True))
+
+    if not tg_id or not source:
+        return web.json_response({"error": "telegram_id and solidity required"}, status=400)
+    if len(source) > _MAX_TEXT_LEN:
+        return web.json_response({"error": "source too long"}, status=400)
+
+    err = _guard_user(tg_handler, tg_id, name=name)
+    if err is not None:
+        return err
+
+    import asyncio as _asyncio
+    from bot.core.contract_studio import (
+        compile_source, summarize_compile, AUDIT_DISCLAIMER)
+    result = await _asyncio.to_thread(compile_source, source, optimize=optimize)
+    return web.json_response({
+        "ok": bool(result.get("ok")),
+        "available": bool(result.get("available")),
+        "compile_error": result.get("error"),
+        "diagnostics": result.get("diagnostics") or [],
+        "contracts": result.get("contracts") or [],
+        "summary": summarize_compile(result),
+        "disclaimer": AUDIT_DISCLAIMER,
+        "intent": "contract_compile",
+    })
+
+
 def _setup_from_new_idea(engine, ideas_before: set) -> dict | None:
     """A READ-ONLY setup hint for the web chat's one-tap "Trade this".
 
@@ -2511,6 +2553,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/chat", handle_chat)
     app.router.add_post("/chat/public", handle_public_chat)
     app.router.add_post("/contract/studio", handle_contract_studio)
+    app.router.add_post("/contract/compile", handle_contract_compile)
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/positions", handle_positions)

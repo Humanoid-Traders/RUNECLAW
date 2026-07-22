@@ -4191,9 +4191,11 @@
         <section class="panel" id="cs-codep" hidden>
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Draft
             <span class="right" style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn btn--sm" id="cs-compile" type="button">Compile</button>
               <button class="btn btn--sm" id="cs-copy" type="button">Copy</button>
               <button class="btn btn--sm" id="cs-download" type="button">Download .sol</button>
             </span></h2>
+          <div id="cs-compileout" style="margin-bottom:10px"></div>
           <pre id="cs-code" style="overflow:auto;max-height:520px;white-space:pre-wrap;word-break:break-word"></pre></section>
       </div>`);
 
@@ -4230,6 +4232,45 @@
       a.href = url; a.download = 'Contract.sol';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+
+    // Compile-check: does the draft BUILD? Reports bytecode readiness + solc
+    // diagnostics. Pure computation server-side — no signing, no value moves.
+    // Compiling is NOT a safety guarantee; the audit disclaimer still applies.
+    const compileBtn = document.getElementById('cs-compile');
+    if (compileBtn) compileBtn.addEventListener('click', async () => {
+      const code = codeText();
+      const out = document.getElementById('cs-compileout');
+      if (!code || !out) return;
+      compileBtn.disabled = true;
+      out.innerHTML = '<span class="small muted">Compiling…</span>';
+      try {
+        const d = await fetchJSON('/api/contract/compile',
+          { method: 'POST', body: { solidity: code }, timeoutMs: 47000 });
+        if (d && d.available === false) {
+          out.innerHTML = '<span class="small muted">Compiler not installed on the '
+            + 'server — the draft was not built. (Ask an operator to add the solc '
+            + 'toolchain to enable compile + testnet deploy.)</span>';
+        } else if (d && d.ok) {
+          const names = (d.summary && d.summary.contract_names || []).map(esc).join(', ');
+          const warns = (d.summary && d.summary.warning_count) || 0;
+          out.innerHTML = '<b style="color:#16a34a">✓ Compiles</b> '
+            + '<span class="small muted">' + (names ? '· ' + names + ' ' : '')
+            + (warns ? '· ' + warns + ' warning' + (warns === 1 ? '' : 's') : '')
+            + '</span><div class="small muted" style="margin-top:4px">Compiling is not a '
+            + 'safety guarantee — still get an audit before mainnet.</div>';
+        } else {
+          const diags = (d && d.diagnostics || []).filter(x => x.severity === 'error').slice(0, 8);
+          const lines = diags.map(x => '<div class="small" style="color:#dc2626;white-space:pre-wrap">'
+            + esc(x.message || '') + '</div>').join('');
+          out.innerHTML = '<b style="color:#dc2626">✗ Does not compile</b>'
+            + (lines || '<div class="small muted">solc reported errors.</div>');
+        }
+      } catch (_) {
+        out.innerHTML = '<span class="small muted">Compile check unavailable right now.</span>';
+      } finally {
+        compileBtn.disabled = false;
+      }
     });
 
     const btn = document.getElementById('cs-draft');
