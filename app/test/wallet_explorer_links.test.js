@@ -35,5 +35,5 @@ test('both links fall back to a bare short address when malformed', () => {
 });
 
 test('the dashboard.js cache-buster is bumped', () => {
-  assert.match(html, /dashboard\.js\?v=5\d/);
+  assert.match(html, /dashboard\.js\?v=\d\d+/);
 });

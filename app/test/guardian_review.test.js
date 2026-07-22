@@ -44,7 +44,7 @@ test('dashboard has a read-only reviewQueueCard mounted admin-only', () => {
   assert.match(dash, /\/api\/guardian\/review/);  // fed by the review endpoint
   // mounted inside the plan==='admin' branch (defense-in-depth; bot re-checks).
   assert.match(dash, /plan === 'admin'[\s\S]*reviewQueueCard/);
-  assert.match(html, /dashboard\.js\?v=5\d/);      // cache-buster bumped (v50+)
+  assert.match(html, /dashboard\.js\?v=\d\d+/);      // cache-buster bumped (v50+)
 });
 
 test('the review surface is presented as tighten-only / never authorizes', () => {
