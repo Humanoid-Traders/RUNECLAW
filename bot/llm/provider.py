@@ -36,6 +36,7 @@ class LLMProvider(str, Enum):
     OLLAMA        = "ollama"          # Local Ollama — fully private, no cost
     OPENROUTER    = "openrouter"      # OpenRouter — routes to 100+ models
     ALIBABA       = "alibaba"         # Alibaba Cloud / DashScope — Qwen models
+    GROK          = "grok"            # xAI Grok (api.x.ai, OpenAI-compatible)
     RUNECLAW      = "runeclaw"        # In-house fine-tuned RUNECLAW model (self-hosted)
     CUSTOM        = "custom"          # Any OpenAI-compatible base URL
 
@@ -73,24 +74,28 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     },
     LLMProvider.GEMINI: {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "default_model": "gemini-2.5-pro",
-        "recommended_models": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+        "default_model": "gemini-3.5-flash",
+        "recommended_models": ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3-pro"],
         "sdk": "openai",
         "free_tier": True,         # Most generous free tier — unlimited rate-limited
         "speed": "fast",
         "cost": "very_low",
-        "notes": "Best free tier (2026). 1M+ context, strong JSON output, agentic workflows.",
+        "notes": ("Best free tier (2026). Gemini 3.5 Flash (fast, agentic) + 3.1 Pro "
+                  "(strongest reasoning). 1M+ context, strong JSON output. The 2.5 "
+                  "line was superseded by the 3.x generation."),
         "get_key_url": "https://aistudio.google.com/apikey",
     },
     LLMProvider.GROQ: {
         "base_url": "https://api.groq.com/openai/v1",
-        "default_model": "llama-3.3-70b-versatile",
-        "recommended_models": ["llama-3.3-70b-versatile", "llama-4-scout-17b-16e-instruct", "qwen-qwq-32b"],
+        "default_model": "openai/gpt-oss-20b",
+        "recommended_models": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.6-27b"],
         "sdk": "openai",
         "free_tier": True,         # Free tier with rate limits
         "speed": "very_fast",      # <1s per call — Groq hardware
         "cost": "very_low",
-        "notes": "FASTEST inference. Free tier. Best for high-frequency scans.",
+        "notes": ("FASTEST inference. Free tier. Best for high-frequency scans. "
+                  "Groq retired the llama-3.3/3.1-instant models (June 2026) — the "
+                  "GPT-OSS open-weight models are the current default."),
         "get_key_url": "https://console.groq.com/keys",
     },
     LLMProvider.MISTRAL: {
@@ -111,8 +116,10 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
         "sdk": "openai",
         "free_tier": False,
         "speed": "medium",
-        "cost": "very_low",        # ~$0.14/M tokens vs OpenAI $15/M
-        "notes": "Extremely cheap. Strong at agentic finance tasks.",
+        "cost": "very_low",        # ~$0.14/M in, $0.28/M out — vs OpenAI GPT-4o $2.50/$10
+        "notes": ("★ Best value BYOK pick: ~$0.14/$0.28 per MTok — a strong "
+                  "agentic-finance reasoner at a fraction of GPT-4o/Claude cost. "
+                  "deepseek-reasoner for deep analysis, deepseek-chat for speed."),
         "get_key_url": "https://platform.deepseek.com/api_keys",
     },
     LLMProvider.TOGETHER: {
@@ -167,6 +174,20 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
         "notes": "Alibaba Cloud Qwen via Bitget Hackathon endpoint. $30 credits included.",
         "get_key_url": "https://dashscope.console.aliyun.com/apiKey",
     },
+    LLMProvider.GROK: {
+        "base_url": "https://api.x.ai/v1",
+        "default_model": os.getenv("XAI_MODEL", "grok-4.5"),
+        "recommended_models": ["grok-4.5", "grok-4.3", "grok-4.1-fast"],
+        "sdk": "openai",
+        "free_tier": False,        # paid, but operator-funded as the FREE-USER chat model
+        "speed": "fast",
+        "cost": "medium",          # grok-4.5 ≈ $2 in / $6 out per MTok (2026-07)
+        "notes": ("xAI Grok (api.x.ai, OpenAI-compatible). Operator-funded as the "
+                  "free-user chat model (quota-capped, 5 questions/day) — default "
+                  "grok-4.5 (~$2/$6 per MTok); grok-4.3 is cheaper (~$1.25/$2.50). "
+                  "Set the exact id via XAI_MODEL."),
+        "get_key_url": "https://console.x.ai/",
+    },
     LLMProvider.RUNECLAW: {
         # The in-house fine-tuned RUNECLAW model (Llama 3.1 8B + LoRA), served
         # from any OpenAI-compatible runtime the operator controls. Default is
@@ -217,26 +238,31 @@ class LLMTier(str, Enum):
 #   LLM_TIER_CHAT_PROVIDER=groq
 #
 # When a tier env is not set, falls back to the primary LLM_PROVIDER.
+# Free-tier routing (non-admin, no BYOK key): Groq for the high-frequency,
+# latency-sensitive tiers (genuinely free + fastest inference) and Gemini for the
+# reasoning tiers (most generous free tier, 1M context). Anthropic stays reserved
+# for admin. Model ids refreshed 2026-07: Groq retired llama-3.3/3.1-instant (use
+# the GPT-OSS open-weight models), and Gemini 2.5 was superseded by the 3.x line.
 DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
     LLMTier.SCAN: {
-        "provider": LLMProvider.ALIBABA,
-        "model": "qwen3.6-flash",
-        "reason": "Fast and cheap — handles high-frequency scans without burning Anthropic/Gemini quota",
+        "provider": LLMProvider.GROQ,
+        "model": "openai/gpt-oss-20b",
+        "reason": "Groq is the fastest + genuinely-free inference — handles high-frequency scans without burning any paid quota",
     },
     LLMTier.THESIS: {
         "provider": LLMProvider.GEMINI,
-        "model": "gemini-2.5-pro",
-        "reason": "Anthropic is reserved for admin (see ADMIN_TIER_ROUTING) — best free-tier reasoning for trade thesis otherwise",
+        "model": "gemini-3.5-flash",
+        "reason": "Anthropic is reserved for admin (see ADMIN_TIER_ROUTING) — Gemini 3.5 Flash is the best free-tier reasoning for a trade thesis otherwise",
     },
     LLMTier.LEARNING: {
         "provider": LLMProvider.GEMINI,
-        "model": "gemini-2.5-flash",
-        "reason": "1M+ context, good at reflection/analysis, free tier for occasional use",
+        "model": "gemini-3.5-flash",
+        "reason": "1M+ context, strong at reflection/analysis, free tier for occasional use",
     },
     LLMTier.CHAT: {
-        "provider": LLMProvider.ALIBABA,
-        "model": "qwen3.6-flash",
-        "reason": "Fast, cheap user-facing responses — Anthropic is reserved for admin",
+        "provider": LLMProvider.GROK,
+        "model": os.getenv("XAI_MODEL", "grok-4.5"),
+        "reason": "Free-user chat runs on operator-funded xAI Grok (quota-capped 5/day); falls back to Groq/primary if XAI_API_KEY is unset",
     },
 }
 
@@ -353,26 +379,26 @@ def _admin_routing() -> dict:
 # resolve_tier_config()'s hard non-admin guard, which refuses to hand out the
 # operator's Claude key regardless of what any routing table says.
 ELITE_TIER_ROUTING: dict[LLMTier, dict] = {
-    LLMTier.SCAN: {"provider": LLMProvider.ALIBABA, "model": "qwen3.6-flash",
-                   "reason": "Elite: fast/cheap scan"},
-    LLMTier.THESIS: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-pro",
-                     "reason": "Elite: best free-tier reasoning for thesis"},
-    LLMTier.LEARNING: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-pro",
-                       "reason": "Elite: best free-tier reasoning for learning"},
-    LLMTier.CHAT: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-pro",
-                   "reason": "Elite: best free-tier reasoning for chat"},
+    LLMTier.SCAN: {"provider": LLMProvider.GROQ, "model": "openai/gpt-oss-120b",
+                   "reason": "Elite: fast scan on the larger open-weight model"},
+    LLMTier.THESIS: {"provider": LLMProvider.GEMINI, "model": "gemini-3.1-pro",
+                     "reason": "Elite: Gemini 3.1 Pro — strongest non-Anthropic reasoning for thesis"},
+    LLMTier.LEARNING: {"provider": LLMProvider.GEMINI, "model": "gemini-3.1-pro",
+                       "reason": "Elite: Gemini 3.1 Pro reasoning for learning"},
+    LLMTier.CHAT: {"provider": LLMProvider.GEMINI, "model": "gemini-3.1-pro",
+                   "reason": "Elite: Gemini 3.1 Pro for chat"},
 }
 
 # Pro user-tier routing — mid models (LLM Optimization Plan P2).
 PRO_TIER_ROUTING: dict[LLMTier, dict] = {
-    LLMTier.SCAN: {"provider": LLMProvider.ALIBABA, "model": "qwen3.6-flash",
-                   "reason": "Pro: fast/cheap scan"},
-    LLMTier.THESIS: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-flash",
-                     "reason": "Pro: Gemini thesis"},
-    LLMTier.LEARNING: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-flash",
-                       "reason": "Pro: Gemini learning"},
-    LLMTier.CHAT: {"provider": LLMProvider.ALIBABA, "model": "qwen3.6-flash",
-                   "reason": "Pro: Qwen chat"},
+    LLMTier.SCAN: {"provider": LLMProvider.GROQ, "model": "openai/gpt-oss-20b",
+                   "reason": "Pro: fast/free scan on Groq"},
+    LLMTier.THESIS: {"provider": LLMProvider.GEMINI, "model": "gemini-3.5-flash",
+                     "reason": "Pro: Gemini 3.5 Flash thesis"},
+    LLMTier.LEARNING: {"provider": LLMProvider.GEMINI, "model": "gemini-3.5-flash",
+                       "reason": "Pro: Gemini 3.5 Flash learning"},
+    LLMTier.CHAT: {"provider": LLMProvider.GROQ, "model": "openai/gpt-oss-20b",
+                   "reason": "Pro: fast Groq chat"},
 }
 
 # Map a user TIER (from the user store) to its premium routing table. Tiers not
@@ -410,6 +436,7 @@ _PROVIDER_KEY_ENV = {
     LLMProvider.MISTRAL: "MISTRAL_API_KEY",
     LLMProvider.TOGETHER: "TOGETHER_API_KEY",
     LLMProvider.OPENROUTER: "OPENROUTER_API_KEY",
+    LLMProvider.GROK: "XAI_API_KEY",
     LLMProvider.RUNECLAW: "RUNECLAW_LLM_API_KEY",
 }
 
@@ -558,6 +585,7 @@ def resolve_tier_config(
                         LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
                         LLMProvider.OPENAI: "OPENAI_API_KEY",
                         LLMProvider.ALIBABA: "ALIBABA_API_KEY",
+                        LLMProvider.GROK: "XAI_API_KEY",
                         LLMProvider.RUNECLAW: "RUNECLAW_LLM_API_KEY",
                     }
                     fallback_env = key_env_map.get(tier_provider, "")

@@ -368,6 +368,28 @@ async def handle_chat(request: web.Request) -> web.Response:
             {"reply_html": await tg_handler._news_digest_text(), "intent": "news"})
 
     # Fallback: LLM chat — same append-around-call pattern as _handle_message.
+    # Free-tier chat quota: bound the operator-funded xAI Grok budget. Only the
+    # LLM fallback (this path) consumes a "question" — skill/news/trade intents
+    # above are free. Admin + paid tiers (pro/elite) are exempt; a free user gets
+    # N questions/day (default 5) then an upgrade prompt instead of an LLM call.
+    _is_admin = _is_admin_id(tg_handler, tg_id)
+    try:
+        _tier = "admin" if _is_admin else tg_handler.users.get_tier(tg_id)
+    except Exception:
+        _tier = "admin" if _is_admin else "basic"
+    from bot.web import chat_quota
+    _q = chat_quota.consume(tg_id, _tier)
+    if not _q.get("allowed"):
+        _lim = _q.get("limit") or chat_quota.free_daily_limit()
+        return web.json_response({
+            "reply_html": (
+                f"🚀 <b>You've used your {_lim} free questions for today.</b><br><br>"
+                "Upgrade to keep chatting with the agent — unlimited questions plus "
+                "priority models, live signals, and deeper research. Your free "
+                "questions reset tomorrow.<br><br>"
+                "<a href=\"/dashboard#account\">See plans →</a>"),
+            "intent": "quota_exceeded", "quota": _q}, status=200)
+
     from bot.nlp.sanitize import sanitize_chat_input
     tg_handler.conversations.append(tg_id, "user", text,
                                     metadata={"intent": intent.skill or "chat",
@@ -377,16 +399,17 @@ async def handle_chat(request: web.Request) -> web.Response:
     # fallback-chain gate in _llm_chat both key off this flag.
     answer, meta = await tg_handler._llm_chat(
         sanitize_chat_input(text), user_id=tg_id, user_name=name,
-        is_admin=_is_admin_id(tg_handler, tg_id),
+        is_admin=_is_admin,
         profile_note=profile_note, reply_lang=reply_lang, return_meta=True)
     tg_handler.conversations.append(tg_id, "assistant", answer,
                                     metadata={"surface": "web"})
     # Model transparency: the web renders a small caption showing WHICH
     # model answered — the visible face of tier routing (and of a runeclaw
-    # promotion via /settier).
+    # promotion via /settier). `quota` lets the UI show "N left today".
     return web.json_response({"reply_html": answer, "intent": "chat",
                               "model": (meta or {}).get("model", ""),
-                              "provider": (meta or {}).get("provider", "")})
+                              "provider": (meta or {}).get("provider", ""),
+                              "quota": _q})
 
 
 # ── Public chat (anonymous website visitors; market Q&A only) ───────────────

@@ -67,10 +67,26 @@ LLM_PRICING_FAMILIES: list[tuple[str, dict[str, float]]] = [
     # as the 2026-07-11 incident). Approximate family pricing arms the guard;
     # exact per-model entries can be added to LLM_PRICING above when needed.
     # More-specific prefixes first (first match wins).
+    # Gemini 3.x (2026): Pro tiers priced higher than Flash. More-specific
+    # prefixes first so a Pro id doesn't fall into the generic Flash bucket.
+    ("gemini-3.5-pro",   {"in": 1.25, "out": 5.00}),
+    ("gemini-3.1-pro",   {"in": 1.25, "out": 5.00}),
+    ("gemini-3-pro",     {"in": 1.25, "out": 5.00}),
     ("gemini-2.5-pro",   {"in": 1.25, "out": 5.00}),
     ("gemini-2.5-flash", {"in": 0.30, "out": 2.50}),
     ("gemini-1.5-pro",   {"in": 1.25, "out": 5.00}),
-    ("gemini-",          {"in": 0.30, "out": 2.50}),
+    ("gemini-",          {"in": 0.30, "out": 2.50}),   # Flash-class catch-all
+    # Groq GPT-OSS (open-weight, served on Groq — the migration target after
+    # llama-3.3/3.1 deprecation). IDs are namespaced "openai/gpt-oss-*", so they
+    # never match the "gpt-4"/"gpt-5" prefixes above; price them explicitly or
+    # they book $0 and disarm the daily budget guard.
+    ("openai/gpt-oss",   {"in": 0.15, "out": 0.60}),
+    ("gpt-oss",          {"in": 0.15, "out": 0.60}),
+    # xAI Grok (2026-07). More-specific ids first so 4.5 isn't under-priced by the
+    # generic grok fallback — an under-priced model soft-disarms the budget guard.
+    ("grok-4.5",         {"in": 2.00, "out": 6.00}),
+    ("grok-4.3",         {"in": 1.25, "out": 2.50}),
+    ("grok",             {"in": 2.00, "out": 6.00}),   # unknown grok → price high
     ("qwen",             {"in": 0.40, "out": 1.20}),
     ("deepseek",         {"in": 0.14, "out": 0.28}),
     ("mistral",          {"in": 2.00, "out": 6.00}),
