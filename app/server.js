@@ -1,6 +1,25 @@
 const crypto = require('crypto');
 const path = require('path');
 
+// Self-heal a wiped .env BEFORE any secret is read. The Python bot mirrors the
+// web-pairing secrets (BOT_SYNC_SECRET / WEB_GATEWAY_SECRET / WEB_CREDS_KEY)
+// into an encrypted vault under data/ that persists across redeploys. This
+// separate process reads the SAME vault so the website comes back on its own
+// after an env wipe instead of FATAL-exiting below. Fail-open: restores nothing
+// (and never throws) if the vault or master key is absent. Only fills in
+// secrets missing from the environment — a live value always wins.
+try {
+  const { restoreFromVault } = require('./lib/secrets_vault');
+  const healed = restoreFromVault();
+  if (healed.length) {
+    console.warn(`SECRETS VAULT restored ${healed.length} web secret(s) missing from the `
+      + `environment: ${healed.join(', ')} — running on vault-backed secrets. `
+      + 'Restore your .env and ensure data/ persists across redeploys.');
+  }
+} catch (err) {
+  console.warn('secrets vault restore skipped:', err && err.message);
+}
+
 // JWT_SECRET resolution, most-stable-first:
 //   1. Explicit JWT_SECRET env (recommended; required for multi-replica).
 //   2. Derived deterministically from BOT_SYNC_SECRET (already a required

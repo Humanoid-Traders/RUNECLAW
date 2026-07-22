@@ -154,6 +154,10 @@ class TestWebsitePairingSecrets:
         # exactly the failure mode the vault exists to prevent.
         assert "WEB_GATEWAY_SECRET" in sv._DEFAULT_MANAGED
         assert "BOT_SYNC_SECRET" in sv._DEFAULT_MANAGED
+        # WEB_CREDS_KEY encrypts stored per-user exchange keys — seed it so the
+        # web app (which self-heals from the same vault) can decrypt after a
+        # wiped .env, not just the two pairing secrets.
+        assert "WEB_CREDS_KEY" in sv._DEFAULT_MANAGED
 
     def test_gateway_secret_survives_env_wipe(self, tmp_path, monkeypatch):
         _isolate(monkeypatch, tmp_path)
