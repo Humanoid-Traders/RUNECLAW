@@ -804,6 +804,15 @@ def model_supports_web_search(model: str) -> bool:
     return bool(_WEB_SEARCH_RE.match((model or "").strip().lower()))
 
 
+# AI-5: vision (image input). Every modern Claude model is multimodal, so the
+# gate is simply "is this an Anthropic claude model" — the image content-block
+# shape is Anthropic-specific and the OpenAI-compatible branch can't carry it.
+def model_supports_vision(model: str) -> bool:
+    """True for Anthropic Claude models (all are multimodal). Non-Claude /
+    OpenAI-compatible providers use a different image shape we don't emit."""
+    return (model or "").strip().lower().startswith("claude-")
+
+
 def _collect_web_citations(response) -> list[dict]:
     """Pull cited sources out of an Anthropic response that used the web_search
     server tool. Prefers the citations actually attached to the model's text
@@ -842,6 +851,7 @@ async def llm_complete(
     web_search: bool = False,
     web_search_max_uses: int = 4,
     citations_out: list | None = None,
+    images: list | None = None,
 ) -> str:
     """
     Unified completion call — handles OpenAI-format and Anthropic-format.
@@ -875,7 +885,29 @@ async def llm_complete(
             messages = []
             if history:
                 messages.extend(history)
-            messages.append({"role": "user", "content": user_prompt})
+            # AI-5: vision. When images are supplied on a multimodal Claude
+            # model, the final user turn becomes a content list of image blocks
+            # followed by the text. Malformed images are skipped; if none
+            # survive we fall back to a plain text turn.
+            _img_blocks = []
+            if images and model_supports_vision(config.model):
+                for _im in images:
+                    try:
+                        _img_blocks.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": _im.get("media_type", "image/png"),
+                                "data": _im["data"],
+                            },
+                        })
+                    except (TypeError, KeyError, AttributeError):
+                        continue
+            if _img_blocks:
+                messages.append({"role": "user", "content":
+                                 _img_blocks + [{"type": "text", "text": user_prompt}]})
+            else:
+                messages.append({"role": "user", "content": user_prompt})
 
             # Build system with cache_control for prompt caching
             # System prompt is large and identical across calls — caching

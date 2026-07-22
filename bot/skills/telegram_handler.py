@@ -450,6 +450,10 @@ class TelegramHandler:
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
+        # AI-5: photo messages → operator vision chat. The agent reads a pasted
+        # chart / positions / PnL screenshot and describes what it sees. Admin-
+        # only (it spends the operator's Claude key); non-admins get a note.
+        app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo))
         # Free-text message handler (must be last — catches non-command text)
         app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self._handle_message))
@@ -1140,7 +1144,8 @@ class TelegramHandler:
                         public: bool = False,
                         profile_note: str = "",
                         reply_lang: str = "",
-                        return_meta: bool = False):
+                        return_meta: bool = False,
+                        images: list = None):
         """Send a free-text question to the LLM with multi-turn context.
 
         Uses CHAT tier routing with automatic fallback chain:
@@ -1330,12 +1335,19 @@ class TelegramHandler:
                 # opt-in list and are surfaced as a Sources footer below.
                 _cfor_search = (web_search_ok
                                 and cfg.provider == LLMProvider.ANTHROPIC)
+                # AI-5: vision is admin-only and Anthropic-only (the image
+                # content-block shape is Anthropic-specific). Attach the images
+                # only to the operator's Claude candidate; other candidates get
+                # the text alone.
+                _vision_ok = (bool(images) and is_admin and not public
+                              and cfg.provider == LLMProvider.ANTHROPIC)
                 _citations: list = []
                 answer = await llm_complete(
                     client, cfg, system_prompt, question,
                     history=history,
                     web_search=_cfor_search,
-                    citations_out=_citations if _cfor_search else None)
+                    citations_out=_citations if _cfor_search else None,
+                    images=images if _vision_ok else None)
                 if _citations:
                     _lines = "\n".join(
                         f"• {c.get('title') or c.get('url')} — {c.get('url')}"
@@ -1394,6 +1406,62 @@ class TelegramHandler:
             f"Last error: {last_error[:80]}. "
             "Try again in a minute.",
             None, return_meta)
+
+    async def _handle_photo(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """AI-5 vision: read a pasted chart / positions / PnL screenshot.
+
+        Admin-only — image analysis rides the operator's Claude key, so a
+        non-admin gets a friendly note instead. The photo is downloaded, base64
+        encoded, and sent to the vision-capable chat path with the caption (or a
+        default analysis prompt) as the question. Fail-safe: any download error
+        is a friendly reply, never a crash.
+        """
+        if not update.message or not update.message.photo:
+            return
+        tg_id = self._get_tg_id(update)
+        if not self._is_admin(update):
+            await self._send(update,
+                "\U0001f4f7 Image analysis is available to the operator only.")
+            return
+        uid = update.effective_user.id if update.effective_user else 0
+        if not self._limiter.allow(uid):
+            await update.message.reply_text(
+                f"⚠️ {t('rate_limit', self._lang(update))}")
+            return
+        try:
+            import base64
+            photo = update.message.photo[-1]  # largest rendition
+            tg_file = await photo.get_file()
+            raw = await tg_file.download_as_bytearray()
+            b64 = base64.standard_b64encode(bytes(raw)).decode("ascii")
+        except Exception as exc:
+            system_log.warning("vision: photo download failed: %s", exc)
+            await self._send(update,
+                "Couldn't read that image — please try sending it again.")
+            return
+        caption = (update.message.caption or "").strip()
+        question = caption or (
+            "Read this trading screenshot. If it's a price chart, describe the "
+            "structure, trend, key levels and any setup or risk you see. If it's "
+            "a positions / PnL screen, summarise the positions, exposure and "
+            "risks. Be concise and specific; note anything that looks off.")
+        # Telegram delivers photos as JPEG.
+        images = [{"media_type": "image/jpeg", "data": b64}]
+        try:
+            await ctx.bot.send_chat_action(
+                chat_id=update.effective_chat.id, action="typing")
+        except Exception:
+            pass
+        _tel_code = getattr(getattr(update, "effective_user", None),
+                            "language_code", "") or ""
+        _reply_lang = get_user_lang_raw(self.users, tg_id) or _tel_code
+        reply = await self._llm_chat(
+            question, user_id=str(tg_id),
+            user_name=(update.effective_user.first_name
+                       if update.effective_user else ""),
+            is_admin=True, reply_lang=_reply_lang, images=images)
+        text = reply[0] if isinstance(reply, tuple) else reply
+        await self._send(update, text or "I couldn't analyze that image.")
 
     async def _handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle free-text messages — intent routing + AI chat fallback.
