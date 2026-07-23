@@ -2062,6 +2062,7 @@
               <p id="tPreview" class="small muted" aria-live="polite">Fill in entry, stop, and target to preview risk/reward.</p>
               <div class="row" style="gap:var(--s2);flex-wrap:wrap">
                 <button class="btn btn--primary" type="submit">Review trade</button>
+                <button class="btn btn--sm" type="button" id="tSuggestBtn" title="Fill entry/stop/target from the live price and 24h range — a draft you edit">⟳ Suggest from live price</button>
                 <button class="btn btn--sm" type="button" id="tCopilotBtn">🤖 Second opinion</button>
                 <span id="tMsg" class="small muted" aria-live="polite"></span>
               </div>
@@ -2190,10 +2191,54 @@
     ['tDir', 'tEntry', 'tSl', 'tTp'].forEach(id => $(id).addEventListener('input', preview));
     ['szRisk', 'szLev'].forEach(id => $(id).addEventListener('input', sizer));
 
+    // Draft entry/stop/target from a live price + the 24h range (a rough
+    // volatility proxy). Deterministic and clearly a STARTING POINT the user
+    // edits — nothing is placed, and the risk gate stays the authority.
+    function draftLevels(price, high, low, dir) {
+      if (!(price > 0)) return null;
+      const rangePct = (high > 0 && low > 0 && high > low) ? (high - low) / price : 0.03;
+      const stopPct = Math.min(0.05, Math.max(0.01, rangePct * 0.5)); // ~half the day's range, bounded 1–5%
+      const rr = 1.8;                                                 // draft reward:risk
+      const long = dir !== 'SHORT';
+      const stop = long ? price * (1 - stopPct) : price * (1 + stopPct);
+      const target = long ? price * (1 + stopPct * rr) : price * (1 - stopPct * rr);
+      const dp = price >= 100 ? 2 : price >= 1 ? 4 : 6;               // sensible decimals for the tier
+      const rnd = v => +v.toFixed(dp);
+      return { entry: rnd(price), sl: rnd(stop), tp: rnd(target) };
+    }
+    // Fetch the live ticker for the ticket's symbol and fill the levels. With
+    // force=false only empty fields are touched (never clobber a typed number);
+    // the explicit button passes force=true. Returns the live price or null.
+    async function prefillFromLive(force) {
+      const sym = ($('tSym').value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '');
+      if (!sym) return null;
+      let t = null;
+      try { const tks = await getTickers(); t = tks[`${sym}USDT`] || tks[sym] || null; } catch (e) { return null; }
+      if (!t) return null;
+      const price = parseFloat(t.lastPr);
+      const d = draftLevels(price, parseFloat(t.high24h), parseFloat(t.low24h), $('tDir').value);
+      if (!d) return null;
+      const setIf = (id, v) => { const el = $(id); if (el && (force || !el.value)) el.value = v; };
+      setIf('tEntry', d.entry); setIf('tSl', d.sl); setIf('tTp', d.tp);
+      try { $('tEntry').dispatchEvent(new Event('input', { bubbles: true })); } catch (e) { /* preview is best-effort */ }
+      return price;
+    }
+    document.getElementById('tSuggestBtn').addEventListener('click', async () => {
+      const msg = $('tMsg');
+      if (!($('tSym').value || '').trim()) { if (msg) msg.innerHTML = '<span class="muted">Enter a symbol first.</span>'; return; }
+      if (msg) msg.textContent = 'Fetching live price…';
+      const px = await prefillFromLive(true);
+      if (msg) msg.innerHTML = px
+        ? '<span class="pos">Draft levels from the live price — edit freely, then review. Nothing is placed yet.</span>'
+        : '<span class="muted">No live price for that symbol — set the levels manually.</span>';
+    });
+
     // Deep link from the Strength Map (and other market surfaces): prefill the
     // ticket with ?trade=<SYMBOL>&dir=LONG|SHORT so a coin picked on the map
-    // lands in the order ticket ready to size. Param is cleared so a refresh
-    // doesn't re-fill. Symbol only — nothing is placed without you confirming.
+    // lands in the order ticket ready to size. We also draft entry/stop/target
+    // from the live price so it's not three empty "0.00" fields. Param is
+    // cleared so a refresh doesn't re-fill. Draft only — nothing is placed
+    // without you confirming, and every number is yours to edit.
     try {
       const _q = new URLSearchParams(location.search);
       const _sym = (_q.get('trade') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '').slice(0, 15);
@@ -2201,9 +2246,15 @@
         $('tSym').value = _sym;
         const _dir = (_q.get('dir') || '').toUpperCase();
         if (_dir === 'LONG' || _dir === 'SHORT') $('tDir').value = _dir;
-        const _msg = $('tMsg'); if (_msg) _msg.textContent = `${_sym} loaded — set entry, stop and target, then review.`;
-        try { $('tEntry').focus(); } catch (e) { /* ignore */ }
         try { history.replaceState(null, '', location.pathname + '#trade'); } catch (e) { /* ignore */ }
+        const _msg = $('tMsg');
+        prefillFromLive(false).then((px) => {
+          if (!_msg) return;
+          _msg.innerHTML = px
+            ? `<span class="pos">${_sym} drafted at the live price — edit stop/target, then review. Nothing is placed yet.</span>`
+            : `${_sym} loaded — set entry, stop and target, then review.`;
+          try { (px ? $('tSl') : $('tEntry')).focus(); } catch (e) { /* ignore */ }
+        });
       }
     } catch (e) { /* a normal empty ticket */ }
 
