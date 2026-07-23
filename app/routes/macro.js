@@ -267,7 +267,7 @@ router.get('/', async (req, res) => {
   let calendar = null;
   try {
     const getScan = require('./sync').getLatestScan;
-    const scan = typeof getScan === 'function' ? getScan() : null;
+    const scan = typeof getScan === 'function' ? await getScan() : null;
     if (scan && scan.regime) regime = scan.regime;
     if (scan && scan.macro) calendar = scan.macro;
   } catch (e) { /* regime/calendar optional */ }
