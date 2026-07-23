@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Portfolio Stress Lab</title>
+<meta name="description" content="A portfolio digital twin: build a hypothetical crypto book and see how it survives a −30% majors drop, an alt crash, a stablecoin depeg, a liquidation cascade or a black swan — which leveraged legs blow up, and what breaks you first. Percent-only simulation, not investment advice.">
+<meta property="og:title" content="RUNECLAW — Portfolio Stress Lab">
+<meta property="og:description" content="Build a portfolio, then stress it: −30% majors, alt crash, depeg, liquidation cascade, black swan. See your drawdown and which leveraged legs get liquidated. A digital twin — simulation, not advice.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/stress">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Portfolio Stress Lab">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  .sx-wrap { max-width: 1000px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); } .topnav a:hover { color: var(--text-1); }
+  .sx-hero h1 { font-family: var(--font-display); letter-spacing: .05em; font-size: clamp(26px, 4vw, 40px); margin-bottom: var(--s2); }
+  .sx-hero .badge { font-size: var(--fs-xs); border: 1px solid var(--gold-bright); color: var(--gold-bright); border-radius: 999px; padding: 2px 10px; margin-left: var(--s2); vertical-align: middle; }
+  .lede { color: var(--text-2); max-width: 74ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
+  /* Builder */
+  .pos-head, .pos-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.1fr 32px; gap: var(--s2); align-items: center; }
+  .pos-head { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-bottom: 6px; }
+  .pos-row { margin-bottom: 6px; }
+  .pos-row input, .pos-row select { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 7px 8px; font: inherit; font-size: var(--fs-sm); }
+  .pos-row .rm { background: none; border: 0; color: var(--text-3); cursor: pointer; font-size: 18px; line-height: 1; }
+  .pos-row .rm:hover { color: var(--down); }
+  .alloc { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; margin-top: var(--s3); font-size: var(--fs-sm); }
+  .alloc .meter { flex: 1; min-width: 160px; height: 8px; border-radius: 5px; background: var(--surface-2); overflow: hidden; position: relative; }
+  .alloc .meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold-dim, #6b5a2a), var(--gold-bright)); transition: width .3s ease; }
+  .alloc .over { color: var(--down); }
+  .btn-row { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s3); }
+  /* Scenario grid */
+  .sx-grid { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .sc { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3) var(--s4); background: var(--bg); }
+  .sc .top { display: flex; align-items: baseline; gap: 8px; }
+  .sc .emo { font-size: 20px; } .sc .nm { font-weight: 600; }
+  .sc .dd { margin-left: auto; font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; }
+  .sc .bar { height: 8px; border-radius: 5px; background: var(--surface-2); overflow: hidden; margin: 10px 0 8px; }
+  .sc .bar i { display: block; height: 100%; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+  .sc .meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-3); }
+  .liqchip { font-size: 10px; padding: 1px 8px; border-radius: 999px; border: 1px solid; }
+  .sev-critical { color: #ff5c6c; } .sev-critical .bar i, .bar i.sev-critical { background: #ff5c6c; } .liqchip.on { border-color: #ff5c6c; color: #ff5c6c; }
+  .sev-severe { color: #ff9f45; } .bar i.sev-severe { background: #ff9f45; }
+  .sev-notable { color: #e6c34b; } .bar i.sev-notable { background: #e6c34b; }
+  .sev-resilient { color: var(--up); } .bar i.sev-resilient { background: var(--up); }
+  .liqchip.off { border-color: var(--line-2); color: var(--text-3); }
+  .sc details { margin-top: 8px; } .sc summary { cursor: pointer; color: var(--text-3); font-size: var(--fs-xs); }
+  .leg { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; font-size: var(--fs-xs); font-family: var(--font-data); padding: 3px 0; border-top: 1px solid var(--line); }
+  .leg .liq { color: #ff5c6c; }
+  /* Custom + verdict */
+  .cust { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--s3); align-items: end; }
+  .cust label { font-size: var(--fs-xs); color: var(--text-3); display: block; margin-bottom: 4px; }
+  .cust input[type=range] { width: 100%; }
+  .cust .val { font-family: var(--font-data); color: var(--text-1); }
+  .verdict { border-left: 3px solid var(--gold-bright); padding: var(--s2) var(--s4); background: var(--surface-2); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; line-height: 1.6; }
+  .verdict b { color: var(--text-1); }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+  @media (prefers-reduced-motion: reduce) { .sc .bar i, .alloc .meter i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="sx-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/strengthmap">Strength Map</a>
+    <a href="/flight">Flight Recorder</a>
+    <a href="/dashboard">Open the app</a>
+  </nav>
+  <div class="sx-hero"><h1>Portfolio Stress Lab <span class="badge">digital twin</span></h1></div>
+  <p class="lede">Build a hypothetical book, then break it. This is your portfolio's <b>digital twin</b> —
+  it takes each leveraged position and runs it through a −30% majors drop, an alt crash, a stablecoin depeg,
+  a liquidation cascade and a black swan, then shows your <b>drawdown</b>, which legs get <b>liquidated</b>,
+  and what breaks you first. Percent-only — a what-if simulation on a made-up portfolio, never your real
+  balance, and never investment advice.</p>
+
+  <section class="panel">
+    <h2>Your book — build it</h2>
+    <div class="pos-head"><span>Asset</span><span>Weight %</span><span>Leverage</span><span>Direction</span><span></span></div>
+    <div id="rows"></div>
+    <div class="alloc">
+      <span>Allocated <b id="allocPct" class="val">0%</b></span>
+      <span class="meter"><i id="allocBar" style="width:0"></i></span>
+      <span id="cashNote" class="muted">15% in stablecoin cash</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn--sm" id="addRow" type="button">＋ Add position</button>
+      <button class="btn btn--ghost btn--sm" id="resetPf" type="button">Reset sample</button>
+    </div>
+  </section>
+
+  <div class="verdict panel" id="verdict" style="border-radius:var(--radius)"></div>
+
+  <section class="panel">
+    <h2>Stress scenarios</h2>
+    <div class="sx-grid" id="grid"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Custom shock</h2>
+    <div class="cust">
+      <div><label>Majors <span class="val" id="cmV">-20%</span></label><input type="range" id="cm" min="-90" max="20" value="-20"></div>
+      <div><label>Alts <span class="val" id="caV">-35%</span></label><input type="range" id="ca" min="-95" max="20" value="-35"></div>
+      <div><label>Stables <span class="val" id="csV">0%</span></label><input type="range" id="cs" min="-30" max="2" value="0"></div>
+      <div class="sc" id="customCard" style="min-width:0"></div>
+    </div>
+  </section>
+
+  <p class="disc">This is a <b>digital twin</b>: a deterministic simulation of a hypothetical portfolio under
+  price shocks. Liquidation is modelled per isolated-margin leg (a leg is liquidated when its loss reaches
+  its margin). It is <b>not</b> a prediction, not your real account, and not investment advice — real
+  liquidations depend on your venue's exact maintenance margin, funding and slippage. Build your real
+  safety envelope in the <a href="/dashboard#agents">app</a>.</p>
+</div>
+
+<script src="/js/stress-model.js?v=1"></script>
+<script>
+(function () {
+  var M = window.StressModel;
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var SAMPLE = [
+    { asset: 'BTC', weight: 40, leverage: 3, dir: 'long' },
+    { asset: 'ETH', weight: 25, leverage: 2, dir: 'long' },
+    { asset: 'SOL', weight: 20, leverage: 5, dir: 'long' },
+    { asset: 'USDC', weight: 15, leverage: 1, dir: 'long' },
+  ];
+  var positions = SAMPLE.map(function (p) { return Object.assign({}, p); });
+  var $ = function (id) { return document.getElementById(id); };
+  var pctTxt = function (v) { return (v >= 0 ? '+' : '') + v.toFixed(1) + '%'; };
+
+  function rowHtml(p, i) {
+    return '<div class="pos-row" data-i="' + i + '">'
+      + '<input data-k="asset" value="' + esc(p.asset) + '" maxlength="12" placeholder="BTC" autocomplete="off">'
+      + '<input data-k="weight" type="number" min="0" max="100" step="1" value="' + esc(p.weight) + '">'
+      + '<input data-k="leverage" type="number" min="1" max="125" step="1" value="' + esc(p.leverage) + '">'
+      + '<select data-k="dir"><option value="long"' + (p.dir !== 'short' ? ' selected' : '') + '>▲ Long</option>'
+      + '<option value="short"' + (p.dir === 'short' ? ' selected' : '') + '>▼ Short</option></select>'
+      + '<button class="rm" data-rm="' + i + '" type="button" aria-label="Remove">×</button></div>';
+  }
+  function renderRows() {
+    $('rows').innerHTML = positions.map(rowHtml).join('');
+  }
+
+  function sevOf(r) { return r.severity; }
+  function scenarioCard(name, emoji, r) {
+    var sev = sevOf(r);
+    var w = Math.min(100, Math.abs(r.drawdownPct));
+    var legs = r.legs.map(function (l) {
+      return '<div class="leg"><span>' + esc(l.asset) + ' · ' + l.leverage + 'x ' + esc(l.dir)
+        + '</span><span>' + pctTxt(l.contributionPct) + '</span>'
+        + '<span class="' + (l.liquidated ? 'liq' : '') + '">' + (l.liquidated ? 'liquidated' : 'survives') + '</span></div>';
+    }).join('');
+    var liq = r.liquidatedCount > 0
+      ? '<span class="liqchip on">☠ ' + r.liquidatedCount + ' liquidated</span>'
+      : '<span class="liqchip off">no liquidations</span>';
+    return '<div class="top"><span class="emo">' + (emoji || '') + '</span><span class="nm">' + esc(name) + '</span>'
+      + '<span class="dd sev-' + sev + '">' + pctTxt(r.drawdownPct) + '</span></div>'
+      + '<div class="bar"><i class="sev-' + sev + '" style="width:' + w + '%"></i></div>'
+      + '<div class="meta">' + liq + '<span>worst: ' + (r.worst ? esc(r.worst.asset) : '—') + '</span>'
+      + '<span>cash ' + r.cashPct.toFixed(0) + '%</span></div>'
+      + (legs ? '<details><summary>Per-leg breakdown</summary>' + legs + '</details>' : '');
+  }
+
+  function renderGrid() {
+    var runs = M.runAll(positions);
+    $('grid').innerHTML = runs.map(function (x) {
+      return '<div class="sc">' + scenarioCard(x.scenario.name, x.scenario.emoji, x.result) + '</div>';
+    }).join('');
+
+    // "What breaks you" verdict — harshest scenario + first liquidation.
+    var worstRun = runs.slice().sort(function (a, b) { return a.result.drawdownPct - b.result.drawdownPct; })[0];
+    var firstLiq = null;
+    runs.forEach(function (x) {
+      (x.result.legs || []).forEach(function (l) {
+        if (l.liquidated && (!firstLiq || Math.abs(l.shockPct) < Math.abs(firstLiq.shockPct))) {
+          firstLiq = { asset: l.asset, leverage: l.leverage, shockPct: l.shockPct, scenario: x.scenario.name };
+        }
+      });
+    });
+    var v = '<b>What breaks you:</b> ';
+    if (worstRun) {
+      v += 'a <b>' + esc(worstRun.scenario.name) + '</b> takes this book to <b class="sev-' + worstRun.result.severity + '">'
+        + pctTxt(worstRun.result.drawdownPct) + '</b>';
+      v += worstRun.result.liquidatedCount ? ', liquidating ' + worstRun.result.liquidatedCount + ' leg'
+        + (worstRun.result.liquidatedCount > 1 ? 's' : '') + '.' : ' with no forced liquidations.';
+    }
+    if (firstLiq) {
+      v += ' Your first leg to blow up is <b>' + esc(firstLiq.asset) + ' at ' + firstLiq.leverage + 'x</b> — '
+        + 'it liquidates around a ' + Math.round(Math.abs(firstLiq.shockPct)) + '% move against it.';
+    } else {
+      v += ' No leg liquidates in any built-in scenario — this book is resilient (or lightly leveraged).';
+    }
+    $('verdict').innerHTML = v;
+  }
+
+  function renderAlloc() {
+    var sum = positions.reduce(function (a, p) { return a + (Number(p.weight) || 0); }, 0);
+    $('allocPct').textContent = sum.toFixed(0) + '%';
+    $('allocPct').className = 'val' + (sum > 100 ? ' over' : '');
+    $('allocBar').style.width = Math.min(100, sum) + '%';
+    var cash = Math.max(0, 100 - sum);
+    $('cashNote').textContent = sum > 100 ? 'over-allocated — trim a weight' : cash.toFixed(0) + '% in stablecoin cash';
+    $('cashNote').className = sum > 100 ? 'over' : 'muted';
+  }
+
+  function recompute() { renderAlloc(); renderGrid(); }
+
+  function renderCustom() {
+    var m = Number($('cm').value), a = Number($('ca').value), s = Number($('cs').value);
+    $('cmV').textContent = pctTxt(m); $('caV').textContent = pctTxt(a); $('csV').textContent = pctTxt(s);
+    var r = M.simulate(positions, { major: m, alt: a, stable: s });
+    $('customCard').innerHTML = scenarioCard('Custom', '🎛️', r);
+  }
+
+  // Events
+  $('rows').addEventListener('input', function (e) {
+    var row = e.target.closest('[data-i]'); if (!row) return;
+    var i = Number(row.getAttribute('data-i')); var k = e.target.getAttribute('data-k');
+    if (!positions[i] || !k) return;
+    positions[i][k] = (k === 'weight' || k === 'leverage') ? Number(e.target.value) : e.target.value;
+    recompute(); renderCustom();
+  });
+  $('rows').addEventListener('click', function (e) {
+    var rm = e.target.closest('[data-rm]'); if (!rm) return;
+    positions.splice(Number(rm.getAttribute('data-rm')), 1);
+    renderRows(); recompute(); renderCustom();
+  });
+  $('addRow').addEventListener('click', function () {
+    positions.push({ asset: '', weight: 10, leverage: 2, dir: 'long' });
+    renderRows(); recompute(); renderCustom();
+  });
+  $('resetPf').addEventListener('click', function () {
+    positions = SAMPLE.map(function (p) { return Object.assign({}, p); });
+    renderRows(); recompute(); renderCustom();
+  });
+  ['cm', 'ca', 'cs'].forEach(function (id) { $(id).addEventListener('input', renderCustom); });
+
+  if (!M) { document.getElementById('grid').innerHTML = '<div class="muted">The simulation model failed to load.</div>'; return; }
+  renderRows(); recompute(); renderCustom();
+})();
+</script>
+</body>
+</html>
