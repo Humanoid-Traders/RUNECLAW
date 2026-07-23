@@ -141,8 +141,9 @@
       + (a.community ? rulesBlock(a.rules) : scoreBlock(a.scorecard))
       + '<div class="cta-row">'
       + (a.community
-        // A member config — no frozen backtest to reproduce; point into the app.
-        ? '<a class="btn btn--primary btn--sm" href="/dashboard#agents">Open in the app</a>'
+        // A member config — no frozen backtest to reproduce. Fork it into your
+        // own builder to customize and publish your version.
+        ? '<a class="btn btn--primary btn--sm" href="/dashboard?fork=' + encodeURIComponent(a.id) + '#agents">⑂ Fork in the app</a>'
         // Deep-link straight into the Lab with THIS agent auto-running its exact
         // backtest — the page's "reproduce its numbers" promise, in one tap.
         : '<a class="btn btn--primary btn--sm" href="/dashboard?lab_agent=' + encodeURIComponent(a.id) + '#lab">Reproduce this backtest in the Lab</a>'
