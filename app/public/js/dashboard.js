@@ -61,6 +61,19 @@
       renderAbort ? { signal: renderAbort.signal } : undefined);
   }
 
+  // A compact horizontal momentum bar for a signed % — width scales with
+  // magnitude (capped so a +400% memecoin doesn't dwarf everything), colour
+  // follows direction. Percent only (§4): the bar visualises momentum, never a
+  // dollar amount. Decorative, so it's aria-hidden — the numeric % stays the
+  // accessible source of truth beside it.
+  function sparkBar(pct, cap = 20) {
+    if (pct == null || !isFinite(pct)) return '';
+    const mag = Math.min(Math.abs(Number(pct)), cap) / cap;
+    const w = Math.max(6, Math.round(mag * 100));
+    const dir = Number(pct) >= 0 ? 'up' : 'down';
+    return `<span class="spark spark--${dir}" aria-hidden="true"><span class="spark-fill" style="width:${w}%"></span></span>`;
+  }
+
   // ── Shared data caches ────────────────────────────────────────────────
   const cache = { scan: null, scanAt: 0, tickers: {}, portfolio: null, insightOk: null };
 
@@ -878,8 +891,31 @@
   }
 
   /* ═══════════════ MARKETS ═══════════════ */
+  // The radar panels the jump-nav can scroll to — id must match a `p-<id>`
+  // section below. Order = the order a visitor scanning "what's on this page"
+  // would want them.
+  const MARKET_JUMPS = [
+    ['radar3d', 'Sector sweep'], ['rwa', 'RWA'], ['meme', 'Meme & AI'],
+    ['airdrops', 'Airdrops'], ['flow', 'On-chain flow'], ['router', 'Venue router'],
+  ];
+
   async function renderMarkets() {
     container.innerHTML = viewHead('Markets', 'Live exchange data');
+    container.insertAdjacentHTML('beforeend', `
+      <nav class="jumpnav" aria-label="Jump to radar">
+        ${MARKET_JUMPS.map(([id, label]) =>
+          `<button type="button" class="chip jumpnav-btn" data-jump="${id}">${esc(label)}</button>`).join('')}
+      </nav>`);
+    // Delegated (leak-safe via renderAbort): scroll the chosen radar panel into
+    // view and reuse the deep-link flash so the eye lands on it.
+    onView('click', (e) => {
+      const b = e.target.closest('[data-jump]');
+      if (!b) return;
+      const el = document.getElementById('p-' + b.getAttribute('data-jump'));
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.classList.remove('sec-flash'); void el.offsetWidth; el.classList.add('sec-flash');
+    });
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel panel--primary" id="p-chart">
@@ -1056,7 +1092,7 @@
           <tbody>${c.tokens.map(t => `<tr>
             <td><b>${esc(t.base)}</b></td>
             <td class="num r">$${fmtPrice(t.price)}</td>
-            <td class="num r ${t.change_24h_pct >= 0 ? 'up' : 'down'}">${t.change_24h_pct >= 0 ? '+' : ''}${fmt(t.change_24h_pct, 2)}%</td>
+            <td class="num r ${t.change_24h_pct >= 0 ? 'up' : 'down'}">${t.change_24h_pct >= 0 ? '+' : ''}${fmt(t.change_24h_pct, 2)}%${sparkBar(t.change_24h_pct)}</td>
             <td class="num r">$${fmtK(t.volume_24h_usd)}</td></tr>`).join('')}</tbody>
         </table></div>`).join('');
       return head + cats;
@@ -1070,11 +1106,23 @@
         : await fetchJSON('/api/airdrops', { auth: false, timeoutMs: 12000 });
       const d = r.data;
       if (!r.ok || !d || !(d.campaigns || []).length) return null;
-      const statusChip = (s) => ({
-        live: '<span class="badge" style="color:var(--up)">live</span>',
-        points: '<span class="badge">points</span>',
-        expected: '<span class="badge muted">speculative</span>',
-      }[s] || `<span class="badge muted">${esc(s)}</span>`);
+      // A richer, colour-coded status vocabulary so more campaign states read at
+      // a glance (points-farming vs a live claim vs a snapshot already taken).
+      const statusChip = (s) => {
+        const map = {
+          live:      ['chip--up',   'live'],
+          active:    ['chip--up',   'active'],
+          claim:     ['chip--gold', 'claim open'],
+          confirmed: ['chip--gold', 'confirmed'],
+          points:    ['chip--info', 'points'],
+          testnet:   ['chip--info', 'testnet'],
+          snapshot:  ['chip--warn', 'snapshot taken'],
+          expected:  ['',           'speculative'],
+          ended:     ['chip--offline', 'ended'],
+        };
+        const [cls, label] = map[s] || ['', String(s || 'tracked')];
+        return `<span class="chip ${cls}">${esc(label)}</span>`;
+      };
       const cards = d.campaigns.map((c) => `
         <details style="border:1px solid var(--line);border-radius:8px;padding:var(--s2) var(--s3);margin-bottom:var(--s2)">
           <summary style="cursor:pointer"><b>${esc(c.name)}</b> <span class="muted small">${esc(c.project_type)}</span>
@@ -1111,7 +1159,7 @@
       const rows = d.tokens.slice(0, 12).map(t => `<tr>
           <td><b>${esc(t.symbol)}</b> <span class="muted small">${esc(t.chain_label)}</span></td>
           <td class="num r">$${fmtPrice(t.price_usd)}</td>
-          <td class="num r ${t.change_24h_pct >= 0 ? 'up' : 'down'}">${t.change_24h_pct != null ? (t.change_24h_pct >= 0 ? '+' : '') + fmt(t.change_24h_pct, 1) + '%' : '—'}</td>
+          <td class="num r ${t.change_24h_pct >= 0 ? 'up' : 'down'}">${t.change_24h_pct != null ? (t.change_24h_pct >= 0 ? '+' : '') + fmt(t.change_24h_pct, 1) + '%' : '—'}${sparkBar(t.change_24h_pct)}</td>
           <td class="num r">$${fmtK(t.volume_24h_usd)}</td>
           <td class="num r">${t.liquidity_usd != null ? '$' + fmtK(t.liquidity_usd) : '—'}</td>
           <td class="r" title="${esc((t.risk.flags || []).join(', ') || 'no extra flags — memecoins are high-risk by default')}">${TIER[t.risk.tier] || `<span class="badge muted">${esc(t.risk.tier)}</span>`}</td>
