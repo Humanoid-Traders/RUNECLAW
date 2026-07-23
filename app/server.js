@@ -233,7 +233,10 @@ app.get('/reset', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); re
 app.get('/verify', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'verify.html')); });
 app.get('/agent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'agent.html')); });
 app.get('/agent/:address', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'agent-card.html')); });
-// Public, shareable Strategy-Agent profile (marketplace slug, e.g. /agents/dip-sniper).
+// Public, shareable Strategy-Agent directory + per-agent profile (marketplace
+// slugs, e.g. /agents and /agents/dip-sniper). Bare /agents must precede the
+// parametised route so it isn't captured as a slug.
+app.get('/agents', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'agents.html')); });
 app.get('/agents/:slug', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'strategy.html')); });
 app.get('/developers', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'developers.html')); });
 app.get('/status', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'status.html')); });

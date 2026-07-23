@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Strategy Agents</title>
+<meta name="description" content="Browse RUNECLAW's Strategy Agents — real engine presets, each with a verified, reproducible backtest. Design and regime only, percent/ratio never dollars.">
+<meta property="og:title" content="RUNECLAW — Strategy Agents">
+<meta property="og:description" content="Real engine presets, each with a verified, reproducible backtest. Follow one, reproduce its numbers in the Lab, or ask it anything.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/agents">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Strategy Agents">
+<meta name="twitter:description" content="Real engine presets, each with a verified, reproducible backtest.">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  .ag-wrap { max-width: 980px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); }
+  .topnav a:hover { color: var(--text-1); }
+  .spacer { flex: 1; }
+  .ag-hero h1 { font-family: var(--font-display); letter-spacing: .04em; font-size: clamp(24px, 4vw, 36px); margin: 0 0 var(--s2); }
+  .ag-hero p { color: var(--text-2); max-width: 70ch; line-height: 1.6; margin: 0 0 var(--s4); }
+  .ag-grid { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .ag-card { display: block; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--gold-bright); border-radius: var(--radius); padding: var(--s4); color: inherit; text-decoration: none; transition: transform .18s ease, box-shadow .22s ease, border-color .2s ease; }
+  .ag-card:hover, .ag-card:focus-visible { transform: translateY(-3px); box-shadow: var(--shadow), var(--glow); border-color: var(--line-2); }
+  .ag-card .h { display: flex; gap: 10px; align-items: center; }
+  .ag-card .emo { font-size: 26px; line-height: 1; }
+  .ag-card .nm { font-weight: 600; font-size: var(--fs-lg); }
+  .ag-card .tg { color: var(--text-2); font-size: var(--fs-sm); margin: var(--s2) 0 0; min-height: 2.6em; }
+  .ag-card .mx { display: flex; gap: var(--s3); flex-wrap: wrap; margin: var(--s3) 0 0; }
+  .ag-card .mx .k { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); }
+  .ag-card .mx .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .v.up { color: var(--up); } .v.down { color: var(--down); }
+  .ag-card .go { color: var(--gold-bright); font-size: var(--fs-sm); margin-top: var(--s3); }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s5); }
+  .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
+  @media (prefers-reduced-motion: reduce) { .ag-card { transition: none; } .ag-card:hover, .ag-card:focus-visible { transform: none; } }
+</style>
+</head>
+<body>
+<div class="ag-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span class="spacer"></span>
+    <a href="/dashboard#agents">Open in app</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/proof">Proof of PnL</a>
+  </nav>
+
+  <div class="ag-hero">
+    <h1>Strategy Agents</h1>
+    <p>Each agent is one of the engine's real strategies, backtested on frozen, content-hashed
+    benchmark data — percent and ratio only, never a dollar figure. Open one to follow it,
+    reproduce its numbers in the Lab, or ask it anything.</p>
+  </div>
+
+  <div id="ag-root"><div class="empty">Loading the agent catalogue…</div></div>
+</div>
+
+<script>
+(function () {
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  };
+  var pct = function (v) { return v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%'; };
+  var cls = function (v) { return v == null ? '' : (Number(v) >= 0 ? 'up' : 'down'); };
+  var root = document.getElementById('ag-root');
+
+  function card(a) {
+    var sc = a.scorecard && a.scorecard.metrics;
+    var mx = sc
+      ? '<div class="mx"><div><div class="k">Return</div><div class="v ' + cls(sc.total_return_pct) + '">'
+        + esc(pct(sc.total_return_pct)) + '</div></div>'
+        + '<div><div class="k">Profit factor</div><div class="v">' + (sc.profit_factor == null ? '—' : Number(sc.profit_factor).toFixed(2)) + '</div></div>'
+        + '<div><div class="k">Win rate</div><div class="v">' + (sc.win_rate == null ? '—' : (sc.win_rate * 100).toFixed(0) + '%') + '</div></div></div>'
+      : '<div class="mx"><div class="k">Verified backtest pending — reproduce it in the Lab.</div></div>';
+    return '<a class="ag-card" href="/agents/' + encodeURIComponent(a.id) + '">'
+      + '<div class="h"><span class="emo">' + esc(a.icon || '🤖') + '</span>'
+      + '<span class="nm">' + esc(a.name) + '</span></div>'
+      + (a.tagline ? '<p class="tg">' + esc(a.tagline) + '</p>' : '<p class="tg"></p>')
+      + mx + '<div class="go">View agent →</div></a>';
+  }
+
+  fetch('/api/public/strategies', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      var agents = (d && d.agents) || [];
+      if (!agents.length) { root.innerHTML = '<div class="empty">The catalogue is unavailable right now — try the <a href="/dashboard#agents">app</a>.</div>'; return; }
+      root.innerHTML = '<div class="ag-grid">' + agents.map(card).join('') + '</div>'
+        + '<p class="disc">Nothing here is financial advice. Verified live ranks are on the '
+        + '<a href="/leaderboard">leaderboard</a>; every backtest is reproducible in the '
+        + '<a href="/dashboard#lab">Strategy Lab</a>.</p>';
+    })
+    .catch(function () {
+      root.innerHTML = '<div class="empty">The catalogue is unavailable right now — try the <a href="/dashboard#agents">app</a>.</div>';
+    });
+})();
+</script>
+</body>
+</html>
