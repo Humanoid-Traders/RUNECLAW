@@ -326,7 +326,15 @@ async function agentBySlug(slug) {
     } catch (_) { /* best-effort: generic card still ships */ }
     _agentCat = { at: now, agents };
   }
-  return _agentCat.agents.find((a) => String(a && a.id).toLowerCase() === slug) || null;
+  const hit = _agentCat.agents.find((a) => String(a && a.id).toLowerCase() === slug) || null;
+  if (hit) return hit;
+  // Fall back to a published community strategy so member-authored links unfurl
+  // with their own title/description too. DB read (not cached) — cheap.
+  try {
+    const community = await require('./lib/user_strategies').getPublicBySlug(slug);
+    if (community) return community;
+  } catch (_) { /* generic card still ships */ }
+  return null;
 }
 app.get('/agents/:slug', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');

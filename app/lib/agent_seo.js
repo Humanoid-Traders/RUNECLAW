@@ -93,7 +93,9 @@ function agentMeta(agent, origin, slug) {
   const name = (agent && agent.name) ? String(agent.name) : slug;
   const tagline = (agent && agent.tagline) ? String(agent.tagline) : '';
   const how = (agent && agent.how) ? String(agent.how) : '';
-  const base = tagline || ('The ' + name + ' strategy agent — a real RUNECLAW engine preset with a verified, reproducible backtest.');
+  const base = tagline || ((agent && agent.community)
+    ? ('The ' + name + ' strategy — a community-authored RUNECLAW config (intent rules, no dollar figures).')
+    : ('The ' + name + ' strategy agent — a real RUNECLAW engine preset with a verified, reproducible backtest.'));
   const desc = clamp(how ? (base + ' ' + how) : base, MAX_DESC);
   return metaBlock({
     title: 'RUNECLAW — ' + name,
