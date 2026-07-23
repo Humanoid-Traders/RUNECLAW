@@ -339,6 +339,7 @@ class TelegramHandler:
             ("reset", self._cmd_reset), ("macro", self._cmd_macro),
             ("whynot", self._cmd_whynot),
             ("news", self._cmd_news),
+            ("share", self._cmd_share),
             ("alpha", self._cmd_alpha),
             ("gates", self._cmd_gates), ("readiness", self._cmd_readiness),
             ("backtest", self._cmd_backtest), ("walkforward", self._cmd_walkforward),
@@ -7026,6 +7027,68 @@ class TelegramHandler:
         except Exception:
             pass
         await self._send(update, await self._news_digest_text())
+
+    async def _cmd_share(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """NEWS-3b: /share <text> — save a note your agent can reference (PRIVATE
+        to you). Or reply to any message (e.g. a forwarded newsletter) with
+        /share to save that text. Same encrypted per-user store as the web
+        "Share with your agent" panel. §4: user-supplied only — the bot never
+        fetches anything — private, never redistributed."""
+        if not update.message:
+            return
+        tg_id = self._get_tg_id(update)
+        if not self.users.is_authorized(tg_id):
+            await self._send(update, "Use /start to register first.")
+            return
+        text = " ".join(ctx.args or []).strip()
+        source = ""
+        replied = update.message.reply_to_message
+        if not text and replied is not None:
+            text = (replied.text or replied.caption or "").strip()
+            # Best-effort provenance when the replied-to message was forwarded.
+            try:
+                origin = getattr(replied, "forward_origin", None)
+                nm = None
+                if origin is not None:
+                    nm = (getattr(getattr(origin, "sender_chat", None), "title", None)
+                          or getattr(getattr(origin, "sender_user", None), "full_name", None)
+                          or getattr(origin, "sender_user_name", None))
+                else:  # older PTB
+                    nm = (getattr(getattr(replied, "forward_from_chat", None), "title", None)
+                          or getattr(getattr(replied, "forward_from", None), "full_name", None))
+                if nm:
+                    source = str(nm)[:120]
+            except Exception:
+                source = ""
+        if not text:
+            await self._send(update,
+                "🗒️ <b>Share with your agent</b>\n"
+                "─────────────────\n\n"
+                "Give your agent something to remember — a newsletter you got, "
+                "notes, an excerpt:\n\n"
+                "<pre> /share &lt;your text&gt;</pre>\n"
+                "…or <b>reply to any message</b> (e.g. a forwarded newsletter) "
+                "with <code>/share</code> to save it.\n\n"
+                "<i>🔒 Private to you, stored encrypted — your agent draws on it "
+                "in chat. Manage your notes on the web dashboard. Only share "
+                "content you're allowed to.</i>")
+            return
+        from bot.db.models import (add_user_ingest_note, ensure_settings_parent,
+                                   settings_user_id)
+        uid = settings_user_id(tg_id)
+        if uid is None:
+            await self._send(update, "Couldn't resolve your account — try /start.")
+            return
+        ensure_settings_parent(uid)
+        nid = add_user_ingest_note(uid, "", text, source)
+        if nid is None:
+            await self._send(update, "Nothing to save — send some text.")
+            return
+        src = f" · from {html.escape(source)}" if source else ""
+        await self._send(update,
+            f"🗒️ <b>Saved to your agent's private notes.</b>{src}\n"
+            f"<i>{len(text)} characters — your agent can reference it in chat "
+            f"now. Manage your notes on the web dashboard.</i>")
 
     @guard("scan")
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
