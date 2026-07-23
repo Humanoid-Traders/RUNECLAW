@@ -21,16 +21,19 @@ test('the page waits for a late-injected provider before declaring no wallet', (
   assert.match(html, /waitForEthereum\(function/);
 });
 
-test('no-wallet on mobile offers a MetaMask deep link that preserves the code', () => {
-  // Universal link form: scheme dropped, host+path+query kept (so ?code= rides).
+test('no-wallet on mobile offers deep links that preserve the code', () => {
+  // Universal link forms that reopen THIS page (code preserved) inside a wallet.
   assert.match(html, /metamask\.app\.link\/dapp\//);
   assert.match(html, /location\.host \+ location\.pathname \+ location\.search/);
-  assert.match(html, /Open in MetaMask/);
+  // Buttons are built as "Open in <wallet>" for each entry.
+  assert.match(html, /'Open in ' \+ w\.name/);
+  assert.match(html, /name: 'MetaMask'/);
   // Mobile detection gates the deep-link CTA.
   assert.match(html, /Android\|iPhone\|iPad\|iPod/);
 });
 
-test('other wallets and desktop still get honest guidance (no dead end)', () => {
-  assert.match(html, /Trust Wallet/);
-  assert.match(html, /Install a browser wallet/);
+test('multiple wallets (not MetaMask-only) and desktop guidance (no dead end)', () => {
+  assert.match(html, /link\.trustwallet\.com\/open_url/);   // Trust Wallet
+  assert.match(html, /go\.cb-w\.com\/dapp/);                // Coinbase Wallet
+  assert.match(html, /Install a browser wallet/);           // desktop fallback
 });
