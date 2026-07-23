@@ -241,6 +241,48 @@ app.get('/agents/:slug', (req, res) => { res.setHeader('Cache-Control', 'no-cach
 app.get('/developers', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'developers.html')); });
 app.get('/status', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'status.html')); });
 
+// SEO discoverability for the public marketplace: robots.txt + a dynamic
+// sitemap.xml that enumerates the static public pages plus one URL per catalogue
+// agent (best-effort from the gateway — the static pages ship even if it's down).
+// Both are generated (no physical files), so these routes win over express.static.
+const { buildSitemap, buildRobots } = require('./lib/sitemap');
+const originFrom = (req) => {
+  const base = (process.env.APP_BASE_URL || process.env.WEBSITE_URL || '').trim();
+  if (base) return base.replace(/\/+$/, '');
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = req.headers['x-forwarded-host'] || req.get('host') || '';
+  return host ? `${proto}://${host}` : '';
+};
+app.get('/robots.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(buildRobots(originFrom(req)));
+});
+let _sitemapCache = null; // { at, origin, xml }
+app.get('/sitemap.xml', async (req, res) => {
+  const origin = originFrom(req);
+  const now = Date.now();
+  const SITEMAP_TTL = 5 * 60 * 1000;
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  if (_sitemapCache && _sitemapCache.origin === origin && (now - _sitemapCache.at) < SITEMAP_TTL) {
+    return res.send(_sitemapCache.xml);
+  }
+  let agents = [];
+  try {
+    const gw = require('./lib/gateway');
+    if (gw.isConfigured()) {
+      const r = await gw.getGateway('/public/strategies', 10000);
+      if (r && r.status >= 200 && r.status < 300 && r.data && Array.isArray(r.data.agents)) {
+        agents = r.data.agents;
+      }
+    }
+  } catch (_) { /* best-effort: the static pages still ship */ }
+  const xml = buildSitemap(origin, agents);
+  _sitemapCache = { at: now, origin, xml };
+  res.send(xml);
+});
+
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.message);
