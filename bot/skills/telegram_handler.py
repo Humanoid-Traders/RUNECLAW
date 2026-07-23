@@ -340,6 +340,7 @@ class TelegramHandler:
             ("whynot", self._cmd_whynot),
             ("news", self._cmd_news),
             ("share", self._cmd_share),
+            ("mynotes", self._cmd_mynotes),
             ("alpha", self._cmd_alpha),
             ("gates", self._cmd_gates), ("readiness", self._cmd_readiness),
             ("backtest", self._cmd_backtest), ("walkforward", self._cmd_walkforward),
@@ -7089,6 +7090,45 @@ class TelegramHandler:
             f"🗒️ <b>Saved to your agent's private notes.</b>{src}\n"
             f"<i>{len(text)} characters — your agent can reference it in chat "
             f"now. Manage your notes on the web dashboard.</i>")
+
+    async def _cmd_mynotes(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """NEWS-3c: /mynotes — list the notes you've shared with your agent
+        (PRIVATE, previews only). /mynotes clear — forget them all. Read/delete
+        parity for the web "Share with your agent" panel."""
+        if not update.message:
+            return
+        tg_id = self._get_tg_id(update)
+        if not self.users.is_authorized(tg_id):
+            await self._send(update, "Use /start to register first.")
+            return
+        from bot.db.models import (clear_user_ingest_notes,
+                                   list_user_ingest_notes, settings_user_id)
+        uid = settings_user_id(tg_id)
+        if uid is None:
+            await self._send(update, "Couldn't resolve your account — try /start.")
+            return
+        if ctx.args and ctx.args[0].lower() == "clear":
+            n = clear_user_ingest_notes(uid)
+            await self._send(update, f"🗑️ Cleared {n} shared note(s).")
+            return
+        notes = list_user_ingest_notes(uid, limit=15)
+        if not notes:
+            await self._send(update,
+                "🗒️ You haven't shared anything with your agent yet.\n"
+                "<i>Use <code>/share &lt;text&gt;</code>, or reply to a message "
+                "(e.g. a forwarded newsletter) with <code>/share</code>.</i>")
+            return
+        lines = []
+        for n in notes:
+            head = html.escape(n["title"] or (f"from {n['source']}" if n["source"] else "note"))
+            preview = html.escape(" ".join((n["body"] or "").split())[:140])
+            lines.append(f"• <b>{head}</b> — {preview}")
+        await self._send(update,
+            f"🗒️ <b>Your shared notes</b> ({len(notes)})\n"
+            "─────────────────\n"
+            + "\n".join(lines)
+            + "\n\n<i>Private to you. <code>/mynotes clear</code> forgets them "
+              "all; manage them individually on the web dashboard.</i>")
 
     @guard("scan")
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

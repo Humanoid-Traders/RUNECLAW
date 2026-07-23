@@ -112,3 +112,40 @@ async def test_unauthorized_user_is_asked_to_register(models):
     await h._cmd_share(up, ctx)
     assert "/start" in _replies(up)
     assert models.list_user_ingest_notes(models.settings_user_id("999")) == []
+
+
+# ── /mynotes: list + clear (read/delete parity) ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_mynotes_lists_shared_notes(models):
+    h = _handler()
+    await h._cmd_share(*_update(args=["alpha", "note", "one"]))
+    await h._cmd_share(*_update(args=["beta", "note", "two"]))
+    up, ctx = _update(args=[])
+    await h._cmd_mynotes(up, ctx)
+    reply = _replies(up)
+    assert "Your shared notes" in reply and "alpha note one" in reply and "beta note two" in reply
+
+
+@pytest.mark.asyncio
+async def test_mynotes_empty_prompts_to_share(models):
+    h = _handler()
+    up, ctx = _update(args=[])
+    await h._cmd_mynotes(up, ctx)
+    assert "haven't shared anything" in _replies(up)
+
+
+@pytest.mark.asyncio
+async def test_mynotes_clear_forgets_all(models):
+    h = _handler()
+    await h._cmd_share(*_update(args=["something"]))
+    up, ctx = _update(args=["clear"])
+    await h._cmd_mynotes(up, ctx)
+    assert "Cleared" in _replies(up)
+    assert models.list_user_ingest_notes(models.settings_user_id(str(ADMIN))) == []
+
+
+def test_share_and_mynotes_are_in_the_command_menu():
+    from bot.skills.command_menu import default_commands
+    names = [n for n, _ in default_commands()]
+    assert "share" in names and "mynotes" in names

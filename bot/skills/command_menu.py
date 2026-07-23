@@ -29,6 +29,8 @@ DEFAULT_MENU: List[Tuple[str, str]] = [
     ("orders", "🧾 Your open orders"),
     ("signals", "📡 Latest signals & why they fired"),
     ("news", "📰 Breaking news + alerts on your positions"),
+    ("share", "🗒️ Share a note with your agent (forward a newsletter)"),
+    ("mynotes", "📒 See the notes you've shared with your agent"),
     ("risk", "🛡 Risk status & circuit breaker"),
     ("watch", "🔔 Alert me when a symbol sets up"),
     ("connect", "🔑 Link your exchange to trade live"),
