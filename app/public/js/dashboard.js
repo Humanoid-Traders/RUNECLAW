@@ -4887,17 +4887,49 @@
 
     // ── Research desk: dossier on any listed coin ──
     (async () => {
+      // AI-4: the live-web button is operator-only (it bills the operator's AI
+      // key; the gateway re-checks the role server-side regardless of the UI).
+      const me = await fetchJSON('/api/auth/me', { timeoutMs: 10000 }).catch(() => null);
+      const isAdmin = me?.data?.plan === 'admin';
       await renderPanel(C('hubresearch'), async () =>
         `<p class="small" style="color:var(--text-2)">An evidence dossier from live venue data and the agent's own recorded history — sources named, nothing invented.</p>
          <form class="row mt-3" id="hubResForm" style="gap:var(--s2)">
            <input class="input" id="hubResSym" placeholder="PENDLE" maxlength="12" style="width:9rem" aria-label="Coin to research">
            <button class="btn btn--primary btn--sm" type="submit">🔬 Research</button>
-         </form>`);
+           ${isAdmin ? '<button class="btn btn--sm" id="hubResWeb" type="button" title="Live, cited web research — operator only">🌐 Live web</button>' : ''}
+         </form>
+         <div id="hubResWebOut" class="mt-2"></div>`);
       const form = document.getElementById('hubResForm');
+      const symOf = () => (document.getElementById('hubResSym').value || '')
+        .trim().replace(/[^a-zA-Z0-9$]/g, '').replace(/^\$/, '').toUpperCase();
       if (form) form.onsubmit = (e) => {
         e.preventDefault();
-        const sym = document.getElementById('hubResSym').value.trim().replace(/[^a-zA-Z0-9$]/g, '');
-        if (sym && window.RCChat) window.RCChat.ask('research ' + sym.toUpperCase());
+        const sym = symOf();
+        if (sym && window.RCChat) window.RCChat.ask('research ' + sym);
+      };
+      // Live web research: append a CITED, AI-synthesised section (admin only).
+      const webBtn = document.getElementById('hubResWeb');
+      if (webBtn) webBtn.onclick = async () => {
+        const sym = symOf();
+        const out = document.getElementById('hubResWebOut');
+        if (!sym) { toast('Type a coin first.'); return; }
+        if (out) out.innerHTML = '<div class="skel"></div><div class="skel"></div>';
+        webBtn.disabled = true;
+        try {
+          const r = await fetchJSON(`/api/research/${encodeURIComponent(sym)}/web`,
+            { method: 'POST', body: {}, timeoutMs: 35000 });
+          if (r?.ok && r.data?.web_html) {
+            out.innerHTML = `<div class="panel" style="background:var(--surface-2,#12151c)">
+                <div class="small muted" style="margin-bottom:6px">🌐 Live web research — ${esc(sym)}${r.data.model ? ' · ' + esc(r.data.model) : ''}</div>
+                <div>${r.data.web_html}</div>
+                <div class="small muted" style="margin-top:8px;font-style:italic">${esc(r.data.disclaimer || '')}</div>
+              </div>`;
+          } else {
+            out.innerHTML = `<p class="small muted">${esc(r?.data?.detail || 'Live web research is unavailable right now.')}</p>`;
+          }
+        } catch (_) {
+          out.innerHTML = '<p class="small muted">Live web research hiccup — try again.</p>';
+        } finally { webBtn.disabled = false; }
       };
     })();
 

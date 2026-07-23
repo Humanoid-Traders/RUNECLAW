@@ -791,6 +791,58 @@ async def handle_chat_history(request: web.Request) -> web.Response:
     ]})
 
 
+async def handle_research_web(request: web.Request) -> web.Response:
+    """POST /research/web — AI-4: live, CITED web research for a coin, as an
+    opt-in enrichment on the (otherwise local-sources-only) research dossier.
+
+    ADMIN-ONLY: real-time web_search bills the operator's Anthropic key, so —
+    exactly like the chat web_search path — only the operator can reach it; a
+    non-admin gets a friendly note and zero spend. §4: this rides Anthropic's
+    sanctioned server-side web_search tool (NOT scraping); the model returns
+    cited public sources and is instructed never to reproduce paywalled or
+    credential-gated content. Advisory context, never a verdict. Fail-soft."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    base = re.sub(r"[^A-Za-z0-9]", "", str(body.get("base") or "")).upper()[:10]
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    if not base:
+        return web.json_response({"error": "base required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response(
+            {"error": "admin_only",
+             "detail": "Live web research runs on the operator's AI key and is "
+                       "available to the operator only."}, status=403)
+    prompt = (
+        f"Research the crypto asset {base} using live web search. In 4–6 concise "
+        f"bullet points, cover only what's genuinely recent and material: notable "
+        f"news or catalysts, protocol/tokenomics or listing developments, and any "
+        f"security incidents or risk flags in roughly the last 30 days. Cite a "
+        f"reputable primary source for each claim and note how recent it is. If "
+        f"you can't verify something, say so rather than guessing. This is "
+        f"advisory context for a trader — not financial advice and not a verdict. "
+        f"Never reproduce paywalled or credential-gated content.")
+    try:
+        answer, meta = await tg_handler._llm_chat(
+            prompt, user_id=tg_id, is_admin=True, return_meta=True)
+    except Exception as exc:
+        system_log.debug("research web (%s) failed: %s", base, exc)
+        return web.json_response({"error": "research_unavailable"}, status=502)
+    audit(system_log, f"Web research dossier: {base}",
+          action="research_web", result="OK", data={"user": tg_id, "base": base})
+    return web.json_response({
+        "read_only": True,
+        "base": base,
+        "web_html": answer,
+        "model": (meta or {}).get("model", ""),
+        "provider": (meta or {}).get("provider", ""),
+        "disclaimer": ("Live web research via the operator's AI with cited public "
+                       "sources — advisory context, not financial advice, not a verdict."),
+    })
+
+
 # ── Manual trade propose / confirm / cancel ─────────────────────────────────
 
 def _remember_proposer(app, trade_id: str, tg_id: str) -> None:
@@ -2849,6 +2901,8 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/contract/deploy", handle_contract_deploy)
     app.router.add_post("/cross/plan", handle_cross_plan)
     app.router.add_get("/chat/history", handle_chat_history)
+    # AI-4: admin-only cited web research enrichment for the coin dossier.
+    app.router.add_post("/research/web", handle_research_web)
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/positions", handle_positions)
     app.router.add_get("/networth", handle_networth)

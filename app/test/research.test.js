@@ -133,6 +133,28 @@ test('REST: authed dossier; unlisted 404; anonymous 401', async () => {
   assert.equal(anon.status, 401);
 });
 
+test('AI-4: the live-web research route is authed + proxies the gateway', () => {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'routes', 'research.js'), 'utf8');
+  // admin-only proxy: identity resolved server-side, role re-checked by gateway
+  assert.match(src, /router\.post\('\/:symbol\/web'/);
+  assert.match(src, /postGateway\('\/research\/web'/);
+  assert.match(src, /resolveBotIdentity\(req\)/);
+  assert.ok(!src.includes('req.body.telegram_id'),
+    'the browser must never choose whose key spends the web search');
+  // tighter rate limit than the deterministic dossier (it bills per search)
+  assert.match(src, /max:\s*5/);
+});
+
+test('AI-4: live-web route is 401 anon, 503 when the gateway is unconfigured', async () => {
+  const anon = await req('POST', '/api/research/pendle/web');
+  assert.equal(anon.status, 401);
+  const token = await newUser();
+  const r = await req('POST', '/api/research/pendle/web', { token, body: {} });
+  // WEB_GATEWAY_SECRET is deleted in this suite → the bridge is off.
+  assert.equal(r.status, 503);
+});
+
 test('chat: "research PENDLE" returns the dossier; unlisted honest; other text proxies', async () => {
   const token = await newUser();
   const r = await req('POST', '/api/chat', { token, body: { text: 'research PENDLE' } });
