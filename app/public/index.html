@@ -24,7 +24,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=15">
+<link rel="stylesheet" href="/styles.css?v=16">
 <script src="/js/wallet_picker.js" defer></script>
 <script type="importmap">
 { "imports": { "three": "/vendor/three/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
@@ -558,8 +558,18 @@
 // public page (§4). If the engine is paper-trading, the hero says so.
 (function () {
   var RC = window.RC; if (!RC) return;
+  var host = document.getElementById('heroStats');
+  // Structure on first paint without a single fake number (§4 + honesty): a
+  // shimmer stands in until the real verified track record arrives, then is
+  // replaced. Cleared on empty/failure so we never strand an empty skeleton.
+  if (host) {
+    host.innerHTML = '<span class="hero-stat-skel"></span><span class="hero-stat-skel"></span>'
+      + '<span class="hero-stat-skel"></span><span class="hero-stat-skel"></span>';
+    host.hidden = false; host.style.display = 'flex';
+  }
+  function clearSkel() { if (host) { host.innerHTML = ''; host.hidden = true; host.style.display = ''; } }
   RC.fetchJSON('/api/public/track-record', { auth: false }).then(function (r) {
-    var d = r && r.ok && r.data; if (!d) return;
+    var d = r && r.ok && r.data; if (!d) return clearSkel();
     var eb = document.querySelector('.hero .eyebrow span');
     if (eb && d.mode) {
       eb.removeAttribute('data-i18n');   // honest mode beats the static copy
@@ -567,7 +577,7 @@
         + ' · Bitget USDT-M futures · every trade recorded';
     }
     var s = d.stats || {};
-    var host = document.getElementById('heroStats'); if (!host) return;
+    if (!host) return;
     function stat(v, k) {
       return v == null ? '' :
         '<span style="display:inline-flex;gap:6px;align-items:baseline">'
@@ -580,13 +590,13 @@
       stat(s.profit_factor != null ? Number(s.profit_factor).toFixed(2) : null, 'profit factor'),
       stat(s.max_drawdown_pct != null ? Number(s.max_drawdown_pct).toFixed(1) + '%' : null, 'max drawdown'),
     ].filter(Boolean);
-    if (!rows.length) return;
+    if (!rows.length) return clearSkel();
     host.innerHTML = '<span class="chip chip--up" style="align-self:center">✓ verified</span>'
       + rows.join('<span aria-hidden="true">·</span>')
       + '<a class="small" href="/track">verify →</a>';
     host.hidden = false;
     host.style.display = 'flex';   // inline display would defeat [hidden]
-  }).catch(function () {});
+  }).catch(function () { clearSkel(); });
 })();
 </script>
 <script>
