@@ -258,6 +258,16 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .hfmeter--down .hfmeter-fill { background: var(--down); }
 @media (prefers-reduced-motion: reduce) { .hfmeter-fill { transition: none; } }
 
+/* ---- dApp directory + NFT gallery cards: a reactive hover lift ------------- */
+.dapp-card, .nft-card { transition: transform .18s ease, box-shadow .22s ease, border-color .2s ease; }
+.dapp-card:hover, .dapp-card:focus-visible { transform: translateY(-3px); box-shadow: var(--shadow), var(--glow); border-color: var(--line-2); }
+.nft-card:hover { transform: translateY(-2px); }
+.nft-card:hover img { box-shadow: var(--glow); }
+@media (prefers-reduced-motion: reduce) {
+  .dapp-card, .nft-card { transition: none; }
+  .dapp-card:hover, .dapp-card:focus-visible, .nft-card:hover { transform: none; }
+}
+
 /* Numeric deltas */
 .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 .pos { color: var(--up); }

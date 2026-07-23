@@ -3761,15 +3761,24 @@
       'A curated launchpad of trusted DeFi & NFT apps — you connect and sign on the app\'s own site');
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
-        <section class="panel" id="p-dappctl"><div id="c-dappctl"><div class="skel"></div></div></section>
+        <section class="panel" id="p-dappctl">
+          <div class="row" style="gap:8px;align-items:center;margin-bottom:10px">
+            <input id="dappSearch" class="input" type="search" placeholder="Search dApps by name or purpose…"
+                   aria-label="Search dApps" style="flex:1 1 220px;max-width:340px">
+            <span class="small muted" id="dappCount" aria-live="polite"></span>
+          </div>
+          <div id="c-dappctl"><div class="skel"></div></div>
+        </section>
         <section class="panel"><div id="c-dappgrid"><div class="skel"></div><div class="skel"></div></div></section>
         <p class="small muted" id="dappNote" style="max-width:82ch"></p>
       </div>`);
 
-    let data = null, curCat = 'all', curChain = 'all';
+    let data = null, curCat = 'all', curChain = 'all', curQ = '';
     const load = async () => { const r = await fetchJSON('/api/dapps', { auth: false }); data = r.ok ? r.data : null; return data; };
 
-    const matches = (d) => (curCat === 'all' || d.category === curCat) && (curChain === 'all' || d.chains.includes(curChain));
+    const matches = (d) => (curCat === 'all' || d.category === curCat)
+      && (curChain === 'all' || d.chains.includes(curChain))
+      && (curQ === '' || (`${d.name} ${d.blurb} ${d.category}`).toLowerCase().includes(curQ));
 
     function paintCtl() {
       const el = C('dappctl'); if (!el || !data) return;
@@ -3782,10 +3791,17 @@
           ${chains.map(c => chip(curChain === c.key, c.key, c.label, 'dchain')).join('')}</div>`;
     }
 
+    function paintCount(shown, total) {
+      const el = document.getElementById('dappCount'); if (!el) return;
+      el.textContent = total ? (shown === total ? `${total} apps` : `${shown} of ${total}`) : '';
+    }
+
     function paintGrid() {
       const el = C('dappgrid'); if (!el) return;
-      if (!data) { el.innerHTML = `<p class="small muted">The dApp directory is unavailable right now.</p>`; return; }
+      if (!data) { el.innerHTML = `<p class="small muted">The dApp directory is unavailable right now.</p>`; paintCount(0, 0); return; }
+      const total = (data.dapps || []).length;
       const list = (data.dapps || []).filter(matches);
+      paintCount(list.length, total);
       if (!list.length) { el.innerHTML = `<p class="small muted">No dApps match this filter.</p>`; return; }
       const chainBadge = (c) => `<span class="chip" style="font-size:10px;padding:1px 6px">${esc(c)}</span>`;
       el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:var(--s2)">${list.map(d => `
@@ -3807,6 +3823,13 @@
       const hb = e.target.closest && e.target.closest('[data-dchain]');
       if (cb) { curCat = cb.getAttribute('data-dcat'); paintCtl(); paintGrid(); }
       else if (hb) { curChain = hb.getAttribute('data-dchain'); paintCtl(); paintGrid(); }
+    });
+    // Live search: only the grid re-paints (the input keeps focus), so typing
+    // filters the directory instantly across name, purpose and category.
+    onView('input', (e) => {
+      if (!e.target || e.target.id !== 'dappSearch') return;
+      curQ = String(e.target.value || '').trim().toLowerCase();
+      paintGrid();
     });
   }
 
@@ -3838,7 +3861,7 @@
       const label = esc(it.name || it.collection || 'Untitled');
       return `<div class="nft-card" style="min-width:0">${img}<div class="small" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${label}">${label}</div></div>`;
     };
-    const grid = (items) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:var(--s2)">${items.map(nftCard).join('')}</div>`;
+    const grid = (items) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:var(--s2)">${items.map(nftCard).join('')}</div>`;
 
     // Identity.
     (async () => {

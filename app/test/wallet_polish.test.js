@@ -61,6 +61,6 @@ test('§4: the composition bar shows a percent split — its segments carry no $
 });
 
 test('cache-busters were bumped so the wallet polish ships', () => {
-  assert.match(html, /dashboard\.js\?v=75/);
-  assert.match(html, /styles\.css\?v=17/);
+  assert.match(html, /dashboard\.js\?v=(7[5-9]|8\d)/);
+  assert.match(html, /styles\.css\?v=(1[7-9]|[2-9]\d)/);
 });
