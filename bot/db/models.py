@@ -70,6 +70,16 @@ CREATE TABLE IF NOT EXISTS link_tokens (
     used       INTEGER NOT NULL DEFAULT 0
 );
 
+-- NEWS-2 (BYON): a user's own paid news-provider key, ENCRYPTED at rest.
+-- Additive + idempotent (IF NOT EXISTS) so existing DBs pick it up on init with
+-- no migration. Isolated from user_settings so the LLM-key row is untouched.
+CREATE TABLE IF NOT EXISTS user_news_keys (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    provider   TEXT    NOT NULL DEFAULT '',
+    api_key    TEXT    NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 CREATE INDEX IF NOT EXISTS idx_telegram_chat ON user_telegram(chat_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_user   ON link_tokens(user_id);
 """
@@ -383,6 +393,39 @@ def save_user_settings(s: UserSettings) -> None:
                 int(s.notifications_on), s.scan_interval_sec,
             ),
         )
+
+
+# -- Per-user BYON news key (NEWS-2) -----------------------------------------
+
+def get_user_news_key(user_id: int) -> tuple[str, str]:
+    """Return ``(provider, api_key)`` for a user, or ``("", "")`` if none. The
+    key is decrypted on the way out (reusing the LLM-key cipher)."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT provider, api_key FROM user_news_keys WHERE user_id=?",
+            (user_id,)).fetchone()
+    if not row:
+        return "", ""
+    return (row["provider"] or ""), _decrypt_llm_key(row["api_key"] or "")
+
+
+def save_user_news_key(user_id: int, provider: str, api_key: str) -> None:
+    """Upsert a user's BYON provider + key. The key is ENCRYPTED at rest (fail-
+    closed: a crypto failure stores nothing rather than leak plaintext)."""
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO user_news_keys (user_id, provider, api_key, updated_at) "
+            "VALUES (?,?,?,unixepoch()) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "provider=excluded.provider, api_key=excluded.api_key, "
+            "updated_at=excluded.updated_at",
+            (user_id, str(provider or ""), _encrypt_llm_key(str(api_key or ""))))
+
+
+def clear_user_news_key(user_id: int) -> None:
+    """Forget a user's BYON key — they fall back to the public RSS radar."""
+    with get_db() as db:
+        db.execute("DELETE FROM user_news_keys WHERE user_id=?", (user_id,))
 
 
 # -- Per-user portfolio -----------------------------------------------------

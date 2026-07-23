@@ -1531,12 +1531,35 @@ async def handle_news(request: web.Request) -> web.Response:
                 "impact": it.impact.value, "reasons": list(it.impact_reasons),
                 "symbols": list(it.symbols), "age_sec": int(it.age_sec(now))}
 
+    # NEWS-2: if the caller has connected their own paid news key, enrich THEIR
+    # feed with it — never the operator's cost, never seen by other users. §4:
+    # headline + source + link only (fetch_byon_news maps public fields only),
+    # fail-soft to [] so a bad key silently falls back to the public radar.
+    byon: list[dict] = []
+    byon_active = False
+    try:
+        from bot.core import news_byon
+        from bot.db.models import get_user_news_key, settings_user_id
+        uid = settings_user_id(tg_id)
+        if uid is not None:
+            provider, key = get_user_news_key(uid)
+            if provider and key:
+                byon_active = True
+                byon = await news_byon.fetch_byon_news(
+                    provider, key,
+                    held or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"],
+                    now)
+    except Exception as exc:
+        system_log.debug("byon news enrich failed: %s", exc)
+
     return web.json_response({
         "enabled": enabled,
         "read_only": True,
         "recent": [_item(i) for i in radar.recent(12)],
         "high_impact": [_item(i) for i in radar.high_impact(8)],
         "standdown": radar.standdown(held, now) if held else [],
+        "byon": byon,
+        "byon_active": byon_active,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -2233,6 +2256,85 @@ async def handle_llm_clear(request: web.Request) -> web.Response:
     return web.json_response({"connected": False})
 
 
+async def handle_news_key_save(request: web.Request) -> web.Response:
+    """POST /gateway/news/key — connect the caller's own BYON news-provider key
+    (NEWS-2). Body: {telegram_id, provider, api_key}. The key is validated for
+    format, stored ENCRYPTED, and never echoed back (F-15)."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    provider = str(body.get("provider") or "").strip().lower()
+    api_key = str(body.get("api_key") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.core import news_byon
+    if not news_byon.validate_provider(provider):
+        return web.json_response(
+            {"error": "bad_provider",
+             "detail": "provider must be one of: "
+                       + ", ".join(p["id"] for p in news_byon.providers())}, status=400)
+    if not news_byon.validate_key(provider, api_key):
+        return web.json_response(
+            {"error": "bad_key",
+             "detail": "That key looks malformed — check for stray spaces or "
+                       "line breaks from copy/paste, and that it's the full key."},
+            status=400)
+    from bot.db.models import (ensure_settings_parent, save_user_news_key,
+                               settings_user_id)
+    uid = settings_user_id(tg_id)
+    if uid is None:
+        return web.json_response({"error": "bad_identity"}, status=400)
+    ensure_settings_parent(uid)
+    save_user_news_key(uid, provider, api_key)
+    audit(system_log, f"BYON news key connected: {tg_id} -> {provider}",
+          action="news_byon_connect", result="OK",
+          data={"user": tg_id, "provider": provider,
+                "fingerprint": news_byon.key_fingerprint(api_key)})
+    return web.json_response({"connected": True, "provider": provider,
+                             "fingerprint": news_byon.key_fingerprint(api_key)})
+
+
+async def handle_news_key_clear(request: web.Request) -> web.Response:
+    """POST /gateway/news/key/clear — disconnect the caller's BYON news key."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.db.models import clear_user_news_key, settings_user_id
+    uid = settings_user_id(tg_id)
+    if uid is None:
+        return web.json_response({"error": "bad_identity"}, status=400)
+    clear_user_news_key(uid)
+    audit(system_log, f"BYON news key cleared: {tg_id}",
+          action="news_byon_connect", result="CLEARED", data={"user": tg_id})
+    return web.json_response({"connected": False})
+
+
+async def handle_news_key_status(request: web.Request) -> web.Response:
+    """GET /gateway/news/key/status?telegram_id= — whether a BYON key is set,
+    which provider, and the masked fingerprint. NEVER returns the key."""
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.core import news_byon
+    from bot.db.models import get_user_news_key, settings_user_id
+    uid = settings_user_id(tg_id)
+    provider, key = ("", "")
+    if uid is not None:
+        provider, key = get_user_news_key(uid)
+    return web.json_response({
+        "connected": bool(provider and key),
+        "provider": provider or None,
+        "fingerprint": news_byon.key_fingerprint(key) if key else None,
+        "providers": news_byon.providers(),
+    })
+
+
 async def handle_llm_ultra(request: web.Request) -> web.Response:
     """POST /gateway/llm/ultra — ADMIN-only ULTRA routing toggle (web mirror
     of /ultra). Body: {telegram_id, enabled}. Refreshes the analyzer's cached
@@ -2752,6 +2854,10 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/llm", handle_llm_set)
     app.router.add_post("/llm/clear", handle_llm_clear)
     app.router.add_post("/llm/ultra", handle_llm_ultra)
+    # BYON news (NEWS-2): per-user paid news-provider key, enriches THEIR feed.
+    app.router.add_post("/news/key", handle_news_key_save)
+    app.router.add_post("/news/key/clear", handle_news_key_clear)
+    app.router.add_get("/news/key/status", handle_news_key_status)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
     app.router.add_post("/authority/apply", handle_authority_apply)

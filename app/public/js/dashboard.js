@@ -4116,6 +4116,7 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel" id="p-newsdd"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>On your positions</h2><div id="c-newsdd"><div class="skel"></div></div></section>
+        <section class="panel" id="p-newsbyon" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Your news source</h2><div id="c-newsbyon"><div class="skel"></div></div></section>
         <section class="panel" id="p-newsfeed"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Latest headlines</h2><div id="c-newsfeed"><div class="skel"></div><div class="skel"></div></div></section>
       </div>`);
 
@@ -4124,33 +4125,90 @@
     const icon = (imp) => imp === 'high' ? '🔴' : imp === 'medium' ? '🟠' : '⚪';
     const ago = (s) => { s = +s || 0; return s < 90 ? Math.max(s, 1) + 's' : s < 5400 ? Math.floor(s / 60) + 'm' : s < 172800 ? Math.floor(s / 3600) + 'h' : Math.floor(s / 86400) + 'd'; };
 
-    renderPanel(C('newsdd'), async () => {
-      await load();
-      if (!data) return null;
-      if (!data.enabled) {
-        return `<p class="small muted">The news radar is on by default (public crypto headlines, no API key) but an operator has turned it off here with <code>NEWS_RADAR_ENABLED=0</code>. When on, it gives high-impact alerts on positions you hold. <b>Advisory only</b> — news never moves or blocks a trade.</p>`;
-      }
-      const recs = data.standdown || [];
-      if (!recs.length) return `<p class="small muted">No high-impact news on your open positions right now. ✓</p>`;
-      return recs.slice(0, 6).map((r) => `
-        <div class="news-alert">
-          <div><span class="chip chip--down">🔴 ${esc(r.symbol)}</span> <b>${esc(r.headline)}</b></div>
-          ${(r.reasons || []).length ? `<div class="small muted">${esc((r.reasons || []).slice(0, 3).join(', '))} · ${ago(r.age_sec)} ago</div>` : ''}
-          <div class="small">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">Read →</a> · ` : ''}<i>Advisory — review and decide; nothing was traded.</i></div>
-        </div>`).join('');
-    }, { empty: { text: 'The news radar is unavailable right now.' } });
+    // BYON (NEWS-2): connect your OWN paid news key to enrich YOUR feed. The key
+    // rides once to the bot's encrypted store; this page only sees a masked
+    // fingerprint back. Headlines + source + link only — never article bodies.
+    const byonPanel = document.getElementById('p-newsbyon');
+    async function drawNewsKey() {
+      if (byonPanel) byonPanel.hidden = false;
+      await renderPanel(C('newsbyon'), async () => {
+        const r = await fetchJSON('/api/news/key/status', { timeoutMs: 12000 });
+        if (!r?.ok) { if (byonPanel) byonPanel.hidden = true; return null; }
+        const d = r.data || {};
+        const provs = d.providers || [];
+        const opts = provs.map(p =>
+          `<option value="${esc(p.id)}" ${p.id === (d.provider || '') ? 'selected' : ''}>${esc(p.label || p.id)}</option>`).join('');
+        const status = d.connected
+          ? `<div class="kv-row"><span>Connected</span><b>🟢 ${esc(d.provider)} <span class="num small muted">${esc(d.fingerprint || '')}</span></b></div>
+             <p class="small muted mt-1">Your news radar is enriched from your provider — your quota, only for you. Headlines + source + link only, never paywalled article text.</p>`
+          : `<p class="small" style="color:var(--text-2)">Bring your own paid news-API key to enrich <b>your</b> radar with a richer feed — your quota, seen only by you. Stored encrypted by the bot; this site never keeps it. Compliant by design: headlines, source, and links only.</p>`;
+        return `${status}
+          <form class="row mt-2" id="newsKeyForm" style="gap:var(--s2);flex-wrap:wrap">
+            <select class="input" id="newsKeyProv" aria-label="News provider" style="width:11rem">${opts}</select>
+            <input class="input" id="newsKeyVal" type="password" placeholder="API key" maxlength="128" autocomplete="off" style="flex:1;min-width:12rem" aria-label="News API key">
+            <button class="btn btn--primary btn--sm" type="submit">${d.connected ? '↻ Replace key' : '🔌 Connect'}</button>
+            ${d.connected ? '<button class="btn btn--sm" id="newsKeyClear" type="button">Disconnect</button>' : ''}
+          </form>`;
+      }, { empty: { text: 'News key connect is unavailable right now.' } });
+      const form = document.getElementById('newsKeyForm');
+      if (form) form.onsubmit = async (e) => {
+        e.preventDefault();
+        const provider = document.getElementById('newsKeyProv').value;
+        const key = document.getElementById('newsKeyVal').value.trim();
+        if (!key) { toast('Paste your news-API key first.'); return; }
+        const r = await fetchJSON('/api/news/key', { method: 'POST', body: { provider, api_key: key }, timeoutMs: 15000 });
+        toast(r?.ok ? `Connected ${provider} — your radar is enriched now.`
+                    : (r?.data?.detail || 'Could not connect that key.'));
+        if (r?.ok) { data = null; await drawNewsKey(); refreshFeeds(); }
+      };
+      const clear = document.getElementById('newsKeyClear');
+      if (clear) clear.onclick = async () => {
+        const r = await fetchJSON('/api/news/key/clear', { method: 'POST', body: {} });
+        toast(r?.ok ? 'Disconnected — back to the public radar.' : 'Could not disconnect.');
+        if (r?.ok) { data = null; await drawNewsKey(); refreshFeeds(); }
+      };
+    }
 
-    renderPanel(C('newsfeed'), async () => {
-      if (!data) await load();
-      if (!data || !data.enabled) return null;
-      const items = data.recent || [];
-      if (!items.length) return null;
-      return items.map((it) => `
-        <div class="news-item">
-          <div>${icon(it.impact)} <b>${esc(it.title)}</b></div>
-          <div class="small muted">${esc(it.source || '')}${(it.symbols || []).length ? ' · ' + esc((it.symbols || []).join('/')) : ''} · ${ago(it.age_sec)} ago${it.url ? ` · <a href="${esc(it.url)}" target="_blank" rel="noopener">open</a>` : ''}</div>
-        </div>`).join('');
-    }, { empty: { icon: 'icon-globe', text: 'No headlines yet — the radar fills on the next refresh.' } });
+    function refreshFeeds() {
+      renderPanel(C('newsdd'), async () => {
+        await load();
+        if (!data) return null;
+        if (!data.enabled) {
+          return `<p class="small muted">The news radar is on by default (public crypto headlines, no API key) but an operator has turned it off here with <code>NEWS_RADAR_ENABLED=0</code>. When on, it gives high-impact alerts on positions you hold. <b>Advisory only</b> — news never moves or blocks a trade.</p>`;
+        }
+        const recs = data.standdown || [];
+        if (!recs.length) return `<p class="small muted">No high-impact news on your open positions right now. ✓</p>`;
+        return recs.slice(0, 6).map((r) => `
+          <div class="news-alert">
+            <div><span class="chip chip--down">🔴 ${esc(r.symbol)}</span> <b>${esc(r.headline)}</b></div>
+            ${(r.reasons || []).length ? `<div class="small muted">${esc((r.reasons || []).slice(0, 3).join(', '))} · ${ago(r.age_sec)} ago</div>` : ''}
+            <div class="small">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">Read →</a> · ` : ''}<i>Advisory — review and decide; nothing was traded.</i></div>
+          </div>`).join('');
+      }, { empty: { text: 'The news radar is unavailable right now.' } });
+
+      renderPanel(C('newsfeed'), async () => {
+        if (!data) await load();
+        if (!data || !data.enabled) return null;
+        // BYON-enriched items (from the user's own key) ride at the top with a
+        // provenance chip; the public radar fills the rest.
+        const byon = (data.byon || []).map((it) => `
+          <div class="news-item">
+            <div><span class="chip" style="border-color:var(--accent);color:var(--accent);font-size:10px;padding:1px 6px">yours</span> <b>${esc(it.title)}</b></div>
+            <div class="small muted">${esc(it.source || '')}${(it.symbols || []).length ? ' · ' + esc((it.symbols || []).join('/')) : ''}${it.url ? ` · <a href="${esc(it.url)}" target="_blank" rel="noopener">open</a>` : ''}</div>
+          </div>`).join('');
+        const items = data.recent || [];
+        const pub = items.map((it) => `
+          <div class="news-item">
+            <div>${icon(it.impact)} <b>${esc(it.title)}</b></div>
+            <div class="small muted">${esc(it.source || '')}${(it.symbols || []).length ? ' · ' + esc((it.symbols || []).join('/')) : ''} · ${ago(it.age_sec)} ago${it.url ? ` · <a href="${esc(it.url)}" target="_blank" rel="noopener">open</a>` : ''}</div>
+          </div>`).join('');
+        if (!byon && !pub) return null;
+        return byon + pub;
+      }, { empty: { icon: 'icon-globe', text: 'No headlines yet — the radar fills on the next refresh.' } });
+    }
+
+    refreshFeeds();
+    drawNewsKey();
   }
 
   // Contract Studio — AI drafts Solidity, then the heuristic security-flag pass
