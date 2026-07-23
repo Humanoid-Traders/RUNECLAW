@@ -65,6 +65,16 @@ test('BYON-enriched items are provenance-tagged and body-free in the feed', () =
   assert.match(dash, /never paywalled article text/);
 });
 
+test('the share-panel remove/clear listener is bound once (no leak)', () => {
+  // renderPanel only swaps innerHTML on the persistent container, so the
+  // delegated click handler must be guarded — re-binding every drawShare()
+  // would stack listeners and multi-fire each Remove. (Regression guard.)
+  assert.match(dash, /wrap\._shareBound/);
+  assert.match(dash, /if \(wrap && !wrap\._shareBound\)/);
+  // the fragile float layout was replaced with a flex header
+  assert.ok(!/data-del="\$\{esc\(String\(n\.id\)\)\}" type="button" style="float:right"/.test(dash));
+});
+
 test('the BYON key gateway routes are registered bot-side', () => {
   const gw = fs.readFileSync(
     path.join(__dirname, '..', '..', 'bot', 'web', 'user_gateway.py'), 'utf8');
