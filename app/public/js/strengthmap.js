@@ -69,6 +69,13 @@ async function openPanel(c) {
     </div>
     <div class="sm-fac"><div class="h">Factor breakdown</div>${facs}</div>
     <div class="sm-venues"><div class="h">Open the trade — pick a venue</div>
+      <div class="sm-vgrid">
+        <a class="sm-v" href="/dashboard?trade=${encodeURIComponent(c.base)}&dir=${c.dir >= 0 ? 'LONG' : 'SHORT'}#trade" style="border-color:var(--gold-bright)">
+          <span class="nm">Trade in RUNECLAW</span>
+          <span class="tag">${c.dir >= 0 ? '▲ Long' : '▼ Short'} · paper/live</span>
+          <span class="rc">◆ risk-gated</span><span class="go">Open ticket →</span></a>
+      </div>
+      <div class="h" style="margin-top:var(--s2)">…or on an exchange</div>
       <div class="sm-vgrid" id="smVenues"><span class="muted small">Finding venues…</span></div></div>
     <p class="sm-disc">Public Bitget market data · scores are data-viz, not investment advice. Venue links are where the coin is tradeable — RUNECLAW never auto-routes an order.</p>`;
   $('smPanel').classList.add('open');
