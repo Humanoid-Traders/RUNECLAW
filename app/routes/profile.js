@@ -83,6 +83,8 @@ function sanitizePrefs(input) {
   }
   // Follow-the-agent push topics (opt-in per category; default off).
   if (typeof input.push_board === 'boolean') out.push_board = input.push_board;
+  // push_copy: notify me when a Strategy Agent I follow finds a new live pick.
+  if (typeof input.push_copy === 'boolean') out.push_copy = input.push_copy;
   return out;
 }
 
