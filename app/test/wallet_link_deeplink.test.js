@@ -32,8 +32,21 @@ test('no-wallet on mobile offers deep links that preserve the code', () => {
   assert.match(html, /Android\|iPhone\|iPad\|iPod/);
 });
 
-test('multiple wallets (not MetaMask-only) and desktop guidance (no dead end)', () => {
+test('a broad set of wallets is offered (not MetaMask-only) + desktop guidance', () => {
   assert.match(html, /link\.trustwallet\.com\/open_url/);   // Trust Wallet
   assert.match(html, /go\.cb-w\.com\/dapp/);                // Coinbase Wallet
+  assert.match(html, /rnbwapp\.com\/dapp/);                 // Rainbow
+  assert.match(html, /phantom\.app\/ul\/browse/);           // Phantom
+  assert.match(html, /link\.zerion\.io/);                   // Zerion
+  assert.match(html, /bkcode\.vip/);                        // Bitget Wallet
+  // at least 6 named wallet deep links
+  const names = html.match(/name: '[^']+', href:/g) || [];
+  assert.ok(names.length >= 6, `expected >=6 wallets, found ${names.length}`);
   assert.match(html, /Install a browser wallet/);           // desktop fallback
+});
+
+test('a universal copy-link fallback covers every other wallet', () => {
+  assert.match(html, /Copy link for any other wallet/);
+  assert.match(html, /navigator\.clipboard/);
+  assert.match(html, /window\.prompt\('Copy this link/);    // clipboard-less fallback
 });
