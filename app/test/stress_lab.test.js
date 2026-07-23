@@ -54,6 +54,30 @@ test('runAll returns the five built-in scenarios; leverage raises liquidations',
   assert.ok(!/\$/.test(JSON.stringify(runs)));
 });
 
+test('portfolio encode/decode round-trips and is safe on junk', () => {
+  const pf = [
+    { asset: 'BTC', weight: 40, leverage: 3, dir: 'long' },
+    { asset: 'SOL', weight: 20, leverage: 5, dir: 'short' },
+  ];
+  const enc = M.encodePortfolio(pf);
+  assert.equal(enc, 'BTC:40:3:L,SOL:20:5:S');           // compact + legible
+  assert.deepEqual(M.decodePortfolio(enc), pf);          // exact round-trip
+  assert.deepEqual(M.decodePortfolio(''), []);
+  // never throws / clamps on garbage; empty-asset tokens are dropped
+  const junk = M.decodePortfolio(':::,ETH:999:900:L');
+  assert.ok(Array.isArray(junk));
+  const eth = junk.find(p => p.asset === 'ETH');
+  assert.ok(eth && eth.leverage <= 125 && eth.weight <= 1000);
+});
+
+test('the stress page reads a shared ?p book and offers a share link', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'stress.html'), 'utf8');
+  assert.match(html, /decodePortfolio\(new URLSearchParams\(location\.search\)\.get\('p'\)/);
+  assert.match(html, /id="sharePf"/);
+  assert.match(html, /encodePortfolio\(positions\)/);
+  assert.match(html, /\?p='/);                            // builds the permalink
+});
+
 test('the /stress page + route + model + nav are wired', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(server, /app\.get\('\/stress'/);

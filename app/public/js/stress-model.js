@@ -102,5 +102,34 @@
     return SCENARIOS.map((s) => ({ scenario: s, result: simulate(positions, s.shocks) }));
   }
 
-  return { STABLES, MAJORS, classify, SCENARIOS, simulate, runAll, normAsset };
+  // ── Shareable portfolio encoding ───────────────────────────────────────────
+  // Compact, URL-safe, human-legible: "BTC:40:3:L,ETH:25:2:L,SOL:20:5:S".
+  function encodePortfolio(positions) {
+    return (positions || [])
+      .filter((p) => normAsset(p.asset) && num(p.weight, 0) > 0)
+      .slice(0, 24)
+      .map((p) => [
+        normAsset(p.asset),
+        Math.round(clamp(num(p.weight, 0), 0, 1000)),
+        Math.round(clamp(num(p.leverage, 1), 1, 125)),
+        String(p.dir) === 'short' ? 'S' : 'L',
+      ].join(':'))
+      .join(',');
+  }
+  function decodePortfolio(str) {
+    if (!str) return [];
+    return String(str).split(',').slice(0, 24).map((tok) => {
+      const parts = tok.split(':');
+      const asset = normAsset(parts[0]);
+      if (!asset) return null;
+      return {
+        asset,
+        weight: clamp(num(parts[1], 0), 0, 1000),
+        leverage: clamp(num(parts[2], 1), 1, 125),
+        dir: parts[3] === 'S' ? 'short' : 'long',
+      };
+    }).filter(Boolean);
+  }
+
+  return { STABLES, MAJORS, classify, SCENARIOS, simulate, runAll, normAsset, encodePortfolio, decodePortfolio };
 }));

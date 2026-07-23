@@ -97,7 +97,9 @@
     </div>
     <div class="btn-row">
       <button class="btn btn--sm" id="addRow" type="button">＋ Add position</button>
+      <button class="btn btn--sm" id="sharePf" type="button">🔗 Share this book</button>
       <button class="btn btn--ghost btn--sm" id="resetPf" type="button">Reset sample</button>
+      <span id="shareMsg" class="small muted" aria-live="polite"></span>
     </div>
   </section>
 
@@ -125,7 +127,7 @@
   safety envelope in the <a href="/dashboard#agents">app</a>.</p>
 </div>
 
-<script src="/js/stress-model.js?v=1"></script>
+<script src="/js/stress-model.js?v=2"></script>
 <script>
 (function () {
   var M = window.StressModel;
@@ -138,6 +140,11 @@
     { asset: 'USDC', weight: 15, leverage: 1, dir: 'long' },
   ];
   var positions = SAMPLE.map(function (p) { return Object.assign({}, p); });
+  // A shared book arrives as ?p=BTC:40:3:L,ETH:25:2:L… — decode it over the sample.
+  try {
+    var shared = M && M.decodePortfolio(new URLSearchParams(location.search).get('p') || '');
+    if (shared && shared.length && shared.some(function (p) { return p.weight > 0; })) positions = shared;
+  } catch (e) { /* fall back to the sample */ }
   var $ = function (id) { return document.getElementById(id); };
   var pctTxt = function (v) { return (v >= 0 ? '+' : '') + v.toFixed(1) + '%'; };
 
@@ -245,6 +252,20 @@
   $('resetPf').addEventListener('click', function () {
     positions = SAMPLE.map(function (p) { return Object.assign({}, p); });
     renderRows(); recompute(); renderCustom();
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  });
+  $('sharePf').addEventListener('click', function () {
+    var enc = M.encodePortfolio(positions);
+    if (!enc) { $('shareMsg').textContent = 'Add a position first.'; return; }
+    var url = location.origin + location.pathname + '?p=' + encodeURIComponent(enc);
+    try { history.replaceState(null, '', '?p=' + encodeURIComponent(enc)); } catch (e) {}
+    var worst = M.runAll(positions).slice().sort(function (a, b) { return a.result.drawdownPct - b.result.drawdownPct; })[0];
+    var text = worst ? ('My book takes ' + worst.result.drawdownPct.toFixed(0) + '% in a ' + worst.scenario.name + ' — stress-test yours:') : 'Stress-test your crypto book:';
+    if (navigator.share) { navigator.share({ title: 'RUNECLAW — Portfolio Stress Lab', text: text, url: url }).catch(function () {}); }
+    else if (navigator.clipboard) { navigator.clipboard.writeText(url).then(function () {
+      $('shareMsg').textContent = 'Link copied — it reopens with this exact book.'; setTimeout(function () { $('shareMsg').textContent = ''; }, 2500);
+    }).catch(function () { $('shareMsg').textContent = url; }); }
+    else { $('shareMsg').textContent = url; }
   });
   ['cm', 'ca', 'cs'].forEach(function (id) { $(id).addEventListener('input', renderCustom); });
 
