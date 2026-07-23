@@ -61,8 +61,8 @@ test('the Markets view has a radar jump-nav wired to the panels', () => {
 });
 
 test('cache-busters were bumped so the polish actually ships', () => {
-  assert.match(html, /dashboard\.js\?v=74/);
-  assert.match(html, /styles\.css\?v=1[56]/);
+  assert.match(html, /dashboard\.js\?v=7[45789]/);
+  assert.match(html, /styles\.css\?v=1[5-9]/);
 });
 
 test('§4: the spark visualises percent momentum, never a dollar amount', () => {

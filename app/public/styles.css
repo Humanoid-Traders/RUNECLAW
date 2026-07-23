@@ -237,6 +237,27 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .spark--down .spark-fill { background: var(--down); }
 @media (prefers-reduced-motion: reduce) { .spark-fill { transition: none; } }
 
+/* ---- Net-worth composition bar: proportional stacked segments + legend ---- */
+.stackbar { display: flex; height: 10px; margin: var(--s2) 0 var(--s1); border-radius: 999px; overflow: hidden; background: var(--surface-2); }
+.stackbar-seg { height: 100%; transition: width .5s ease; }
+.stackbar-seg.chip--info { background: var(--info); } .stackbar-seg.chip--up { background: var(--up); }
+.stackbar-seg.chip--gold { background: var(--gold); } .stackbar-seg.chip--warn { background: var(--warn); }
+.stackbar-legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); font-size: var(--fs-xs); color: var(--text-2); }
+.stackbar-key { display: inline-flex; align-items: center; gap: 5px; }
+.stackbar-dot { width: 9px; height: 9px; border-radius: 3px; display: inline-block; background: var(--text-3); }
+.stackbar-dot.chip--info { background: var(--info); } .stackbar-dot.chip--up { background: var(--up); }
+.stackbar-dot.chip--gold { background: var(--gold); } .stackbar-dot.chip--warn { background: var(--warn); }
+@media (prefers-reduced-motion: reduce) { .stackbar-seg { transition: none; } }
+
+/* ---- Aave health-factor meter: liquidation-risk gauge beside the HF number - */
+.hfmeter { display: inline-block; width: 46px; height: 6px; margin-left: 8px; border-radius: 999px;
+  background: var(--surface-2); vertical-align: middle; overflow: hidden; }
+.hfmeter-fill { display: block; height: 100%; border-radius: 999px; transition: width .4s ease; }
+.hfmeter--up   .hfmeter-fill { background: var(--up); }
+.hfmeter--warn .hfmeter-fill { background: var(--warn); }
+.hfmeter--down .hfmeter-fill { background: var(--down); }
+@media (prefers-reduced-motion: reduce) { .hfmeter-fill { transition: none; } }
+
 /* Numeric deltas */
 .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 .pos { color: var(--up); }

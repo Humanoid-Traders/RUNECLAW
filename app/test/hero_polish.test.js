@@ -49,5 +49,5 @@ test('trust badges gain a staggered entrance and a hover lift', () => {
 });
 
 test('styles.css cache-buster was bumped so the hero polish ships', () => {
-  assert.match(html, /styles\.css\?v=16/);
+  assert.match(html, /styles\.css\?v=1[6-9]/);
 });
