@@ -38,16 +38,58 @@
     say('This link is missing its code — scan the QR on your computer again.');
     return;
   }
-  if (!window.ethereum) {
-    // The phone's normal browser has no signer. Honest guidance, no dead end.
-    say('No wallet found in this browser.<br><br><b>Open this link inside your '
-      + 'wallet app\'s browser</b> (MetaMask → menu → Browser, Trust Wallet → '
-      + 'Discover, Rabby → Dapp) and it will work — the wallet app provides '
-      + 'the signer.');
-    return;
+
+  // Scanning the QR opens this page in the phone's NORMAL browser (Safari /
+  // Chrome), which injects no signer — so window.ethereum is absent even
+  // though MetaMask is installed. Two things fix the dead end: (1) an in-app
+  // browser (MetaMask etc.) often injects the provider a beat AFTER load, so
+  // wait briefly before giving up; (2) if there's still no provider, hand the
+  // user a ONE-TAP deep link that reopens THIS page (code preserved) inside
+  // MetaMask's own browser, where the signer exists.
+  function waitForEthereum(cb) {
+    if (window.ethereum) return cb(true);
+    var tries = 0;
+    var t = setInterval(function () {
+      if (window.ethereum) { clearInterval(t); cb(true); }
+      else if (++tries >= 6) { clearInterval(t); cb(false); }   // ~1.8s
+    }, 300);
   }
-  say('Wallet detected. One signature links it to your RUNECLAW account.');
-  btn.classList.remove('hidden');
+
+  function showNoWallet() {
+    var isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+    if (isMobile) {
+      // MetaMask universal deep link: scheme is dropped, host+path+query kept.
+      var deep = 'https://metamask.app.link/dapp/'
+        + location.host + location.pathname + location.search;
+      say('This is your phone\'s browser, which has no wallet signer.<br><br>'
+        + 'Tap below to reopen this page <b>inside MetaMask</b> — it will sign '
+        + 'and link automatically.');
+      var a = document.createElement('a');
+      a.href = deep;
+      a.className = 'btn btn--primary btn-block mt-3';
+      a.textContent = 'Open in MetaMask';
+      a.rel = 'noopener';
+      state.parentNode.appendChild(a);
+      var hint = document.createElement('p');
+      hint.className = 'muted small mt-3';
+      hint.innerHTML = 'Using a different wallet? Open this same link from inside '
+        + 'its in-app browser (Trust Wallet → Discover, Rabby → Dapp, Coinbase '
+        + 'Wallet → Browser).';
+      state.parentNode.appendChild(hint);
+      return;
+    }
+    // Desktop with no extension.
+    say('No wallet found in this browser.<br><br>Install a browser wallet '
+      + '(MetaMask, Rabby) and reload, or scan the QR with your phone and open '
+      + 'the link inside your wallet app.');
+  }
+
+  say('Checking for a wallet…');
+  waitForEthereum(function (has) {
+    if (!has) { showNoWallet(); return; }
+    say('Wallet detected. One signature links it to your RUNECLAW account.');
+    btn.classList.remove('hidden');
+  });
 
   btn.onclick = function () {
     btn.disabled = true;
