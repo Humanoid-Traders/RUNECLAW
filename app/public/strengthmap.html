@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — 3D Strength Map</title>
+<meta name="description" content="A live 3D map of the whole Bitget USDT-perp universe — every coin plotted by momentum, funding and volume, coloured by long-vs-short strength. Public market data, data-viz not investment advice.">
+<meta property="og:title" content="RUNECLAW — 3D Strength Map">
+<meta property="og:description" content="Every USDT-perp plotted in 3D by momentum, funding and volume, coloured by long-vs-short strength. Then open the trade on your CEX or DEX of choice.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/strengthmap">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — 3D Strength Map">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; overflow: hidden; background: radial-gradient(120% 120% at 50% 0%, #0d1017 0%, var(--bg, #06070b) 70%); }
+  .sm-top { position: fixed; top: 0; left: 0; right: 0; z-index: 5; display: flex; gap: var(--s3); align-items: center;
+    padding: var(--s3) var(--s4); background: linear-gradient(#0a0b10cc, #0a0b1000); pointer-events: none; flex-wrap: wrap; }
+  .sm-top > * { pointer-events: auto; }
+  .sm-title { font-family: var(--font-display); letter-spacing: .04em; font-size: clamp(15px, 2.6vw, 22px); }
+  .sm-title b { color: var(--gold-bright); }
+  .sm-seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; overflow: hidden; }
+  .sm-seg button { background: transparent; color: var(--text-2); border: 0; padding: 6px 14px; font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+  .sm-seg button[aria-pressed="true"].long { background: var(--up-dim, #12351f); color: var(--up); }
+  .sm-seg button[aria-pressed="true"].short { background: var(--down-dim, #3a1720); color: var(--down); }
+  .sm-axes { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+  .sm-axes label { color: var(--text-3); font-size: var(--fs-xs); display: inline-flex; align-items: center; gap: 3px; }
+  .sm-axes select { background: var(--surface); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 4px 6px; font: inherit; font-size: var(--fs-xs); }
+  .sm-canvas { position: fixed; inset: 0; z-index: 1; display: block; touch-action: none; }
+  .sm-hint { position: fixed; left: 0; right: 0; bottom: 8px; z-index: 3; text-align: center; color: var(--text-3); font-size: var(--fs-xs); pointer-events: none; padding: 0 var(--s4); }
+  .sm-hint a { pointer-events: auto; }
+  .sm-count { position: fixed; left: var(--s4); bottom: 34px; z-index: 3; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+  /* Detail panel */
+  .sm-panel { position: fixed; z-index: 6; top: 64px; right: var(--s4); width: min(360px, 92vw); max-height: calc(100vh - 90px); overflow: auto;
+    background: var(--surface); border: 1px solid var(--line-2); border-top: 3px solid var(--gold-bright); border-radius: var(--radius); padding: var(--s4);
+    box-shadow: var(--shadow); transform: translateY(8px); opacity: 0; pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+  .sm-panel.open { opacity: 1; transform: none; pointer-events: auto; }
+  @media (max-width: 560px) { .sm-panel { left: var(--s3); right: var(--s3); width: auto; top: auto; bottom: 8px; max-height: 62vh; } }
+  .sm-panel .x { position: absolute; top: 8px; right: 10px; cursor: pointer; color: var(--text-3); background: none; border: 0; font-size: 20px; line-height: 1; }
+  .sm-panel h2 { font-family: var(--font-display); letter-spacing: .03em; font-size: var(--fs-lg); margin: 0; }
+  .sm-panel .px { color: var(--text-2); font-family: var(--font-data); }
+  .sm-ls { display: flex; gap: var(--s2); margin: var(--s3) 0; }
+  .sm-ls .c { flex: 1; text-align: center; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px; }
+  .sm-ls .c .k { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
+  .sm-ls .c .v { font-family: var(--font-data); font-size: 22px; font-weight: 700; }
+  .sm-ls .c.long .v { color: var(--up); } .sm-ls .c.short .v { color: var(--down); }
+  .sm-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px var(--s3); margin: var(--s3) 0; font-size: var(--fs-sm); }
+  .sm-stats .k { color: var(--text-3); } .sm-stats .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; text-align: right; }
+  .sm-fac { border-top: 1px solid var(--line); margin-top: var(--s3); padding-top: var(--s3); }
+  .sm-fac .h { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-bottom: 6px; }
+  .sm-frow { display: grid; grid-template-columns: 78px 1fr 46px; align-items: center; gap: 8px; margin: 5px 0; font-size: var(--fs-xs); }
+  .sm-frow .bar { position: relative; height: 8px; border-radius: 4px; background: var(--surface-2); }
+  .sm-frow .bar i { position: absolute; top: 0; bottom: 0; left: 50%; border-radius: 4px; }
+  .sm-frow .bar .mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line-2); }
+  .sm-frow .val { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+  .sm-venues { border-top: 1px solid var(--line); margin-top: var(--s3); padding-top: var(--s3); }
+  .sm-venues .h { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-bottom: 6px; }
+  .sm-vgrid { display: flex; flex-direction: column; gap: 6px; }
+  .sm-v { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: inherit; text-decoration: none; }
+  .sm-v:hover { border-color: var(--line-2); background: var(--surface-2); }
+  .sm-v .nm { font-weight: 600; }
+  .sm-v .tag { font-size: 9px; padding: 2px 6px; border-radius: 999px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--line-2); }
+  .sm-v .tag.dex { color: var(--gold-bright); }
+  .sm-v .go { margin-left: auto; color: var(--text-3); font-size: var(--fs-xs); }
+  .sm-v .rc { font-size: 9px; color: var(--up); }
+  .sm-disc { color: var(--text-3); font-size: 10px; margin-top: var(--s3); line-height: 1.5; }
+  .sm-fallback { position: fixed; inset: 0; z-index: 2; overflow: auto; padding: 72px var(--s4) var(--s5); display: none; }
+  .sm-fallback table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+  .sm-fallback th, .sm-fallback td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: right; }
+  .sm-fallback th:first-child, .sm-fallback td:first-child { text-align: left; }
+  .sm-empty { position: fixed; inset: 0; display: grid; place-items: center; color: var(--text-3); z-index: 2; padding: var(--s4); text-align: center; }
+</style>
+</head>
+<body>
+<div class="sm-top">
+  <a class="btn btn--ghost btn--sm" href="/">← RUNECLAW</a>
+  <span class="sm-title"><b>3D</b> Strength Map</span>
+  <span class="sm-seg" role="group" aria-label="Bias">
+    <button type="button" class="long" id="biasLong" aria-pressed="true">● Long</button>
+    <button type="button" class="short" id="biasShort" aria-pressed="false">● Short</button>
+  </span>
+  <span class="sm-axes">
+    <label>X <select id="axX"></select></label>
+    <label>Y <select id="axY"></select></label>
+    <label>Z <select id="axZ"></select></label>
+  </span>
+</div>
+
+<canvas class="sm-canvas" id="smCanvas" aria-label="3D strength map of the USDT-perp universe"></canvas>
+<div class="sm-count" id="smCount"></div>
+<div class="sm-hint">Drag to orbit · scroll to zoom · tap a coin for its factor breakdown and where to trade it · <a href="/dashboard#markets">open the app</a></div>
+
+<div class="sm-empty" id="smEmpty">Loading the live universe from public Bitget market data…</div>
+<div class="sm-fallback" id="smFallback"><table><thead><tr><th>Coin</th><th>24h</th><th>Long</th><th>Short</th><th>Funding</th></tr></thead><tbody id="smFbBody"></tbody></table></div>
+
+<aside class="sm-panel" id="smPanel" aria-live="polite">
+  <button class="x" id="smClose" aria-label="Close">&times;</button>
+  <div id="smPanelBody"></div>
+</aside>
+
+<script>
+window.__SM_FACTORS = [
+  { key: 'momentum', label: 'Momentum' }, { key: 'trend', label: 'Trend' },
+  { key: 'doi', label: 'ΔOI' }, { key: 'range', label: 'Range' }, { key: 'funding', label: 'Funding' },
+];
+</script>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+<script src="/js/strengthmap.js?v=1" type="module"></script>
+<script nomodule>document.getElementById('smEmpty').textContent = 'This 3D view needs a modern browser. Open the app for the market tables.';</script>
+</body>
+</html>

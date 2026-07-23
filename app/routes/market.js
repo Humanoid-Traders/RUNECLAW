@@ -236,4 +236,38 @@ router.get('/onchain-flow', async (req, res) => {
   }
 });
 
+// GET /api/market/strengthmap — factor scoring of the whole USDT-perp universe
+// from PUBLIC Bitget market data (price/24h/volume/funding/OI), for the 3D
+// Strength Map. Read-only, no account data, no user P&L — pure market viz (§4).
+// A rolling OI snapshot lets it show ΔOI between polls.
+const { buildStrengthMap } = require('../lib/strengthmap');
+let _oiSnapshot = null; // { [symbol]: oi_usd } from the previous build
+router.get('/strengthmap', async (req, res) => {
+  try {
+    const limit = Math.max(20, Math.min(400, parseInt(req.query.limit, 10) || 220));
+    const raw = await cached('tickers', 5000, () =>
+      fetchJSON('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES')
+    )();
+    const tickers = (raw && Array.isArray(raw.data)) ? raw.data : [];
+    if (!tickers.length) return res.status(502).json({ error: 'Market data unavailable' });
+    const { coins, oiSnapshot, count } = buildStrengthMap(tickers, _oiSnapshot, limit);
+    _oiSnapshot = oiSnapshot; // remember for the next poll's ΔOI
+    res.setHeader('Cache-Control', 'public, max-age=15');
+    res.json({ coins, count, at: new Date().toISOString() });
+  } catch (err) {
+    res.status(502).json({ error: 'Strength map unavailable' });
+  }
+});
+
+// GET /api/market/venues/:base — CEX + DEX venues where a coin is tradeable, as
+// deep links, for the Strength Map's "open the trade" picker. Recommendations
+// only; RUNECLAW never auto-routes an order.
+const { venuesFor } = require('../lib/venue_links');
+router.get('/venues/:base', (req, res) => {
+  const venues = venuesFor(req.params.base);
+  if (!venues.length) return res.status(400).json({ error: 'Invalid symbol' });
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({ base: String(req.params.base).toUpperCase().replace(/USDT$/, ''), venues });
+});
+
 module.exports = router;

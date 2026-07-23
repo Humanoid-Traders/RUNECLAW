@@ -5024,6 +5024,39 @@
       }, msg, e.target);
     });
 
+    // Deep link from the PUBLIC agent page (/agents/:slug → "Reproduce this
+    // backtest in the Lab" → /dashboard?lab_agent=<slug>#lab): build the same
+    // reproduce body from the public catalogue so a shared agent link lands in
+    // the Lab already running its exact backtest. Fail-soft: a normal Lab if the
+    // slug is unknown or the catalogue is down. The param is cleared so a refresh
+    // doesn't re-trigger.
+    if (!_labReproduce) {
+      try {
+        const _slug = new URLSearchParams(location.search).get('lab_agent');
+        if (_slug) {
+          const cr = await fetchJSON('/api/public/strategies', { auth: false, timeoutMs: 12000 });
+          const ca = (((cr && cr.ok && cr.data && cr.data.agents) || []))
+            .find(x => String(x.id).toLowerCase() === _slug.toLowerCase());
+          const csc = ca && ca.scorecard;
+          if (csc && csc.gates && csc.dataset) {
+            _labReproduce = {
+              _agent: ca.name,
+              body: {
+                dataset: csc.dataset,
+                symbols: csc.symbols || [],
+                last_bars: csc.bars || 1500,
+                confidence_threshold: csc.gates.confidence_threshold || 0,
+                volume_spike_min: csc.gates.volume_spike_min,
+                regime_filter: csc.gates.regime_filter || '',
+                rsi_max: csc.gates.rsi_max,
+              },
+            };
+          }
+          try { history.replaceState(null, '', location.pathname + '#lab'); } catch (e) { /* ignore */ }
+        }
+      } catch (e) { /* fall through to a normal Lab */ }
+    }
+
     // Marketplace "Reproduce in Lab": if an agent stashed its exact scorecard
     // gates, run that identical backtest immediately so the card's numbers are
     // verifiable in place. Cleared on use so a later manual Lab visit is normal.

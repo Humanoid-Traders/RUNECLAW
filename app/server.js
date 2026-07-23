@@ -241,6 +241,9 @@ app.get('/agents', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); r
 // server-render per-agent <head> metadata via lib/agent_seo.
 app.get('/developers', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'developers.html')); });
 app.get('/status', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'status.html')); });
+// Public 3D Strength Map — the whole USDT-perp universe scored from public
+// Bitget market data (percent/ratio + public market prices; no user P&L).
+app.get('/strengthmap', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'strengthmap.html')); });
 
 // SEO discoverability for the public marketplace: robots.txt + a dynamic
 // sitemap.xml that enumerates the static public pages plus one URL per catalogue
