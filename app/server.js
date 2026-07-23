@@ -194,6 +194,7 @@ app.use('/api/share', require('./routes/share'));
 app.use('/api/airdrops', require('./routes/airdrops'));
 app.use('/api/exposure', require('./routes/exposure'));
 app.use('/api/research', require('./routes/research'));
+app.use('/api/ingest', require('./routes/ingest'));
 app.use('/mcp', require('./routes/mcp'));
 // ERC-8257 tool surface (well-known manifest + invoke endpoint + operator
 // registration plan) — mounted at root because /.well-known/ is absolute.
