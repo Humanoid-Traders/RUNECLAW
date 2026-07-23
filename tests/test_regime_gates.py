@@ -68,15 +68,18 @@ class TestTimingActive:
             # unknown regime string only matches the global flag, never a set
             assert timing_active("") is False
 
-    def test_default_config_is_all_off(self):
+    def test_default_config_scopes_timing_to_trend_down(self):
+        # The frozen-benchmark A/B (docs/ENTRY_TIMING_AB.md) confirmed TREND_DOWN
+        # as the one regime the confirmation gate reliably helps, so the global
+        # flag stays OFF but the regime scope now defaults to TREND_DOWN.
         import os
         import pytest
         if os.environ.get("ENTRY_TIMING_ENABLED") or \
                 os.environ.get("ENTRY_TIMING_REGIMES"):
             pytest.skip("env override present")
         from bot.config import CONFIG
-        assert CONFIG.execution.entry_timing_enabled is False
-        assert CONFIG.execution.entry_timing_regimes == ""
+        assert CONFIG.execution.entry_timing_enabled is False   # not global-on
+        assert CONFIG.execution.entry_timing_regimes == "TREND_DOWN"
 
 
 # ── shadow book regime tagging ────────────────────────────────────────

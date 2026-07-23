@@ -279,6 +279,11 @@ class RuneClawEngine:
         self._symbol_entry_locks: dict[str, "asyncio.Lock"] = {}
         self._last_confirmed_idea: Optional[TradeIdea] = None
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
+        # Entry-timing (auto path): per-idea (allowed, reason) verdict from the
+        # sub-degree confirmation gate, computed at analyze-time on the idea's own
+        # candles (scoped to ENTRY_TIMING_REGIMES). The auto-confirm loops DEFER
+        # an unconfirmed autonomous entry; capped so it can never grow unbounded.
+        self._pending_timing: dict[str, tuple] = {}
         self._pending_pyramid: dict[str, bool] = {}  # Track pyramid add flags
         # Single-flight scan lock. With PTB concurrent_updates ON, two Telegram
         # updates (two 'Latest Signal' taps, or a tap + /forcescan) can enter
@@ -1785,6 +1790,7 @@ class RuneClawEngine:
         pending_cleared = len(self._pending_ideas)
         self._pending_ideas.clear()
         self._pending_atr.clear()
+        self._pending_timing.clear()
         self._pending_pyramid.clear()
         accounts = await self.flatten_all_positions(reason=reason)
         audit(system_log, f"GLOBAL KILL-SWITCH engaged: {reason}",
@@ -2899,6 +2905,18 @@ class RuneClawEngine:
                             "threshold": auto_threshold})
             auto_ideas = []
         for tid, tidea in auto_ideas:
+            # Entry-timing gate (auto path only): DEFER an autonomous entry whose
+            # sub-degree hasn't confirmed the turn yet (scoped to
+            # ENTRY_TIMING_REGIMES). The idea lapses via its pending-TTL and is
+            # re-checked on a later scan. Fail-open: a missing/True verdict runs.
+            _et_ok, _et_why = self._pending_timing.get(tid, (True, ""))
+            if not _et_ok:
+                audit(trade_log,
+                      f"Auto-entry DEFERRED for {tidea.asset} — awaiting wave-degree "
+                      f"confirmation ({_et_why})",
+                      action="entry_timing", result="DEFERRED",
+                      data={"trade_id": tid, "reason": _et_why})
+                continue
             audit(trade_log,
                   f"Auto-confirming {tidea.asset} (conf={tidea.confidence:.2f} >= {auto_threshold})",
                   action="auto_confirm", result="TRIGGERING",
@@ -3580,6 +3598,24 @@ class RuneClawEngine:
         )
         # H1: store ATR alongside idea for re-check in confirm_trade
         self._pending_atr[idea.id] = atr_value
+
+        # Entry-timing (auto path): pre-compute the sub-degree confirmation on the
+        # idea's own candles so the auto-confirm loop can DEFER an unconfirmed
+        # autonomous entry (scoped to ENTRY_TIMING_REGIMES; fail-open on any error).
+        try:
+            from bot.core.entry_timing import auto_entry_allowed
+            _reg = self.analyzer._current_regimes.get(idea.asset)
+            _regime = getattr(_reg, "value", "") or ""
+            _o = [float(r[1]) for r in ohlcv]
+            _h = [float(r[2]) for r in ohlcv]
+            _l = [float(r[3]) for r in ohlcv]
+            _c = [float(r[4]) for r in ohlcv]
+            _dir = getattr(idea.direction, "value", "") or str(idea.direction)
+            self._pending_timing[idea.id] = auto_entry_allowed(_regime, _dir, _o, _h, _l, _c)
+        except Exception:
+            self._pending_timing[idea.id] = (True, "fail-safe")
+        if len(self._pending_timing) > 500:  # backstop; ids are unique per idea
+            self._pending_timing.clear()
 
         # MTF entry refinement: zoom into 15m for better entry within zone
         idea = await self._refine_entry_mtf(idea, exchange)
@@ -4514,6 +4550,7 @@ class RuneClawEngine:
         old_pending = len(self._pending_ideas)
         self._pending_ideas.clear()
         self._pending_atr.clear()
+        self._pending_timing.clear()
         self._pending_pyramid.clear()
         self._cooldown_until = 0.0
 
@@ -4558,6 +4595,14 @@ class RuneClawEngine:
         auto_confirmed = 0
         for tid, tidea in list(self._pending_ideas.items()):
             if self._auto_confirm_gate_value(tidea) >= auto_threshold:
+                _et_ok, _et_why = self._pending_timing.get(tid, (True, ""))
+                if not _et_ok:
+                    audit(trade_log,
+                          f"Auto-entry DEFERRED for {tidea.asset} — awaiting wave-degree "
+                          f"confirmation ({_et_why})",
+                          action="entry_timing", result="DEFERRED",
+                          data={"trade_id": tid, "reason": _et_why})
+                    continue
                 try:
                     result = await self.confirm_trade(tid, user_id="auto")
                     auto_confirmed += 1

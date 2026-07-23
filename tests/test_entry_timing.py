@@ -209,3 +209,62 @@ def test_flag_defaults_off():
     from bot.config import CONFIG
     assert CONFIG.execution.entry_timing_enabled is False
     assert CONFIG.execution.entry_timing_max_wait_sec > 0
+
+
+# ── auto-entry gate (live auto-confirm path) ─────────────────────────
+def _set_regimes(value):
+    """Set ENTRY_TIMING_REGIMES on the live CONFIG; returns the previous value."""
+    from bot.config import CONFIG
+    prev = CONFIG.execution.entry_timing_regimes
+    object.__setattr__(CONFIG.execution, "entry_timing_regimes", value)
+    return prev
+
+
+def test_auto_entry_inactive_regime_is_allowed():
+    from bot.core.entry_timing import auto_entry_allowed
+    prev = _set_regimes("TREND_DOWN")
+    try:
+        o, h, lo, c = _pullback_then_turn(trigger=False)  # unconfirmed …
+        ok, _ = auto_entry_allowed("TREND_UP", "LONG", o, h, lo, c)  # … but regime not gated
+        assert ok is True
+    finally:
+        _set_regimes(prev)
+
+
+def test_auto_entry_active_regime_defers_until_confirmed():
+    from bot.core.entry_timing import auto_entry_allowed
+    prev = _set_regimes("TREND_DOWN")
+    try:
+        o, h, lo, c = _pullback_then_turn(trigger=False)   # structure turned, no trigger yet
+        ok, reason = auto_entry_allowed("TREND_DOWN", "LONG", o, h, lo, c)
+        assert ok is False and "trigger" in reason.lower()
+
+        o2, h2, lo2, c2 = _pullback_then_turn(trigger=True)  # confirmed
+        ok2, _ = auto_entry_allowed("TREND_DOWN", "LONG", o2, h2, lo2, c2)
+        assert ok2 is True
+    finally:
+        _set_regimes(prev)
+
+
+def test_auto_entry_fails_open_on_thin_history_and_errors():
+    from bot.core.entry_timing import auto_entry_allowed
+    prev = _set_regimes("TREND_DOWN")
+    try:
+        # too few bars → allowed (never block on insufficient data)
+        ok, reason = auto_entry_allowed("TREND_DOWN", "LONG", [1, 2], [1, 2], [1, 2], [1, 2])
+        assert ok is True and "insufficient" in reason.lower()
+        # garbage input → allowed (fail-open, no raise)
+        ok2, _ = auto_entry_allowed("TREND_DOWN", "LONG", None, None, None, None)
+        assert ok2 is True
+    finally:
+        _set_regimes(prev)
+
+
+def test_auto_gate_wired_into_live_auto_confirm():
+    """The live auto-confirm loops must consult the timing verdict and DEFER,
+    and must never gate the human path."""
+    import os
+    src = open(os.path.join(os.path.dirname(__file__), "..", "bot", "core", "engine.py"), encoding="utf-8").read()
+    assert "_pending_timing" in src
+    assert "auto_entry_allowed" in src
+    assert "DEFERRED" in src

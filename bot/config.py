@@ -1505,8 +1505,14 @@ class ExecutionConfig:
     # ones), so instead of the all-or-nothing global flag above, list the
     # regimes where the confirmation gate should be ACTIVE (csv, matched
     # against the analyzer's per-symbol regime). Empty = never (unless the
-    # global flag is on). Default set pending the frozen-benchmark A/B.
-    entry_timing_regimes: str = _env("ENTRY_TIMING_REGIMES", "")
+    # global flag is on). The frozen-benchmark A/B (docs/ENTRY_TIMING_AB.md)
+    # confirmed TREND_DOWN as the one regime the gate reliably helps, in-sample
+    # AND out-of-sample, so it is now the default — the confirmation gate is
+    # ACTIVE for autonomous (auto-confirm) entries in TREND_DOWN. It fails open
+    # (any missing data / error → the entry proceeds) and applies only to the
+    # auto path — a human who confirms is never gated. Instant kill: set
+    # ENTRY_TIMING_REGIMES="" to disable. Other regimes stay ungated.
+    entry_timing_regimes: str = _env("ENTRY_TIMING_REGIMES", "TREND_DOWN")
     entry_timing_max_wait_sec: float = _env_float_bounded(
         "ENTRY_TIMING_MAX_WAIT_SEC", 14400.0, 60.0, 172800.0)  # default 4h
     # Slippage guard

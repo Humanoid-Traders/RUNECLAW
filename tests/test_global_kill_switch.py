@@ -65,6 +65,7 @@ def _engine(operator, user_execs=None, shared_risk=None, user_risk=None):
     eng._user_risk = dict(user_risk or {})
     eng._pending_ideas = {"t1": object(), "t2": object()}
     eng._pending_atr = {"t1": 1.0}
+    eng._pending_timing = {"t1": (True, "")}
     eng._pending_pyramid = {"t1": True}
     return eng
 
@@ -129,6 +130,7 @@ class TestEmergencyHaltAll:
             assert shared.halted == "kill" and ua.halted == "kill" and ub.halted == "kill"
             assert summary["pending_cleared"] == 2
             assert eng._pending_ideas == {} and eng._pending_atr == {} and eng._pending_pyramid == {}
+            assert eng._pending_timing == {}   # emergency halt drops pending timing state too
             assert {a["account"] for a in summary["accounts"]} == {"operator", "alice"}
             assert op.closed_reason == "kill" and alice.closed_reason == "kill"
         finally:
