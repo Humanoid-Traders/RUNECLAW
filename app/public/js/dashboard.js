@@ -2079,6 +2079,11 @@
             </div>
           </section>
         </div>
+        <section class="panel" id="p-tinsight">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Decision picture
+            <span class="badge" style="margin-left:auto" title="The engine's live directional read for this symbol — the same confluence and voters behind the market view. Read-only context, not an instruction.">the why</span></h2>
+          <div id="c-tinsight"><p class="muted small">Enter a symbol to see its live decision picture.</p></div>
+        </section>
         <section class="panel" id="p-tpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-tpos"><div class="skel"></div></div></section>
       </div>`);
 
@@ -2223,6 +2228,27 @@
       try { $('tEntry').dispatchEvent(new Event('input', { bubbles: true })); } catch (e) { /* preview is best-effort */ }
       return price;
     }
+    // Decision picture beside the ticket: the engine's live directional read
+    // for the typed symbol, so the "why" sits next to the "buy". Read-only
+    // context (same confluence/voters as the market view) — never an order
+    // path. Debounced on the symbol, and degrades to an honest "offline" note
+    // via _insightBlock when the analysis bridge is unavailable.
+    let _tiSym = null, _tiTimer = null;
+    async function drawTicketInsight() {
+      const el = document.getElementById('c-tinsight');
+      if (!el) return;
+      const sym = ($('tSym').value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '');
+      if (!sym) { el.innerHTML = '<p class="muted small">Enter a symbol to see its live decision picture.</p>'; _tiSym = null; return; }
+      if (sym === _tiSym) return;                 // already showing this symbol
+      _tiSym = sym;
+      el.innerHTML = '<div class="skel"></div><div class="skel"></div>';
+      const r = await fetchJSON('/api/insight?symbol=' + encodeURIComponent(sym + '/USDT') + '&timeframe=4h&limit=200',
+        { auth: false, timeoutMs: 14000 }).catch(() => null);
+      if (_tiSym !== sym || document.getElementById('c-tinsight') !== el) return; // stale / re-rendered
+      el.innerHTML = _insightBlock(r && r.data);
+    }
+    $('tSym').addEventListener('input', () => { clearTimeout(_tiTimer); _tiTimer = setTimeout(drawTicketInsight, 500); });
+
     document.getElementById('tSuggestBtn').addEventListener('click', async () => {
       const msg = $('tMsg');
       if (!($('tSym').value || '').trim()) { if (msg) msg.innerHTML = '<span class="muted">Enter a symbol first.</span>'; return; }
@@ -2247,6 +2273,7 @@
         const _dir = (_q.get('dir') || '').toUpperCase();
         if (_dir === 'LONG' || _dir === 'SHORT') $('tDir').value = _dir;
         try { history.replaceState(null, '', location.pathname + '#trade'); } catch (e) { /* ignore */ }
+        try { drawTicketInsight(); } catch (e) { /* insight is best-effort */ }
         const _msg = $('tMsg');
         prefillFromLive(false).then((px) => {
           if (!_msg) return;
