@@ -71,3 +71,15 @@ test('the dashboard feeds blip elevation from real momentum', () => {
   assert.match(dash, /elev: Math\.max\(0\.12, Math\.min\(1, Math\.abs\(chg\) \/ 6\)\)/);
   assert.match(dash, /height = momentum/);   // legend explains the new axis
 });
+
+test('the radar emits beam contacts and the dashboard keeps a live contact log', () => {
+  // Widget: fires opts.onContact when the beam pings a strong mover.
+  assert.match(radar, /opts\.onContact/);
+  assert.match(radar, /onContact\(\{ label: pt\.label/);
+  // Lift is bounded to the headroom above centre so tall blips never clip.
+  assert.match(radar, /lift = Math\.min\(ry \* 1\.35, cy - 14\)/);
+  // Dashboard: a capped, dupe-collapsing contact-log wired to onContact.
+  assert.match(dash, /id="radar3dLog"/);
+  assert.match(dash, /mount\(canvas, \{ onContact \}\)/);
+  assert.match(dash, /contacts\.unshift\(c\)/);
+});

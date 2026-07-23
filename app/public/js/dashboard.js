@@ -913,6 +913,7 @@
         <section class="panel" id="p-radar3d"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Sector sweep — live 3D radar
           <span class="badge" style="margin-left:auto" title="Live tokens plotted by momentum &amp; volume on a tilted radar, swept in real time. Visualization only — it never trades.">read-only</span></h2>
           <canvas id="radar3dCanvas" style="width:100%;height:320px;display:block"></canvas>
+          <div id="radar3dLog" class="row" style="gap:6px;flex-wrap:wrap;min-height:22px;margin-top:var(--s2)" aria-live="polite" aria-label="Recent radar contacts"></div>
           <p class="small muted" id="radar3dLegend" style="margin-top:var(--s2)">Each blip is a live token — angle by sector, distance by 24h volume, height by 24h momentum, colour by direction. The plane orbits, the beam sweeps, and strong movers ping on contact. Hover a blip to name it.</p>
         </section>
         <section class="panel" id="p-rwa"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>RWA &amp; on-chain radar
@@ -988,7 +989,22 @@
         const canvas = document.getElementById('radar3dCanvas');
         if (!canvas || !window.RC3DRadar) return;
         if (_radar3d) { try { _radar3d.destroy(); } catch (_) {} }
-        _radar3d = window.RC3DRadar.mount(canvas, {});
+        // Live "contact log": each time the sweep beam pings a strong mover, log
+        // it as a chip (newest first, capped, consecutive dupes collapsed) — a
+        // running read of what the radar is lighting up right now.
+        const logEl = document.getElementById('radar3dLog');
+        const contacts = [];
+        const onContact = (c) => {
+          if (!logEl || !c || !c.label) return;
+          if (contacts[0] && contacts[0].label === c.label) return;   // collapse repeats
+          contacts.unshift(c);
+          if (contacts.length > 6) contacts.pop();
+          logEl.innerHTML = contacts.map((x) => {
+            const col = x.up ? 'var(--up)' : 'var(--down)';
+            return `<span class="chip" style="font-size:11px;border-color:${col};color:${col}">${x.up ? '▲' : '▼'} ${esc(String(x.label))}</span>`;
+          }).join('');
+        };
+        _radar3d = window.RC3DRadar.mount(canvas, { onContact });
         const r = await fetchJSON('/api/market/rwa', { auth: false, timeoutMs: 12000 });
         const cats = (r && r.ok && r.data && r.data.categories) || [];
         const pts = [];
