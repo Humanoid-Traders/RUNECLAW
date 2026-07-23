@@ -85,8 +85,11 @@
 
     function draw(sweep, tsec, animate) {
       var d = size();
-      var cx = d.w / 2, cy = d.h * 0.60, rx = Math.min(d.w * 0.46, 300), ry = rx * TILT;
-      var lift = ry * 1.35;                       // max vertical lift for elev=1
+      // Center sits a little above mid-height and the lift is bounded to the
+      // headroom above it, so tall blips never clip the top and the full ground
+      // ellipse stays visible below.
+      var cx = d.w / 2, cy = d.h * 0.62, rx = Math.min(d.w * 0.46, 300), ry = rx * TILT;
+      var lift = Math.min(ry * 1.35, cy - 14);    // max vertical lift for elev=1
       var yaw = animate ? (tsec * 0.035) % 1 : 0; // slow camera orbit of the plane
       ctx.clearRect(0, 0, d.w, d.h);
 
@@ -150,6 +153,12 @@
           if (gap < 0.05 && was >= 0.05 && (pt.intensity || 0) > 0.5) {
             pings.push({ x: ground.x, y: headY, born: tsec, color: pt.up === false ? DOWN : UP });
             if (pings.length > 24) pings.shift();
+            // Surface the contact so the host can keep a live "contact log"
+            // (last movers the beam swept). Best-effort; never blocks the frame.
+            if (typeof opts.onContact === 'function') {
+              try { opts.onContact({ label: pt.label, up: pt.up !== false, intensity: pt.intensity || 0 }); }
+              catch (e) { /* decorative */ }
+            }
           }
           lastLit[i] = gap;
         }
