@@ -1505,7 +1505,10 @@ class ExecutionConfig:
     # ones), so instead of the all-or-nothing global flag above, list the
     # regimes where the confirmation gate should be ACTIVE (csv, matched
     # against the analyzer's per-symbol regime). Empty = never (unless the
-    # global flag is on). Default set pending the frozen-benchmark A/B.
+    # global flag is on). The frozen-benchmark A/B (docs/ENTRY_TIMING_AB.md)
+    # confirmed TREND_DOWN as the one regime the gate reliably helps, in-sample
+    # AND out-of-sample — recommended live value: ENTRY_TIMING_REGIMES=TREND_DOWN.
+    # Kept empty by default (new gates ship OFF; the operator opts in).
     entry_timing_regimes: str = _env("ENTRY_TIMING_REGIMES", "")
     entry_timing_max_wait_sec: float = _env_float_bounded(
         "ENTRY_TIMING_MAX_WAIT_SEC", 14400.0, 60.0, 172800.0)  # default 4h
