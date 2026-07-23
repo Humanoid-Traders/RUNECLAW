@@ -35,6 +35,7 @@
     { id: 'studio',    label: 'Contract Studio', icon: 'icon-bolt' },
     { id: 'deepscan',  label: 'Deep Scan', icon: 'icon-target' },
     { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
+    { id: 'agents',    label: 'Agents',    icon: 'icon-bolt' },
     { id: 'leaderboard', label: 'Leaders', icon: 'icon-target' },
     { id: 'lab',       label: 'Lab',       icon: 'icon-sparkle' },
     { id: 'hub',       label: 'Agent Hub', icon: 'icon-bolt' },
@@ -4491,6 +4492,70 @@
     });
   }
 
+  /* ═══════ Strategy Agents (marketplace — public, read-only, §4-safe) ═══════ */
+  // A browsable catalogue of the engine's named strategy agents. Every card is
+  // a REAL engine preset served by /api/public/strategies (relayed from the bot
+  // gateway's strategy_catalog), so the "how it trades" line is derived from the
+  // live config and can never drift from what the agent actually does. Public by
+  // construction: design + regime + qualitative risk only — never a dollar
+  // figure, never a fabricated return. Verified performance lives on the honest
+  // Strategy Lab (frozen-data backtests) and the verifiable leaderboard.
+  const _riskBorder = { tight: 'var(--up)', balanced: 'var(--gold-bright)', aggressive: 'var(--warn, #e0913a)' };
+  async function renderAgents() {
+    container.innerHTML = viewHead('Strategy Agents',
+      'Browse the engine\'s strategy agents — each one real, backtestable, and honest');
+    container.insertAdjacentHTML('beforeend', `
+      <section class="panel" id="p-agents">
+        <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>The lineup
+          <span class="right muted small">real presets · design &amp; regime only · verified % in the Lab</span></h2>
+        <div id="c-agents"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      </section>`);
+
+    await renderPanel(C('agents'), async () => {
+      const r = await fetchJSON('/api/public/strategies', { timeoutMs: 16000, auth: false });
+      if (r.status === 503) {
+        return `<div class="state-block"><svg class="icon"><use href="#icon-offline"></use></svg>
+          <p>The agent catalogue needs the bot's analysis bridge (run <code>python api_bridge.py</code> on the bot host).</p></div>`;
+      }
+      const agents = (r.ok && r.data && r.data.agents) || [];
+      if (!agents.length) return null;
+      const note = (r.data && r.data.note) || '';
+      const cards = agents.map(a => {
+        const border = _riskBorder[a.risk] || 'var(--gold-bright)';
+        const chips = [
+          a.risk_label ? `<span class="chip" style="font-size:11px">${esc(a.risk_label)}</span>` : '',
+          a.regime ? `<span class="chip" style="font-size:11px">${esc(a.regime)}</span>` : '',
+          a.horizon ? `<span class="chip" style="font-size:11px">${esc(a.horizon)}</span>` : '',
+        ].filter(Boolean).join('');
+        return `<article class="panel" style="border-top:3px solid ${border};display:flex;flex-direction:column;gap:var(--s2)">
+          <div class="row" style="gap:var(--s2);align-items:center">
+            <span style="font-size:26px;line-height:1">${esc(a.icon || '🤖')}</span>
+            <div style="min-width:0"><b style="font-size:var(--fs-lg)">${esc(a.name)}</b></div>
+          </div>
+          ${a.tagline ? `<p class="small" style="color:var(--text-2)">${esc(a.tagline)}</p>` : ''}
+          <p class="small muted" style="margin:0"><b>How it trades:</b> ${esc(a.how)}</p>
+          <div class="row" style="gap:6px;flex-wrap:wrap">${chips}</div>
+          <div class="row mt-2" style="gap:var(--s2);flex-wrap:wrap;margin-top:auto">
+            <button class="btn btn--primary btn--sm" data-agentlab="${esc(a.id)}" type="button">Backtest in Lab</button>
+            <button class="btn btn--ghost btn--sm" data-agentask="${esc(a.name)}" type="button">Ask the agent</button>
+          </div>
+        </article>`;
+      }).join('');
+      return `<div class="grid-cards" style="display:grid;gap:var(--s3);grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">${cards}</div>
+        ${note ? `<p class="muted small mt-3">${esc(note)}</p>` : ''}
+        <p class="muted small mt-1">Every agent is one of the engine's real strategies. Returns are never claimed here — run any of them on frozen benchmark data in the <a href="#lab">Strategy Lab</a> to see honest percent/ratio results, or watch verified ranks on the <a href="#leaderboard">leaderboard</a>.</p>`;
+    }, { errorText: 'The agent catalogue is unavailable right now.' });
+
+    onView('click', (e) => {
+      const lab = e.target.closest('[data-agentlab]');
+      if (lab) { showView('lab'); return; }
+      const ask = e.target.closest('[data-agentask]');
+      if (ask && window.RCChat) {
+        window.RCChat.ask(`How does the "${ask.dataset.agentask}" strategy agent work, and what market conditions suit it?`);
+      }
+    });
+  }
+
   async function renderLeaderboard() {
     container.innerHTML = viewHead('Leaderboard', 'Opt-in ranks by return % — anonymous handles, no dollar amounts');
     if (!LOGGED_IN) {
@@ -5983,6 +6048,7 @@
                    studio: renderContractStudio,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio, tax: renderTax,
                    reputation: renderReputation, counterparty: renderCounterparty, worlds: renderWorlds, dapps: renderDapps,
+                   agents: renderAgents,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
 

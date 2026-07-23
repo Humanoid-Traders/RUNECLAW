@@ -1717,6 +1717,23 @@ async def handle_leaderboard_public(request: web.Request) -> web.Response:
     return web.json_response(_leaderboard_payload(season))
 
 
+async def handle_strategies_public(request: web.Request) -> web.Response:
+    """GET /gateway/public/strategies — the Strategy-Agent marketplace catalogue,
+    no auth. Public-safe by construction: each card is one of the real engine
+    presets, describing DESIGN + regime + qualitative risk only — never a dollar
+    figure and never a fabricated return. Verified performance lives on the
+    honest Strategy Lab + the verifiable leaderboard."""
+    from bot.core import strategy_catalog
+    return web.json_response({
+        "read_only": True,
+        "public": True,
+        "agents": strategy_catalog.catalog(),
+        "note": ("Every agent is a real engine strategy. Backtest any of them on "
+                 "frozen benchmark data in the Strategy Lab — results are "
+                 "percent/ratio only, never a claimed dollar return."),
+    })
+
+
 # ── Public agent directory (ERC-8004 identity card) ──────────────────────────
 
 _AGENT_ADDR_RE = re.compile(r"^0x[0-9a-f]{40}$")
@@ -2996,6 +3013,8 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/proofofpnl", handle_proofofpnl)
     app.router.add_get("/public/proofofpnl", handle_proofofpnl_public)
     app.router.add_get("/public/leaderboard", handle_leaderboard_public)
+    # Strategy-Agent marketplace catalogue (public, read-only, §4-safe).
+    app.router.add_get("/public/strategies", handle_strategies_public)
     app.router.add_get("/share-card", handle_share_card)
     app.router.add_get("/public/agent/{address}", handle_agent_card_public)
     app.router.add_post("/idleyield", handle_idle_yield)

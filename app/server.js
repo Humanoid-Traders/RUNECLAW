@@ -167,6 +167,7 @@ app.use('/api/portfolio', portfolioRouter);
 app.use('/api/leaderboard', leaderboardRouter);
 app.use('/api/public/proofofpnl', require('./routes/public_proofofpnl'));
 app.use('/api/public/leaderboard', require('./routes/public_leaderboard'));
+app.use('/api/public/strategies', require('./routes/public_strategies'));
 app.use('/api/public/letter', require('./routes/public_letter'));
 app.use('/api/public/agent', require('./routes/public_agent'));
 app.use('/api/public/invite', require('./routes/public_invite'));
