@@ -46,7 +46,22 @@ test('§4: the page renders percent/ratio only — no dollar figure', () => {
 test('the page is read-only and shareable (no trade path; Web Share)', () => {
   assert.ok(!/trade\/confirm|\/api\/trade|live_executor|api_key/.test(html), 'no money-path on the public page');
   assert.match(html, /navigator\.share/);
-  assert.match(html, /Follow &amp; reproduce in the app/);
+  assert.match(html, /Follow in the app/);
+});
+
+test('the primary CTA deep-links into the Lab to reproduce THIS agent', () => {
+  // /dashboard?lab_agent=<slug>#lab so the Lab auto-runs the agent's exact backtest.
+  assert.match(html, /\/dashboard\?lab_agent='\s*\+\s*encodeURIComponent\(a\.id\)\s*\+\s*'#lab/);
+  assert.match(html, /Reproduce this backtest in the Lab/);
+});
+
+test('the Lab honours the ?lab_agent= deep link from the public page', () => {
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
+  assert.match(dash, /URLSearchParams\(location\.search\)\.get\('lab_agent'\)/);
+  // it builds the reproduce body from the public catalogue and clears the param
+  assert.match(dash, /\/api\/public\/strategies/);
+  assert.match(dash, /_labReproduce\s*=\s*\{/);
+  assert.match(dash, /history\.replaceState\([^)]*'#lab'/);
 });
 
 test('the marketplace cards link to each agent\'s public page', () => {

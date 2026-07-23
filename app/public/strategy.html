@@ -110,7 +110,10 @@
       + (chips ? '<div class="chips">' + chips + '</div>' : '')
       + scoreBlock(a.scorecard)
       + '<div class="cta-row">'
-      + '<a class="btn btn--primary btn--sm" href="/dashboard#agents">Follow &amp; reproduce in the app</a>'
+      // Deep-link straight into the Lab with THIS agent auto-running its exact
+      // backtest — the page's "reproduce its numbers" promise, delivered in one tap.
+      + '<a class="btn btn--primary btn--sm" href="/dashboard?lab_agent=' + encodeURIComponent(a.id) + '#lab">Reproduce this backtest in the Lab</a>'
+      + '<a class="btn btn--sm" href="/dashboard#agents">Follow in the app</a>'
       + '<button class="btn btn--sm" id="shareBtn" type="button">Share</button>'
       + '</div>'
       + '<p class="disc">Every RUNECLAW agent is one of the engine\'s real strategies, backtested on '
