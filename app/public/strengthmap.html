@@ -60,6 +60,31 @@
   .sm-frow .bar i { position: absolute; top: 0; bottom: 0; left: 50%; border-radius: 4px; }
   .sm-frow .bar .mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line-2); }
   .sm-frow .val { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+  .sm-frow .bar i { transition: width .6s cubic-bezier(.2,.8,.2,1), left .6s cubic-bezier(.2,.8,.2,1); }
+  .sm-ls .c { transition: border-color .2s ease, box-shadow .2s ease; }
+  .sm-ls .c.on.long { border-color: rgba(47,191,113,.55); box-shadow: 0 0 0 1px rgba(47,191,113,.25), 0 6px 20px -10px rgba(47,191,113,.5); }
+  .sm-ls .c.on.short { border-color: rgba(224,82,82,.55); box-shadow: 0 0 0 1px rgba(224,82,82,.25), 0 6px 20px -10px rgba(224,82,82,.5); }
+  .sm-ls .c .v { transition: color .2s ease; }
+  /* "Trade in RUNECLAW" — the highlighted in-app venue, with a soft gold pulse */
+  .sm-v--rc { border-color: var(--gold-bright) !important; position: relative; overflow: hidden;
+    background: linear-gradient(100deg, rgba(214,178,90,.10), transparent 60%); }
+  .sm-v--rc::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    box-shadow: 0 0 0 0 rgba(214,178,90,.45); animation: smPulse 2.6s ease-out infinite; }
+  @keyframes smPulse { 0% { box-shadow: 0 0 0 0 rgba(214,178,90,.35); } 70%,100% { box-shadow: 0 0 0 6px rgba(214,178,90,0); } }
+  /* Floating hover tooltip over the 3D scene */
+  .sm-tip { position: fixed; z-index: 7; pointer-events: none; transform: translate(-50%,-160%);
+    background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+    padding: 5px 9px; font-size: var(--fs-xs); font-family: var(--font-data); white-space: nowrap;
+    box-shadow: var(--shadow); opacity: 0; transition: opacity .12s ease; }
+  .sm-tip.on { opacity: 1; }
+  .sm-tip .sm-tip-ls { display: block; color: var(--text-3); font-size: 10px; margin-top: 2px; }
+  /* Projected axis labels pinned to the box ends */
+  .sm-axlabel { position: fixed; z-index: 4; top: 0; left: 0; pointer-events: none;
+    font-family: var(--font-data); font-size: 10px; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-3); background: rgba(10,11,16,.55); padding: 2px 7px; border-radius: 999px;
+    border: 1px solid var(--line); transition: opacity .3s ease; white-space: nowrap; }
+  .sm-ax-x { color: #f2a37a; } .sm-ax-y { color: #7ad1a0; } .sm-ax-z { color: #8ab6f2; }
+  @media (prefers-reduced-motion: reduce) { .sm-v--rc::after { animation: none; } }
   .sm-venues { border-top: 1px solid var(--line); margin-top: var(--s3); padding-top: var(--s3); }
   .sm-venues .h { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-bottom: 6px; }
   .sm-vgrid { display: flex; flex-direction: column; gap: 6px; }
@@ -94,6 +119,7 @@
 </div>
 
 <canvas class="sm-canvas" id="smCanvas" aria-label="3D strength map of the USDT-perp universe"></canvas>
+<div class="sm-tip" id="smTip" role="status" aria-hidden="true"></div>
 <div class="sm-count" id="smCount"></div>
 <div class="sm-hint">Drag to orbit · scroll to zoom · tap a coin for its factor breakdown and where to trade it · <a href="/dashboard#markets">open the app</a></div>
 
@@ -114,7 +140,7 @@ window.__SM_FACTORS = [
 <script type="importmap">
 { "imports": { "three": "/vendor/three/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
 </script>
-<script src="/js/strengthmap.js?v=2" type="module"></script>
+<script src="/js/strengthmap.js?v=3" type="module"></script>
 <script nomodule>document.getElementById('smEmpty').textContent = 'This 3D view needs a modern browser. Open the app for the market tables.';</script>
 </body>
 </html>
