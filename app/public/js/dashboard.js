@@ -5437,6 +5437,7 @@
           <span class="right muted small">admin · proposed on-chain actions</span></h2>
           <div id="c-review"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-signer" hidden></section>
+        <section class="panel" id="p-yieldplan" hidden></section>
         <section class="panel" id="p-readiness"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Readiness score
           <span class="right muted small">how constrained the agent is right now</span></h2>
           <div id="c-readiness"><div class="skel"></div><div class="skel"></div></div></section>
@@ -5469,6 +5470,11 @@
         // the bot's triple-gated, testnet-only signer from the web/phone: status,
         // nonce/gas prepare, and a guarded send. The bot re-checks every gate.
         mountTestnetSigner(document.getElementById('p-signer'));
+        // CROSS-2 guided yield-execution PREVIEW: compile a scanned move into a
+        // plan and run the triple-gate (scanner + policy + Authority Envelope)
+        // read-only. Signs nothing — when it clears, the first leg is signed via
+        // the testnet signer above. The bot re-checks admin + every gate.
+        mountYieldPlanPreview(document.getElementById('p-yieldplan'));
       }
     }).catch(() => {});
     renderPanel(C('readiness'), async () => {
@@ -5573,6 +5579,69 @@
   // envelope, authorize()); this panel only shows status and forwards the resolved
   // transfer. No private key ever reaches the browser — the panel shows the
   // PUBLIC signer address and presence booleans only.
+  // CROSS-2 guided yield-execution PREVIEW (admin-only, read-only). Enter a
+  // stables move + a recallable destination; the bot runs the triple-gate
+  // (scanner-worth + yield-policy + Authority-Envelope) and returns the verdict
+  // + each gate + the first-leg transfer it WOULD require. Signs nothing here —
+  // execution is a separate, gated /web3/sign call on the first leg.
+  function mountYieldPlanPreview(panel) {
+    if (!panel) return;
+    const NETS = ['sepolia', 'base-sepolia', 'arbitrum-sepolia', 'optimism-sepolia',
+      'polygon-amoy', 'avalanche-fuji', 'scroll-sepolia', 'linea-sepolia'];
+    const opts = NETS.map((n) => `<option value="${n}">${esc(n)}</option>`).join('');
+    panel.hidden = false;
+    panel.innerHTML = `
+      <h2 class="panel-title">🌉 Yield execution preview
+        <span class="right muted small">CROSS-2 · testnet · read-only</span></h2>
+      <p class="small muted">Preview a stables move against the triple-gate before you sign. Nothing here moves funds — when it clears, sign the first-leg transfer in the signer above.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+        <label class="small muted">Asset<input id="yp-asset" class="input input--sm" value="USDC"></label>
+        <label class="small muted">Amount (USD)<input id="yp-amt" class="input input--sm" type="number" value="40"></label>
+        <label class="small muted">From chain<select id="yp-from" class="input input--sm">${opts}</select></label>
+        <label class="small muted">To chain<select id="yp-to" class="input input--sm">${opts}</select></label>
+        <label class="small muted">Δ APY %<input id="yp-dapy" class="input input--sm" type="number" value="3"></label>
+        <label class="small muted">Net-of-cost (USD)<input id="yp-net" class="input input--sm" type="number" value="1.2"></label>
+        <label class="small muted" style="grid-column:1/3">Destination (recallable, allowlisted)<input id="yp-dest" class="input input--sm" placeholder="0x…" spellcheck="false"></label>
+      </div>
+      <button class="btn btn--sm btn--primary" id="yp-run" type="button" style="margin-top:8px">Preview plan</button>
+      <div id="yp-out" class="small" style="margin-top:8px"></div>`;
+    const run = panel.querySelector('#yp-run');
+    if (run) run.addEventListener('click', async () => {
+      const out = panel.querySelector('#yp-out');
+      const amt = parseFloat(panel.querySelector('#yp-amt').value) || 0;
+      const dapy = parseFloat(panel.querySelector('#yp-dapy').value) || 0;
+      const net = parseFloat(panel.querySelector('#yp-net').value) || 0;
+      // Build a scanner-shaped move; worth='yes' requires a positive net horizon.
+      const move = {
+        asset: (panel.querySelector('#yp-asset').value || '').toUpperCase(),
+        amount_usd: amt, from_chain: panel.querySelector('#yp-from').value,
+        delta_apy: dapy, net_horizon_usd: net, breakeven_days: net > 0 ? 12 : null,
+        custodial: false, lockup_days: 0, worth: net > 0 ? 'yes' : 'no',
+      };
+      run.disabled = true; out.textContent = 'Evaluating gates…';
+      try {
+        const r = await fetchJSON('/api/web3/cross-plan', {
+          method: 'POST', timeoutMs: 16000,
+          body: { move, to_chain: panel.querySelector('#yp-to').value, dest: panel.querySelector('#yp-dest').value.trim() },
+        });
+        const d = r && r.data;
+        if (!d) { out.textContent = 'Preview unavailable (admin + bot gateway required).'; return; }
+        const g = d.gates || {};
+        const dot = (ok) => ok ? '<span style="color:#16a34a">✓</span>' : '<span style="color:#dc2626">✗</span>';
+        const verdict = d.verdict === 'execute'
+          ? '<b style="color:#16a34a">EXECUTE</b> — all gates pass'
+          : '<b style="color:#dc2626">SKIP</b>';
+        const reasons = (d.reasons || []).map((x) => `<div class="muted">• ${esc(x)}</div>`).join('');
+        out.innerHTML = `${verdict}
+          <div style="margin-top:4px">${dot(g.scanner)} scanner &nbsp; ${dot(g.policy)} policy &nbsp; ${dot(g.authority)} authority &nbsp; ${dot(d.stables_only_ok)} stables-only</div>
+          ${reasons}
+          <div class="muted small" style="margin-top:6px">${esc(d.note || '')}</div>`;
+      } catch (_) {
+        out.textContent = 'Preview unavailable right now.';
+      } finally { run.disabled = false; }
+    });
+  }
+
   function mountTestnetSigner(panel) {
     if (!panel) return;
     panel.hidden = false;
