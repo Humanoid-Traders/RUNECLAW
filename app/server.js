@@ -202,6 +202,13 @@ app.use('/mcp', require('./routes/mcp'));
 // registration plan) — mounted at root because /.well-known/ is absolute.
 app.use(require('./routes/tool8257'));
 app.use('/api/public/status', require('./routes/public_status'));
+// GET /api/version — which commit is serving this process. Public build
+// metadata only (short SHA, commit + boot time); no secrets. Lets anyone
+// confirm a deploy actually landed instead of guessing.
+app.get('/api/version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.json(require('./lib/version').buildInfo());
+});
 app.use('/api/nft', require('./routes/nft'));
 app.use('/api/spot', require('./routes/spot'));
 app.use('/api/tax', require('./routes/tax'));

@@ -11,6 +11,8 @@
  * honest state without a live bot behind the site.
  */
 
+const { buildInfo } = require('./version');
+
 const FRESH_SCAN_MS = 15 * 60_000;        // engine pushes the scan every few minutes
 const FRESH_REPORTS_MS = 2.5 * 3600_000;  // intelligence reports are hourly
 const FRESH_LETTER_MS = 9 * 86_400_000;   // weekly letter: last completed ISO week
@@ -97,6 +99,9 @@ async function buildStatus(now = Date.now()) {
     status: worrying.length === 0 ? 'ok'
       : worrying.length >= 2 ? 'degraded' : 'partial',
     generated_at: new Date(now).toISOString(),
+    // Which commit is actually serving this page — so a stale deploy is
+    // visible here, not a mystery. Public metadata only (no secrets).
+    build: buildInfo(),
     components,
     honesty_note: 'States are computed from real timestamps at request time — '
       + 'nothing here is hand-set. "not_configured" and "no_data" are reported '
