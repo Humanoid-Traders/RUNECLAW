@@ -2424,6 +2424,27 @@
   }
 
   /* ═══════════════ PORTFOLIO ═══════════════ */
+  // Build a §4-safe "?p=" Stress Lab book from the live portfolio: each open
+  // position as a PERCENT of equity (its margin share) + leverage + direction.
+  // Ratios only — no dollar figure ever enters the URL. Encoding matches
+  // stress-model.js decodePortfolio ("BTC:40:3:L,…").
+  function stressBookFromPortfolio(pf) {
+    const pos = (pf && pf.open_positions) || [];
+    if (!pos.length) return '';
+    const marginOf = p => (Number(p.size_usd) || 0) / Math.max(1, Number(p.leverage) || 1);
+    const eq = Number(pf && pf.equity) || 0;
+    const denom = eq > 0 ? eq : pos.reduce((a, p) => a + marginOf(p), 0);
+    if (!(denom > 0)) return '';
+    return pos.map(p => {
+      const asset = String(p.symbol || '').split(/[/:]/)[0].toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '');
+      if (!asset) return null;
+      const w = Math.max(1, Math.min(100, Math.round(marginOf(p) / denom * 100)));
+      const lev = Math.max(1, Math.min(125, Math.round(Number(p.leverage) || 1)));
+      const dir = String(p.direction || '').toLowerCase() === 'short' ? 'S' : 'L';
+      return `${asset}:${w}:${lev}:${dir}`;
+    }).filter(Boolean).join(',');
+  }
+
   async function renderPortfolio() {
     container.innerHTML = viewHead('Portfolio', 'Your equity, history, and journal');
     if (!LOGGED_IN) {
@@ -2636,6 +2657,17 @@
       if (!(d.positions || []).length) return `<p class="small muted">No open positions right now. When the agent opens one, its stop-loss protection status shows here.</p>`;
       return slPositionsHtml(d);
     }, { empty: { icon: 'icon-shield', text: 'No open positions — stop-loss protection status appears here when the agent opens one.' } });
+
+    // One-tap: twin the real book in the Stress Lab. The link carries only
+    // percentages (each position's margin share of equity) + leverage — never a
+    // dollar figure — so it stays §4-clean even when shared.
+    getPortfolio().then(pf => {
+      const book = stressBookFromPortfolio(pf);
+      const host = document.getElementById('c-lpos');
+      if (!book || !host || document.getElementById('stressBookLink')) return;
+      host.insertAdjacentHTML('afterend',
+        `<p class="small" id="stressBookLink" style="margin-top:var(--s2)"><a href="/stress?p=${encodeURIComponent(book)}" target="_blank" rel="noopener">🔗 Stress-test this book in the Digital Twin →</a> <span class="muted">— see how it survives a −30% drop, an alt crash or a black swan. Percent-only simulation.</span></p>`);
+    }).catch(() => { /* the twin link is best-effort */ });
 
     // Trade intelligence — alpha vs holding, expectancy, payoff, drawdown,
     // streaks. All re-derived server-side from the recorded closed trades.
