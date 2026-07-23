@@ -983,6 +983,7 @@
           <canvas id="radar3dCanvas" style="width:100%;height:320px;display:block"></canvas>
           <div id="radar3dLog" class="row" style="gap:6px;flex-wrap:wrap;min-height:22px;margin-top:var(--s2)" aria-live="polite" aria-label="Recent radar contacts"></div>
           <p class="small muted" id="radar3dLegend" style="margin-top:var(--s2)">Each blip is a live token — angle by sector, distance by 24h volume, height by 24h momentum, colour by direction. The plane orbits, the beam sweeps, and strong movers ping on contact. Hover a blip to name it.</p>
+          <p class="small" style="margin-top:var(--s2)"><a href="/strengthmap">🌐 Open the 3D Strength Map →</a> <span class="muted">— the whole USDT-perp universe by long/short strength, then trade it on any CEX or DEX.</span></p>
         </section>
         <section class="panel" id="p-rwa"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>RWA &amp; on-chain radar
           <span class="badge" style="margin-left:auto" title="Market intelligence from live venue tickers — the radar never trades">read-only</span></h2>
@@ -2188,6 +2189,23 @@
     }
     ['tDir', 'tEntry', 'tSl', 'tTp'].forEach(id => $(id).addEventListener('input', preview));
     ['szRisk', 'szLev'].forEach(id => $(id).addEventListener('input', sizer));
+
+    // Deep link from the Strength Map (and other market surfaces): prefill the
+    // ticket with ?trade=<SYMBOL>&dir=LONG|SHORT so a coin picked on the map
+    // lands in the order ticket ready to size. Param is cleared so a refresh
+    // doesn't re-fill. Symbol only — nothing is placed without you confirming.
+    try {
+      const _q = new URLSearchParams(location.search);
+      const _sym = (_q.get('trade') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '').slice(0, 15);
+      if (_sym) {
+        $('tSym').value = _sym;
+        const _dir = (_q.get('dir') || '').toUpperCase();
+        if (_dir === 'LONG' || _dir === 'SHORT') $('tDir').value = _dir;
+        const _msg = $('tMsg'); if (_msg) _msg.textContent = `${_sym} loaded — set entry, stop and target, then review.`;
+        try { $('tEntry').focus(); } catch (e) { /* ignore */ }
+        try { history.replaceState(null, '', location.pathname + '#trade'); } catch (e) { /* ignore */ }
+      }
+    } catch (e) { /* a normal empty ticket */ }
 
     // AI co-pilot — deterministic second opinion before you commit (advice only).
     document.getElementById('tCopilotBtn').addEventListener('click', async () => {

@@ -14,6 +14,7 @@ const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const market = fs.readFileSync(path.join(__dirname, '..', 'routes', 'market.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'strengthmap.html'), 'utf8');
 const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'strengthmap.js'), 'utf8');
+const dash = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
 
 test('the /strengthmap page + its data routes are wired', () => {
   assert.match(server, /app\.get\('\/strengthmap'.*strengthmap\.html/);
@@ -35,6 +36,23 @@ test('the detail panel offers a CEX/DEX venue picker to open the trade', () => {
   assert.match(js, /\/api\/market\/venues\//);
   assert.match(js, /Open the trade/);
   assert.match(js, /RUNECLAW never auto-routes/);   // §4 recommendations-only disclaimer
+});
+
+test('the venue picker leads with a "Trade in RUNECLAW" deep link into the app', () => {
+  // The map is a funnel: a coin picked here can open in the app's own ticket,
+  // not only on an external CEX/DEX. The deep link carries the symbol + a
+  // long/short bias so the ticket lands ready to size (see dashboard test).
+  assert.match(js, /Trade in RUNECLAW/);
+  assert.match(js, /\/dashboard\?trade=/);
+  assert.match(js, /dir=\$\{c\.dir >= 0 \? 'LONG' : 'SHORT'\}/);
+  assert.match(js, /#trade/);
+});
+
+test('the dashboard ticket prefills from ?trade=SYMBOL&dir= (symbol only, nothing placed)', () => {
+  assert.match(dash, /get\('trade'\)/);              // reads the deep-link param
+  assert.match(dash, /\$\('tSym'\)\.value = _sym/);  // fills the symbol field
+  assert.match(dash, /get\('dir'\)/);                // and the optional bias
+  assert.match(dash, /history\.replaceState/);       // clears param so refresh won't re-fill
 });
 
 test('§4: it renders PUBLIC market data only — no user account, P&L or order path', () => {
