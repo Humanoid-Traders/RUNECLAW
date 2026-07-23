@@ -4886,7 +4886,10 @@
         ${a.how ? `<p class="small muted" style="margin:0"><b>How it trades:</b> ${esc(a.how)}</p>` : ''}
         ${tags ? `<div class="row" style="gap:5px;flex-wrap:wrap">${tags}</div>` : ''}
         <div class="row" style="gap:5px;flex-wrap:wrap">${chips}</div>
-        <a class="small" href="/agents/${encodeURIComponent(a.slug || a.id)}" style="margin-top:auto">Open shareable page →</a></article>`;
+        <div class="row" style="gap:var(--s2);align-items:center;margin-top:auto">
+          <a class="small" href="/agents/${encodeURIComponent(a.slug || a.id)}">Open shareable page →</a>
+          ${LOGGED_IN ? `<button class="btn btn--ghost btn--sm" data-sfork="${esc(a.slug || a.id)}" type="button" style="margin-left:auto">⑂ Fork</button>` : ''}
+        </div></article>`;
     }
     async function loadCommunity() {
       const panel = document.getElementById('p-community'), host = document.getElementById('c-community');
@@ -4965,6 +4968,45 @@
       if ($('sReset')) $('sReset').hidden = true;
       if ($('sMsg')) $('sMsg').textContent = '';
     }
+    // Populate the builder fields from a strategy object (shared by Edit + Fork).
+    function fillStratFields(s) {
+      $('sIcon').value = s.icon || ''; $('sName').value = s.name || ''; $('sTag').value = s.tagline || '';
+      $('sHow').value = s.how || ''; $('sReg').value = s.regime || ''; $('sHor').value = s.horizon || '';
+      $('sDir').value = 'both'; ['sConf', 'sRr', 'sSize', 'sOpen', 'sSyms'].forEach(x => { if ($(x)) $(x).value = ''; });
+      (s.rules || []).forEach(r => {
+        if (r.type === 'direction') $('sDir').value = r.value;
+        else if (r.type === 'min_confidence') $('sConf').value = Math.round(Number(r.value) * 100);
+        else if (r.type === 'min_rr') $('sRr').value = r.value;
+        else if (r.type === 'max_position_pct') $('sSize').value = r.value;
+        else if (r.type === 'max_open_positions') $('sOpen').value = r.value;
+        else if (r.type === 'allowed_symbols') $('sSyms').value = (r.value || []).join(', ');
+      });
+    }
+    // Fork: load someone's strategy into the builder as a NEW draft (no edit id),
+    // so saving creates the user's own copy to customize and publish.
+    function forkInto(s) {
+      if (!s || !$('sName')) return;   // builder only exists when logged in
+      resetStratForm();
+      fillStratFields(s);
+      _stratEditId = null;
+      if ($('sSave')) $('sSave').textContent = 'Save draft';
+      if ($('sMsg')) $('sMsg').innerHTML = `<span class="pos">Forked “${esc(s.name || '')}” — make it yours, then Save.</span>`;
+      const p = document.getElementById('p-mystrat'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    async function forkBySlug(slug) {
+      if (!slug) return;
+      let s = null;
+      try { const r = await fetchJSON('/api/public/user-strategies/' + encodeURIComponent(slug), { auth: false, timeoutMs: 10000 }); s = r.ok && r.data && r.data.agent; } catch (_) { /* fall through */ }
+      if (s) forkInto(s); else toast('Could not load that strategy to fork.');
+    }
+    // Deep link: /dashboard?fork=<slug>#agents opens the builder pre-forked.
+    try {
+      const _fk = new URLSearchParams(location.search).get('fork');
+      if (_fk && /^[a-z0-9][a-z0-9-]{0,63}$/.test(_fk)) {
+        forkBySlug(_fk);
+        history.replaceState(null, '', location.pathname + '#agents');
+      }
+    } catch (_) { /* no fork param */ }
     async function saveStrat(e) {
       e.preventDefault();
       const msg = $('sMsg'); const body = collectStrategy();
@@ -5022,17 +5064,7 @@
         const s = ((d && d.strategies) || []).find(x => String(x.dbId) === String(id));
         if (!s) return;
         _stratEditId = id;
-        $('sIcon').value = s.icon || ''; $('sName').value = s.name || ''; $('sTag').value = s.tagline || '';
-        $('sHow').value = s.how || ''; $('sReg').value = s.regime || ''; $('sHor').value = s.horizon || '';
-        $('sDir').value = 'both'; ['sConf', 'sRr', 'sSize', 'sOpen', 'sSyms'].forEach(x => { if ($(x)) $(x).value = ''; });
-        (s.rules || []).forEach(r => {
-          if (r.type === 'direction') $('sDir').value = r.value;
-          else if (r.type === 'min_confidence') $('sConf').value = Math.round(Number(r.value) * 100);
-          else if (r.type === 'min_rr') $('sRr').value = r.value;
-          else if (r.type === 'max_position_pct') $('sSize').value = r.value;
-          else if (r.type === 'max_open_positions') $('sOpen').value = r.value;
-          else if (r.type === 'allowed_symbols') $('sSyms').value = (r.value || []).join(', ');
-        });
+        fillStratFields(s);
         $('sSave').textContent = 'Update strategy'; $('sReset').hidden = false;
         $('sMsg').textContent = `Editing “${s.name}”.`;
         document.getElementById('p-mystrat').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -5049,6 +5081,8 @@
     }
 
     onView('click', async (e) => {
+      const forkBtn = e.target.closest('[data-sfork]');
+      if (forkBtn) { forkBySlug(forkBtn.getAttribute('data-sfork')); return; }
       const foll = e.target.closest('[data-agentfollow]');
       const unf = e.target.closest('[data-agentunfollow]');
       if (foll || unf) {
