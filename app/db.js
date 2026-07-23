@@ -34,6 +34,8 @@ class MemoryDB {
     this.agentEvents = []; // public agent mind-stream feed (bounded ring)
     this._nextAgentEventId = 1;
     this.reportsCache = null;  // { reports_json, updated_at } (single row)
+    this.walletLinkCodes = {};   // code -> { user_id, expires_at }
+    this.walletLinkNonces = {};  // address -> { message, expires_at }
     this.userProfiles = {};    // user_id -> { risk_pref, watchlist, prefs }
     this.pushSubs = [];        // web-push subscriptions (UPSERT by endpoint)
     this._nextPushSubId = 1;
@@ -803,6 +805,48 @@ class MemoryDB {
       return [this.scanCache ? [this.scanCache] : [], []];
     }
 
+    // -- WALLET LINK CODES (phone/QR flow) --
+    if (cmd.includes('INTO WALLET_LINK_CODES')) {          // REPLACE INTO ... (code, user_id, expires_at)
+      this.walletLinkCodes[params[0]] = { code: params[0], user_id: params[1], expires_at: params[2] };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM WALLET_LINK_CODES')) {
+      if (cmd.includes('EXPIRES_AT <')) {                  // prune expired
+        const cutoff = params[0];
+        for (const k of Object.keys(this.walletLinkCodes)) {
+          if (this.walletLinkCodes[k].expires_at < cutoff) delete this.walletLinkCodes[k];
+        }
+      } else {
+        delete this.walletLinkCodes[params[0]];
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM WALLET_LINK_CODES')) {
+      const rec = this.walletLinkCodes[params[0]];
+      return [rec ? [{ user_id: rec.user_id, expires_at: rec.expires_at }] : [], []];
+    }
+
+    // -- WALLET LINK NONCES (phone/QR flow) --
+    if (cmd.includes('INTO WALLET_LINK_NONCES')) {         // REPLACE INTO ... (address, message, expires_at)
+      this.walletLinkNonces[params[0]] = { address: params[0], message: params[1], expires_at: params[2] };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM WALLET_LINK_NONCES')) {
+      if (cmd.includes('EXPIRES_AT <')) {
+        const cutoff = params[0];
+        for (const k of Object.keys(this.walletLinkNonces)) {
+          if (this.walletLinkNonces[k].expires_at < cutoff) delete this.walletLinkNonces[k];
+        }
+      } else {
+        delete this.walletLinkNonces[params[0]];
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM WALLET_LINK_NONCES')) {
+      const rec = this.walletLinkNonces[params[0]];
+      return [rec ? [{ message: rec.message, expires_at: rec.expires_at }] : [], []];
+    }
+
     return [[], []];
   }
 }
@@ -961,6 +1005,23 @@ async function migrate() {
         id INT PRIMARY KEY DEFAULT 1,
         scan_json LONGTEXT NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    // Phone/QR wallet-link: short-lived single-use codes + sign nonces persisted
+    // so the flow survives a web restart or a second instance between "show QR"
+    // and "phone signs" (see lib/wallet_link_store). expires_at is epoch ms.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS wallet_link_codes (
+        code VARCHAR(32) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        expires_at BIGINT NOT NULL
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS wallet_link_nonces (
+        address VARCHAR(64) PRIMARY KEY,
+        message TEXT NOT NULL,
+        expires_at BIGINT NOT NULL
       )
     `);
     // Global signal stream (every generated signal, taken or not). signal_key is

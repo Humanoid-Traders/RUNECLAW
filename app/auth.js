@@ -655,17 +655,11 @@ router.get('/config', (_req, res) => {
 // by wallet_address. Non-custodial: the wallet only signs a login message here,
 // it never authorizes a transaction, and no private key ever leaves the wallet.
 const _ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
-const _walletNonces = new Map();   // address(lower) -> { message, expires }
 const _NONCE_TTL_MS = 5 * 60 * 1000;
-
-function _pruneNonces() {
-  const now = Date.now();
-  for (const [k, v] of _walletNonces) if (v.expires < now) _walletNonces.delete(k);
-  if (_walletNonces.size > 5000) {
-    const keys = [..._walletNonces.keys()];
-    for (let i = 0; i < keys.length - 2500; i++) _walletNonces.delete(keys[i]);
-  }
-}
+// Link codes + sign nonces live in a durable store (DB-backed, in-memory
+// fallback) so the phone/QR flow survives a web restart or a second instance
+// between "show QR" and "phone signs". See lib/wallet_link_store.
+const _linkStore = require('./lib/wallet_link_store');
 
 router.post('/wallet/nonce', async (req, res) => {
   if (!_ethers) return res.status(503).json({ error: 'Wallet sign-in is not available on this deployment.' });
@@ -673,12 +667,11 @@ router.post('/wallet/nonce', async (req, res) => {
   if (!checkRateLimit(clientIp)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
   const address = String((req.body || {}).address || '').trim();
   if (!_ADDR_RE.test(address)) return res.status(400).json({ error: 'A valid wallet address is required.' });
-  _pruneNonces();
   const nonce = crypto.randomBytes(16).toString('hex');
   const message = 'RUNECLAW — sign in with your wallet.\n\n'
     + 'This only proves you own this address. It will NOT trigger a transaction or cost gas.\n\n'
     + `Address: ${address}\nNonce: ${nonce}\nIssued: ${new Date().toISOString()}`;
-  _walletNonces.set(address.toLowerCase(), { message, expires: Date.now() + _NONCE_TTL_MS });
+  await _linkStore.putNonce(address, message, Date.now() + _NONCE_TTL_MS);
   res.json({ message });
 });
 
@@ -690,7 +683,7 @@ router.post('/wallet/verify', async (req, res) => {
     if (!_ADDR_RE.test(address) || !signature) {
       return res.status(400).json({ error: 'Address and signature are required.' });
     }
-    const rec = _walletNonces.get(address.toLowerCase());
+    const rec = await _linkStore.getNonce(address);
     if (!rec || rec.expires < Date.now()) {
       return res.status(400).json({ error: 'Login request expired — please try again.' });
     }
@@ -700,7 +693,7 @@ router.post('/wallet/verify', async (req, res) => {
     if (String(recovered).toLowerCase() !== address.toLowerCase()) {
       return res.status(401).json({ error: 'Signature does not match the wallet.' });
     }
-    _walletNonces.delete(address.toLowerCase());   // single-use
+    await _linkStore.delNonce(address);   // single-use
     const user = await findOrCreateOAuthUser({
       provider: 'wallet', providerId: address.toLowerCase(), email: null,
     });
@@ -727,7 +720,7 @@ router.post('/wallet/link', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Address and signature are required.' });
     }
     const lower = address.toLowerCase();
-    const rec = _walletNonces.get(lower);
+    const rec = await _linkStore.getNonce(lower);
     if (!rec || rec.expires < Date.now()) {
       return res.status(400).json({ error: 'Link request expired — please try again.' });
     }
@@ -737,7 +730,7 @@ router.post('/wallet/link', authMiddleware, async (req, res) => {
     if (String(recovered).toLowerCase() !== lower) {
       return res.status(401).json({ error: 'Signature does not match the wallet.' });
     }
-    _walletNonces.delete(lower);   // single-use
+    await _linkStore.delNonce(lower);   // single-use
     // A wallet identifies at most one account (it is also a login key).
     const [rows] = await pool.execute(
       'SELECT id FROM users WHERE wallet_address = ? LIMIT 1', [lower]);
@@ -758,26 +751,21 @@ router.post('/wallet/link', authMiddleware, async (req, res) => {
 // app's browser and proves ownership with the same SIWE-style signature.
 // The code is the bearer: 10-minute TTL, single-use, server-side user
 // binding — the phone never needs the desktop's JWT.
-const _linkCodes = new Map();   // code -> { userId, expires }
 const LINK_CODE_TTL_MS = 10 * 60_000;
-function _pruneLinkCodes() {
-  const now = Date.now();
-  for (const [c, rec] of _linkCodes) if (rec.expires < now) _linkCodes.delete(c);
-  if (_linkCodes.size > 5000) _linkCodes.clear();   // abuse backstop
-}
 
 router.post('/wallet/link-code', authMiddleware, async (req, res) => {
   try {
     if (!_ethers) return res.status(503).json({ error: 'Wallet linking is not available on this deployment.' });
-    _pruneLinkCodes();
     const code = crypto.randomBytes(16).toString('hex');
-    _linkCodes.set(code, { userId: req.user.user_id, expires: Date.now() + LINK_CODE_TTL_MS });
+    await _linkStore.putCode(code, req.user.user_id, Date.now() + LINK_CODE_TTL_MS);
     const origin = process.env.PUBLIC_ORIGIN
       || `${req.protocol}://${req.get('host')}`;
     const url = `${origin}/wallet-link?code=${code}`;
     let svg = null;
     try {
-      svg = await require('qrcode').toString(url, { type: 'svg', margin: 1, width: 220 });
+      // margin:4 = the 4-module quiet zone the QR spec requires; a tighter zone
+      // is a common cause of phones failing to lock onto the code.
+      svg = await require('qrcode').toString(url, { type: 'svg', margin: 4, width: 240 });
     } catch (e) { /* QR lib missing → the URL alone still works */ }
     res.json({ code, url, svg, expires_in_sec: LINK_CODE_TTL_MS / 1000 });
   } catch (err) {
@@ -796,12 +784,12 @@ router.post('/wallet/link-by-code', async (req, res) => {
     if (!/^[0-9a-f]{32}$/.test(code) || !_ADDR_RE.test(address) || !signature) {
       return res.status(400).json({ error: 'Code, address and signature are required.' });
     }
-    const rec = _linkCodes.get(code);
+    const rec = await _linkStore.getCode(code);
     if (!rec || rec.expires < Date.now()) {
       return res.status(400).json({ error: 'This link code has expired — generate a fresh QR on your computer.' });
     }
     const lower = address.toLowerCase();
-    const nrec = _walletNonces.get(lower);
+    const nrec = await _linkStore.getNonce(lower);
     if (!nrec || nrec.expires < Date.now()) {
       return res.status(400).json({ error: 'Signing request expired — try again.' });
     }
@@ -811,13 +799,13 @@ router.post('/wallet/link-by-code', async (req, res) => {
     if (String(recovered).toLowerCase() !== lower) {
       return res.status(401).json({ error: 'Signature does not match the wallet.' });
     }
-    _walletNonces.delete(lower);
+    await _linkStore.delNonce(lower);
     const [rows] = await pool.execute(
       'SELECT id FROM users WHERE wallet_address = ? LIMIT 1', [lower]);
     if (rows.length && rows[0].id !== rec.userId) {
       return res.status(409).json({ error: 'That wallet is already linked to another account.' });
     }
-    _linkCodes.delete(code);   // single-use — only after every check passed
+    await _linkStore.delCode(code);   // single-use — only after every check passed
     await pool.execute('UPDATE users SET wallet_address = ? WHERE id = ?',
       [lower, rec.userId]);
     res.json({ ok: true, address: lower });

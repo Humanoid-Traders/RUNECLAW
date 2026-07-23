@@ -51,31 +51,55 @@
     var tries = 0;
     var t = setInterval(function () {
       if (window.ethereum) { clearInterval(t); cb(true); }
-      else if (++tries >= 6) { clearInterval(t); cb(false); }   // ~1.8s
+      else if (++tries >= 10) { clearInterval(t); cb(false); }  // ~3s — some in-app browsers inject late
     }, 300);
   }
 
   function showNoWallet() {
     var isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
     if (isMobile) {
-      // MetaMask universal deep link: scheme is dropped, host+path+query kept.
-      var deep = 'https://metamask.app.link/dapp/'
-        + location.host + location.pathname + location.search;
+      var hostPathQuery = location.host + location.pathname + location.search;
+      var full = location.href;
+      var enc = encodeURIComponent(full);
+      // Universal deep links that reopen THIS page (code preserved) inside each
+      // wallet's own dApp browser, where window.ethereum exists. Documented
+      // universal-link forms only (app-scheme guesses that silently fail are
+      // worse than the copy-link fallback below, which covers every other wallet).
+      var wallets = [
+        { name: 'MetaMask', href: 'https://metamask.app.link/dapp/' + hostPathQuery, primary: true },
+        { name: 'Trust Wallet', href: 'https://link.trustwallet.com/open_url?url=' + enc },
+        { name: 'Coinbase Wallet', href: 'https://go.cb-w.com/dapp?cb_url=' + enc },
+        { name: 'Rainbow', href: 'https://rnbwapp.com/dapp?url=' + enc },
+        { name: 'Phantom', href: 'https://phantom.app/ul/browse/' + enc + '?ref=' + encodeURIComponent(location.origin) },
+        { name: 'Uniswap Wallet', href: 'https://uniswap.org/app?dappUrl=' + enc },
+        { name: 'Zerion', href: 'https://link.zerion.io/905dU0Hd8ub?dappUrl=' + enc },
+        { name: 'Bitget Wallet', href: 'https://bkcode.vip?action=dapp&url=' + enc },
+      ];
       say('This is your phone\'s browser, which has no wallet signer.<br><br>'
-        + 'Tap below to reopen this page <b>inside MetaMask</b> — it will sign '
-        + 'and link automatically.');
-      var a = document.createElement('a');
-      a.href = deep;
-      a.className = 'btn btn--primary btn-block mt-3';
-      a.textContent = 'Open in MetaMask';
-      a.rel = 'noopener';
-      state.parentNode.appendChild(a);
-      var hint = document.createElement('p');
-      hint.className = 'muted small mt-3';
-      hint.innerHTML = 'Using a different wallet? Open this same link from inside '
-        + 'its in-app browser (Trust Wallet → Discover, Rabby → Dapp, Coinbase '
-        + 'Wallet → Browser).';
-      state.parentNode.appendChild(hint);
+        + 'Tap your wallet to reopen this page <b>inside it</b> — it signs and '
+        + 'links automatically. Don\'t see yours? <b>Copy the link</b> and paste '
+        + 'it into your wallet\'s in-app browser.');
+      wallets.forEach(function (w) {
+        var a = document.createElement('a');
+        a.href = w.href;
+        a.className = 'btn btn-block mt-2' + (w.primary ? ' btn--primary' : '');
+        a.textContent = 'Open in ' + w.name;
+        a.rel = 'noopener';
+        state.parentNode.appendChild(a);
+      });
+      // Universal fallback: copy the link so ANY wallet (Rabby, OKX, imToken,
+      // TokenPocket, Frame, Rainbow, …) can paste it into its dApp browser.
+      var copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn btn-block mt-3';
+      copy.textContent = '📋 Copy link for any other wallet';
+      copy.onclick = function () {
+        var done = function () { copy.textContent = '✅ Link copied — paste in your wallet\'s browser'; };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(full).then(done).catch(function () { window.prompt('Copy this link:', full); });
+        } else { window.prompt('Copy this link:', full); }
+      };
+      state.parentNode.appendChild(copy);
       return;
     }
     // Desktop with no extension.
