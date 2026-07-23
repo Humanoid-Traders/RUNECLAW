@@ -223,6 +223,20 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .chip--live    { color: var(--down); background: var(--down-dim); border-color: var(--down); }
 .chip--offline { color: var(--text-3); background: var(--surface-2); }
 
+/* ---- Radar jump-nav: quick-scroll chips at the top of the Markets view --- */
+.jumpnav { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 var(--s3); }
+.jumpnav-btn { cursor: pointer; transition: color .15s ease, background .15s ease, border-color .15s ease; }
+.jumpnav-btn:hover, .jumpnav-btn:focus-visible { color: var(--gold-bright); background: var(--gold-dim); border-color: transparent; }
+
+/* ---- Momentum spark bar (radar tables): width = magnitude, colour = dir ---
+   Decorative companion to the numeric %, so it never carries meaning alone. */
+.spark { display: inline-block; width: 42px; height: 6px; margin-left: 8px; border-radius: 999px;
+  background: var(--surface-2); vertical-align: middle; overflow: hidden; }
+.spark-fill { display: block; height: 100%; border-radius: 999px; transition: width .4s ease; }
+.spark--up   .spark-fill { background: var(--up); }
+.spark--down .spark-fill { background: var(--down); }
+@media (prefers-reduced-motion: reduce) { .spark-fill { transition: none; } }
+
 /* Numeric deltas */
 .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 .pos { color: var(--up); }
