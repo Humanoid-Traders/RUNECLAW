@@ -25,7 +25,8 @@ test('bare /agents is routed BEFORE /agents/:slug (else it is captured as a slug
 });
 
 test('the directory renders every agent from the public catalogue, linking to each slug', () => {
-  assert.match(html, /fetch\('\/api\/public\/strategies'/);
+  assert.match(html, /'\/api\/public\/strategies'/);          // engine catalogue
+  assert.match(html, /'\/api\/public\/user-strategies'/);     // + community strategies
   assert.match(html, /list\.map\(card\)/);
   assert.match(html, /href="\/agents\/' \+ encodeURIComponent\(a\.id\)/);
 });

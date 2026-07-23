@@ -4734,6 +4734,7 @@
   // Strategy Lab (frozen-data backtests) and the verifiable leaderboard.
   const _riskBorder = { tight: 'var(--up)', balanced: 'var(--gold-bright)', aggressive: 'var(--warn, #e0913a)' };
   async function renderAgents() {
+    const $ = id => document.getElementById(id);
     container.innerHTML = viewHead('Strategy Agents',
       'Browse the engine\'s strategy agents — each one real, backtestable, and honest');
     container.insertAdjacentHTML('beforeend', `
@@ -4742,10 +4743,20 @@
           <span class="right muted small">what your followed agents would trade now · paper-only</span></h2>
         <div id="c-agentpicks"></div>
       </section>` : ''}
+      ${LOGGED_IN ? `<section class="panel" id="p-mystrat">
+        <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Build your own strategy
+          <span class="right muted small">your rules · publish to the community marketplace · config only, no dollars</span></h2>
+        <div id="c-mystrat"><div class="skel"></div></div>
+      </section>` : ''}
       <section class="panel" id="p-agents">
         <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>The lineup
           <span class="right muted small">real presets · design &amp; regime only · verified % in the Lab</span></h2>
         <div id="c-agents"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      </section>
+      <section class="panel" id="p-community" hidden>
+        <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Community strategies
+          <span class="right muted small">member-authored configs · no performance claims (§4)</span></h2>
+        <div id="c-community"></div>
       </section>`);
 
     await renderPanel(C('agents'), async () => {
@@ -4862,6 +4873,179 @@
       host.innerHTML = blocks + note;
     }
     loadAgentPicks();
+
+    // ── Community strategies (published, member-authored — config only) ──
+    function commCard(a) {
+      const chips = (a.rules || []).map(ruleChip).join('');
+      const tags = [a.regime, a.horizon, a.risk_label].filter(Boolean)
+        .map(t => `<span class="chip" style="font-size:10px;text-transform:capitalize">${esc(t)}</span>`).join('');
+      return `<article class="panel" style="border-top:3px solid var(--accent,#3fb6ff);display:flex;flex-direction:column;gap:var(--s2)">
+        <div class="row" style="gap:8px;align-items:center"><span style="font-size:22px;line-height:1">${esc(a.icon || '🧠')}</span>
+          <b>${esc(a.name)}</b><span class="chip" style="margin-left:auto;font-size:10px;color:var(--accent,#3fb6ff)">Community</span></div>
+        ${a.tagline ? `<p class="small" style="color:var(--text-2);margin:0">${esc(a.tagline)}</p>` : ''}
+        ${a.how ? `<p class="small muted" style="margin:0"><b>How it trades:</b> ${esc(a.how)}</p>` : ''}
+        ${tags ? `<div class="row" style="gap:5px;flex-wrap:wrap">${tags}</div>` : ''}
+        <div class="row" style="gap:5px;flex-wrap:wrap">${chips}</div></article>`;
+    }
+    async function loadCommunity() {
+      const panel = document.getElementById('p-community'), host = document.getElementById('c-community');
+      if (!panel || !host) return;
+      let agents = [];
+      try { const r = await fetchJSON('/api/public/user-strategies', { auth: false, timeoutMs: 12000 }); agents = (r.ok && r.data && r.data.agents) || []; } catch (_) { /* keep hidden */ }
+      if (!agents.length) { panel.hidden = true; return; }
+      panel.hidden = false;
+      host.innerHTML = `<div style="display:grid;gap:var(--s3);grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">${agents.map(commCard).join('')}</div>`;
+    }
+    loadCommunity();
+
+    // ── Your strategies: builder + manage (LOGGED_IN only) ──────────────
+    if (LOGGED_IN) mountMyStrategies();
+    let _stratEditId = null;
+    function mountMyStrategies() {
+      const host = document.getElementById('c-mystrat');
+      if (!host) return;
+      const opt = (v, l) => `<option value="${v}">${l}</option>`;
+      host.innerHTML = `
+        <form id="stratForm" class="stack" novalidate>
+          <div class="form-row">
+            <div class="field" style="max-width:70px"><label for="sIcon">Icon</label><input class="input" id="sIcon" maxlength="4" placeholder="🧠" autocomplete="off"></div>
+            <div class="field"><label for="sName">Name</label><input class="input" id="sName" maxlength="80" placeholder="Mean-reversion majors" autocomplete="off"></div>
+          </div>
+          <div class="field"><label for="sTag">Tagline <span class="muted">(optional)</span></label><input class="input" id="sTag" maxlength="160" placeholder="Fade oversold majors in a range" autocomplete="off"></div>
+          <div class="field"><label for="sHow">How it trades <span class="muted">(optional)</span></label><textarea class="input" id="sHow" rows="2" maxlength="600" placeholder="Buy RSI &lt; 30 reclaims on BTC/ETH, target the mid-range, stop under the low."></textarea></div>
+          <div class="form-row">
+            <div class="field"><label for="sDir">Direction</label><select class="input" id="sDir">${opt('both', 'Long &amp; short')}${opt('long_only', 'Long only')}${opt('short_only', 'Short only')}</select></div>
+            <div class="field"><label for="sConf">Min confidence %</label><input class="input input--num" id="sConf" type="number" min="1" max="100" step="1" placeholder="e.g. 60"></div>
+            <div class="field"><label for="sRr">Min reward:risk</label><input class="input input--num" id="sRr" type="number" min="0.1" max="20" step="0.1" placeholder="e.g. 1.8"></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label for="sSize">Max size / trade %</label><input class="input input--num" id="sSize" type="number" min="0.1" max="100" step="0.1" placeholder="e.g. 5"></div>
+            <div class="field"><label for="sOpen">Max open positions</label><input class="input input--num" id="sOpen" type="number" min="1" max="50" step="1" placeholder="e.g. 3"></div>
+            <div class="field"><label for="sSyms">Only these symbols</label><input class="input" id="sSyms" placeholder="BTC, ETH, SOL" autocomplete="off"></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label for="sReg">Regime</label><select class="input" id="sReg">${opt('', '—')}${opt('trend_up', 'Trend up')}${opt('trend_down', 'Trend down')}${opt('range', 'Range')}${opt('volatile', 'Volatile')}${opt('any', 'Any')}</select></div>
+            <div class="field"><label for="sHor">Horizon</label><select class="input" id="sHor">${opt('', '—')}${opt('scalp', 'Scalp')}${opt('intraday', 'Intraday')}${opt('swing', 'Swing')}${opt('position', 'Position')}</select></div>
+          </div>
+          <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+            <button class="btn btn--primary btn--sm" type="submit" id="sSave">Save draft</button>
+            <button class="btn btn--ghost btn--sm" type="button" id="sReset" hidden>Cancel edit</button>
+            <span id="sMsg" class="small muted" aria-live="polite"></span>
+          </div>
+          <p class="small muted" style="margin:0">A strategy is a <b>config</b> — your intent rules and description. No dollar figures, no performance claims; publish makes it visible on the community marketplace.</p>
+        </form>
+        <div id="myStratList" style="margin-top:var(--s3)"><div class="skel"></div></div>`;
+      $('stratForm').addEventListener('submit', saveStrat);
+      $('sReset').addEventListener('click', () => resetStratForm());
+      document.getElementById('myStratList').addEventListener('click', onMyStratClick);
+      refreshMyStrat();
+    }
+    function collectStrategy() {
+      const num = (id) => { const v = parseFloat($(id).value); return isFinite(v) ? v : null; };
+      const rules = [];
+      const dir = $('sDir').value; if (dir && dir !== 'both') rules.push({ type: 'direction', value: dir });
+      if (num('sConf') != null) rules.push({ type: 'min_confidence', value: num('sConf') });
+      if (num('sRr') != null) rules.push({ type: 'min_rr', value: num('sRr') });
+      if (num('sSize') != null) rules.push({ type: 'max_position_pct', value: num('sSize') });
+      if (num('sOpen') != null) rules.push({ type: 'max_open_positions', value: num('sOpen') });
+      const syms = ($('sSyms').value || '').trim();
+      if (syms) rules.push({ type: 'allowed_symbols', value: syms });
+      return {
+        name: $('sName').value, tagline: $('sTag').value, how: $('sHow').value,
+        icon: $('sIcon').value, regime: $('sReg').value, horizon: $('sHor').value, rules,
+      };
+    }
+    function resetStratForm() {
+      _stratEditId = null;
+      ['sIcon', 'sName', 'sTag', 'sHow', 'sConf', 'sRr', 'sSize', 'sOpen', 'sSyms'].forEach(id => { if ($(id)) $(id).value = ''; });
+      if ($('sDir')) $('sDir').value = 'both';
+      if ($('sReg')) $('sReg').value = ''; if ($('sHor')) $('sHor').value = '';
+      if ($('sSave')) $('sSave').textContent = 'Save draft';
+      if ($('sReset')) $('sReset').hidden = true;
+      if ($('sMsg')) $('sMsg').textContent = '';
+    }
+    async function saveStrat(e) {
+      e.preventDefault();
+      const msg = $('sMsg'); const body = collectStrategy();
+      if (!body.name || body.name.trim().length < 2) { msg.innerHTML = '<span class="neg">Give it a name first.</span>'; return; }
+      msg.textContent = 'Saving…';
+      const path = _stratEditId ? `/api/strategies/${_stratEditId}` : '/api/strategies';
+      const method = _stratEditId ? 'PUT' : 'POST';
+      const r = await fetchJSON(path, { method, body, timeoutMs: 12000 }).catch(() => ({ ok: false, data: null }));
+      if (!r.ok) { msg.innerHTML = `<span class="neg">${esc(r.data?.error || 'Could not save.')}</span>`; return; }
+      msg.innerHTML = '<span class="pos">Saved.</span>';
+      resetStratForm();
+      refreshMyStrat();
+    }
+    async function refreshMyStrat() {
+      const host = document.getElementById('myStratList');
+      if (!host) return;
+      let d = null;
+      try { const r = await fetchJSON('/api/strategies', { timeoutMs: 12000 }); d = r.ok ? r.data : null; } catch (_) {}
+      const list = (d && d.strategies) || [];
+      if (!list.length) { host.innerHTML = '<p class="small muted">No strategies yet — build one above, then publish it to the marketplace.</p>'; return; }
+      host.innerHTML = list.map(s => {
+        const pub = s.visibility === 'public';
+        const chips = (s.rules || []).map(ruleChip).join('');
+        return `<div class="panel" style="margin-bottom:var(--s2);display:flex;flex-direction:column;gap:6px">
+          <div class="row" style="gap:8px;align-items:center"><span style="font-size:18px">${esc(s.icon || '🧠')}</span>
+            <b>${esc(s.name)}</b>
+            <span class="chip" style="font-size:10px;color:${pub ? 'var(--up,#31c48d)' : 'var(--text-3)'}">${pub ? '● Published' : 'Draft'}</span>
+            <span style="margin-left:auto"></span>
+            <button class="btn btn--sm ${pub ? 'btn--ghost' : 'btn--primary'}" data-s${pub ? 'unpub' : 'pub'}="${s.dbId}" type="button">${pub ? 'Unpublish' : 'Publish'}</button>
+            <button class="btn btn--ghost btn--sm" data-sedit="${s.dbId}" type="button">Edit</button>
+            <button class="btn btn--ghost btn--sm" data-sdel="${s.dbId}" type="button" aria-label="Delete">✕</button></div>
+          ${s.tagline ? `<p class="small muted" style="margin:0">${esc(s.tagline)}</p>` : ''}
+          <div class="row" style="gap:5px;flex-wrap:wrap">${chips}</div></div>`;
+      }).join('');
+    }
+    async function onMyStratClick(e) {
+      const pubBtn = e.target.closest('[data-spub]');
+      const unpubBtn = e.target.closest('[data-sunpub]');
+      const editBtn = e.target.closest('[data-sedit]');
+      const delBtn = e.target.closest('[data-sdel]');
+      if (pubBtn || unpubBtn) {
+        const id = (pubBtn || unpubBtn).getAttribute(pubBtn ? 'data-spub' : 'data-sunpub');
+        const btn = (pubBtn || unpubBtn); btn.disabled = true;
+        const r = await fetchJSON('/api/strategies/' + id + '/' + (pubBtn ? 'publish' : 'unpublish'), { method: 'POST', timeoutMs: 10000 }).catch(() => ({ ok: false, data: null }));
+        btn.disabled = false;
+        if (!r.ok) { toast(r.data?.error || 'Could not update.'); return; }
+        toast(pubBtn ? 'Published to the marketplace.' : 'Unpublished.');
+        refreshMyStrat(); loadCommunity();
+        return;
+      }
+      if (editBtn) {
+        const id = editBtn.getAttribute('data-sedit');
+        let d = null;
+        try { const r = await fetchJSON('/api/strategies', { timeoutMs: 10000 }); d = r.ok ? r.data : null; } catch (_) {}
+        const s = ((d && d.strategies) || []).find(x => String(x.dbId) === String(id));
+        if (!s) return;
+        _stratEditId = id;
+        $('sIcon').value = s.icon || ''; $('sName').value = s.name || ''; $('sTag').value = s.tagline || '';
+        $('sHow').value = s.how || ''; $('sReg').value = s.regime || ''; $('sHor').value = s.horizon || '';
+        $('sDir').value = 'both'; ['sConf', 'sRr', 'sSize', 'sOpen', 'sSyms'].forEach(x => { if ($(x)) $(x).value = ''; });
+        (s.rules || []).forEach(r => {
+          if (r.type === 'direction') $('sDir').value = r.value;
+          else if (r.type === 'min_confidence') $('sConf').value = Math.round(Number(r.value) * 100);
+          else if (r.type === 'min_rr') $('sRr').value = r.value;
+          else if (r.type === 'max_position_pct') $('sSize').value = r.value;
+          else if (r.type === 'max_open_positions') $('sOpen').value = r.value;
+          else if (r.type === 'allowed_symbols') $('sSyms').value = (r.value || []).join(', ');
+        });
+        $('sSave').textContent = 'Update strategy'; $('sReset').hidden = false;
+        $('sMsg').textContent = `Editing “${s.name}”.`;
+        document.getElementById('p-mystrat').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      if (delBtn) {
+        const id = delBtn.getAttribute('data-sdel');
+        if (!confirm('Delete this strategy?')) return;
+        const r = await fetchJSON(`/api/strategies/${id}`, { method: 'DELETE', timeoutMs: 10000 }).catch(() => ({ ok: false }));
+        if (!r.ok) { toast('Could not delete.'); return; }
+        if (String(_stratEditId) === String(id)) resetStratForm();
+        toast('Deleted.'); refreshMyStrat(); loadCommunity();
+      }
+    }
 
     onView('click', async (e) => {
       const foll = e.target.closest('[data-agentfollow]');
