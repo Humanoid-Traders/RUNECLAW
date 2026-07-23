@@ -4217,8 +4217,9 @@
         const notes = (r?.ok && r.data?.notes) || [];
         const list = notes.length ? notes.map((n) => `
           <div class="news-item" data-nid="${esc(String(n.id))}">
-            <div><b>${esc(n.title || (n.source ? 'From ' + n.source : 'Shared note'))}</b>
-              <button class="btn btn--sm" data-del="${esc(String(n.id))}" type="button" style="float:right">Remove</button></div>
+            <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+              <b>${esc(n.title || (n.source ? 'From ' + n.source : 'Shared note'))}</b>
+              <button class="btn btn--sm" data-del="${esc(String(n.id))}" type="button" aria-label="Remove this note">Remove</button></div>
             <div class="small muted">${esc(n.preview || '')}</div>
           </div>`).join('') : '<p class="small muted">Nothing shared yet.</p>';
         return `<p class="small" style="color:var(--text-2)">Paste something you already have — a newsletter you received, notes, an article excerpt — and your agent can draw on it in chat. <b>Private to you</b>, stored encrypted, never shared or made public. You're responsible for what you paste; don't share paywalled content you're not allowed to.</p>
@@ -4244,18 +4245,24 @@
         toast(r?.ok ? 'Shared — your agent can reference it now.' : (r?.data?.detail || 'Could not save that.'));
         if (r?.ok) drawShare();
       };
+      // Delegate remove/clear on the PERSISTENT container — bound exactly once
+      // (renderPanel only swaps innerHTML, so re-binding here every drawShare()
+      // would stack duplicate listeners and multi-fire each click).
       const wrap = document.getElementById('c-newsshare');
-      if (wrap) wrap.addEventListener('click', async (e) => {
-        const del = e.target.closest('button[data-del]');
-        const all = e.target.closest('#shareClearAll');
-        if (del) {
-          const r = await fetchJSON('/api/ingest/delete', { method: 'POST', body: { id: del.getAttribute('data-del') } });
-          if (r?.ok) drawShare(); else toast('Could not remove that.');
-        } else if (all) {
-          const r = await fetchJSON('/api/ingest/delete', { method: 'POST', body: { id: 'all' } });
-          if (r?.ok) drawShare(); else toast('Could not clear.');
-        }
-      });
+      if (wrap && !wrap._shareBound) {
+        wrap._shareBound = true;
+        wrap.addEventListener('click', async (e) => {
+          const del = e.target.closest('button[data-del]');
+          const all = e.target.closest('#shareClearAll');
+          if (del) {
+            const r = await fetchJSON('/api/ingest/delete', { method: 'POST', body: { id: del.getAttribute('data-del') } });
+            if (r?.ok) drawShare(); else toast('Could not remove that.');
+          } else if (all) {
+            const r = await fetchJSON('/api/ingest/delete', { method: 'POST', body: { id: 'all' } });
+            if (r?.ok) drawShare(); else toast('Could not clear.');
+          }
+        });
+      }
     }
 
     refreshFeeds();
