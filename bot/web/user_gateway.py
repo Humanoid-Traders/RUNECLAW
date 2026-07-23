@@ -2413,6 +2413,90 @@ async def handle_news_key_status(request: web.Request) -> web.Response:
     })
 
 
+# ── NEWS-3: personal ingest (share-to-agent) ────────────────────────────────
+# Text the caller CHOSE to share with THEIR OWN agent. PRIVATE per user: every
+# handler is _guard_user-gated and scoped by the caller's mapped id, so nobody
+# can read or delete another user's notes. §4: the platform never fetches this
+# (user-supplied only — no paywalled-scraping path), and it never lands on a
+# public / community surface. Never redistributed.
+
+def _ingest_preview(body: str, n: int = 160) -> str:
+    b = " ".join(str(body or "").split())
+    return (b[:n] + "…") if len(b) > n else b
+
+
+async def handle_ingest_add(request: web.Request) -> web.Response:
+    """POST /gateway/ingest — save a note the caller shares with their agent.
+    Body: {telegram_id, title?, body, source?}. Private + encrypted at rest."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    text = str(body.get("body") or "").strip()
+    if not text:
+        return web.json_response({"error": "empty", "detail": "Nothing to save."},
+                                 status=400)
+    from bot.db.models import (add_user_ingest_note, ensure_settings_parent,
+                               settings_user_id)
+    uid = settings_user_id(tg_id)
+    if uid is None:
+        return web.json_response({"error": "bad_identity"}, status=400)
+    ensure_settings_parent(uid)
+    note_id = add_user_ingest_note(uid, str(body.get("title") or ""), text,
+                                   str(body.get("source") or ""))
+    if note_id is None:
+        return web.json_response({"error": "empty"}, status=400)
+    # F-15: never log the shared content — only that a note was saved.
+    audit(system_log, f"Personal ingest note saved: {tg_id}",
+          action="ingest_add", result="OK",
+          data={"user": tg_id, "note_id": note_id, "chars": len(text)})
+    return web.json_response({"saved": True, "id": note_id})
+
+
+async def handle_ingest_list(request: web.Request) -> web.Response:
+    """GET /gateway/ingest?telegram_id= — the caller's OWN shared notes,
+    newest first (id, title, source, preview, created_at). Private only."""
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.db.models import list_user_ingest_notes, settings_user_id
+    uid = settings_user_id(tg_id)
+    notes = list_user_ingest_notes(uid) if uid is not None else []
+    return web.json_response({
+        "read_only": True,
+        "private": True,
+        "notes": [{"id": n["id"], "title": n["title"], "source": n["source"],
+                   "preview": _ingest_preview(n["body"]),
+                   "created_at": n["created_at"]} for n in notes],
+    })
+
+
+async def handle_ingest_delete(request: web.Request) -> web.Response:
+    """POST /gateway/ingest/delete — forget one note (or all). Body:
+    {telegram_id, id?}. Scoped to the caller's own rows."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.db.models import (clear_user_ingest_notes,
+                               delete_user_ingest_note, settings_user_id)
+    uid = settings_user_id(tg_id)
+    if uid is None:
+        return web.json_response({"error": "bad_identity"}, status=400)
+    nid = body.get("id")
+    if nid in (None, "", "all"):
+        removed = clear_user_ingest_notes(uid)
+        return web.json_response({"cleared": True, "removed": removed})
+    ok = delete_user_ingest_note(uid, int(nid) if str(nid).isdigit() else -1)
+    return web.json_response({"deleted": ok})
+
+
 async def handle_llm_ultra(request: web.Request) -> web.Response:
     """POST /gateway/llm/ultra — ADMIN-only ULTRA routing toggle (web mirror
     of /ultra). Body: {telegram_id, enabled}. Refreshes the analyzer's cached
@@ -2938,6 +3022,10 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/news/key", handle_news_key_save)
     app.router.add_post("/news/key/clear", handle_news_key_clear)
     app.router.add_get("/news/key/status", handle_news_key_status)
+    # NEWS-3: personal ingest — text the user shares with THEIR own agent.
+    app.router.add_post("/ingest", handle_ingest_add)
+    app.router.add_get("/ingest", handle_ingest_list)
+    app.router.add_post("/ingest/delete", handle_ingest_delete)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
     app.router.add_post("/authority/apply", handle_authority_apply)

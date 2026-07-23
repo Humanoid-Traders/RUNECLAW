@@ -80,6 +80,21 @@ CREATE TABLE IF NOT EXISTS user_news_keys (
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
+-- NEWS-3 (personal ingest): text a user CHOSE to share with their own agent
+-- (a newsletter they received, an article excerpt they pasted). PRIVATE per
+-- user, ENCRYPTED at rest, and NEVER redistributed or shown on any public /
+-- community surface (§4). The platform never fetches this — the user supplies
+-- it, so there is no paywalled-scraping path here. Additive + idempotent.
+CREATE TABLE IF NOT EXISTS user_ingest_notes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT    NOT NULL DEFAULT '',
+    body       TEXT    NOT NULL DEFAULT '',
+    source     TEXT    NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_ingest_user ON user_ingest_notes(user_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_telegram_chat ON user_telegram(chat_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_user   ON link_tokens(user_id);
 """
@@ -426,6 +441,79 @@ def clear_user_news_key(user_id: int) -> None:
     """Forget a user's BYON key — they fall back to the public RSS radar."""
     with get_db() as db:
         db.execute("DELETE FROM user_news_keys WHERE user_id=?", (user_id,))
+
+
+# -- Per-user personal ingest notes (NEWS-3) --------------------------------
+# Text the user CHOSE to share with their own agent. PRIVATE per user, encrypted
+# at rest, never redistributed. A per-user cap bounds storage.
+
+INGEST_MAX_NOTES = 50
+INGEST_MAX_BODY = 20000
+INGEST_MAX_TITLE = 200
+
+
+def add_user_ingest_note(user_id: int, title: str, body: str,
+                         source: str = "") -> Optional[int]:
+    """Store one shared note for a user (body ENCRYPTED at rest). Returns the
+    new note id, or None when the body is empty. Oldest notes are pruned past
+    INGEST_MAX_NOTES so a single user can't grow the table unbounded."""
+    body = str(body or "").strip()[:INGEST_MAX_BODY]
+    if not body:
+        return None
+    title = str(title or "").strip()[:INGEST_MAX_TITLE]
+    source = str(source or "").strip()[:INGEST_MAX_TITLE]
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO user_ingest_notes (user_id, title, body, source, created_at) "
+            "VALUES (?,?,?,?,unixepoch())",
+            (user_id, title, _encrypt_llm_key(body), source))
+        note_id = cur.lastrowid
+        # Prune the oldest beyond the cap (per user).
+        db.execute(
+            "DELETE FROM user_ingest_notes WHERE user_id=? AND id NOT IN "
+            "(SELECT id FROM user_ingest_notes WHERE user_id=? "
+            " ORDER BY created_at DESC, id DESC LIMIT ?)",
+            (user_id, user_id, INGEST_MAX_NOTES))
+    return note_id
+
+
+def list_user_ingest_notes(user_id: int, limit: int = 20) -> list[dict]:
+    """A user's own shared notes, newest first, body DECRYPTED. Returns only
+    THIS user's rows — never anyone else's."""
+    limit = max(1, min(int(limit or 20), INGEST_MAX_NOTES))
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id, title, body, source, created_at FROM user_ingest_notes "
+            "WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
+            (user_id, limit)).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            "id": r["id"],
+            "title": r["title"] or "",
+            "body": _decrypt_llm_key(r["body"] or ""),
+            "source": r["source"] or "",
+            "created_at": r["created_at"],
+        })
+    return out
+
+
+def delete_user_ingest_note(user_id: int, note_id: int) -> bool:
+    """Delete ONE of the user's own notes (scoped by user_id so a caller can
+    never delete another user's row). True if a row was removed."""
+    with get_db() as db:
+        cur = db.execute(
+            "DELETE FROM user_ingest_notes WHERE user_id=? AND id=?",
+            (user_id, int(note_id)))
+        return cur.rowcount > 0
+
+
+def clear_user_ingest_notes(user_id: int) -> int:
+    """Forget ALL of a user's shared notes. Returns the count removed."""
+    with get_db() as db:
+        cur = db.execute(
+            "DELETE FROM user_ingest_notes WHERE user_id=?", (user_id,))
+        return cur.rowcount
 
 
 # -- Per-user portfolio -----------------------------------------------------

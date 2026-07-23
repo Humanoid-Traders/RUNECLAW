@@ -4117,6 +4117,7 @@
       <div class="stack">
         <section class="panel" id="p-newsdd"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>On your positions</h2><div id="c-newsdd"><div class="skel"></div></div></section>
         <section class="panel" id="p-newsbyon" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Your news source</h2><div id="c-newsbyon"><div class="skel"></div></div></section>
+        <section class="panel" id="p-newsshare"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chat"></use></svg>Share with your agent</h2><div id="c-newsshare"><div class="skel"></div></div></section>
         <section class="panel" id="p-newsfeed"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Latest headlines</h2><div id="c-newsfeed"><div class="skel"></div><div class="skel"></div></div></section>
       </div>`);
 
@@ -4207,8 +4208,59 @@
       }, { empty: { icon: 'icon-globe', text: 'No headlines yet — the radar fills on the next refresh.' } });
     }
 
+    // NEWS-3: paste text you already have (a newsletter you received, an
+    // article excerpt) → PRIVATE context for YOUR agent. Never fetched by us,
+    // never shared with anyone, never public. Stored encrypted by the bot.
+    async function drawShare() {
+      await renderPanel(C('newsshare'), async () => {
+        const r = await fetchJSON('/api/ingest', { timeoutMs: 12000 });
+        const notes = (r?.ok && r.data?.notes) || [];
+        const list = notes.length ? notes.map((n) => `
+          <div class="news-item" data-nid="${esc(String(n.id))}">
+            <div><b>${esc(n.title || (n.source ? 'From ' + n.source : 'Shared note'))}</b>
+              <button class="btn btn--sm" data-del="${esc(String(n.id))}" type="button" style="float:right">Remove</button></div>
+            <div class="small muted">${esc(n.preview || '')}</div>
+          </div>`).join('') : '<p class="small muted">Nothing shared yet.</p>';
+        return `<p class="small" style="color:var(--text-2)">Paste something you already have — a newsletter you received, notes, an article excerpt — and your agent can draw on it in chat. <b>Private to you</b>, stored encrypted, never shared or made public. You're responsible for what you paste; don't share paywalled content you're not allowed to.</p>
+          <form id="shareForm" class="stack mt-2" style="gap:6px">
+            <input class="input" id="shareTitle" maxlength="200" placeholder="Title (optional)" aria-label="Note title">
+            <input class="input" id="shareSource" maxlength="200" placeholder="Source (optional, e.g. Bankless)" aria-label="Note source">
+            <textarea class="input" id="shareBody" rows="4" maxlength="20000" placeholder="Paste the text here…" aria-label="Note text" style="width:100%;box-sizing:border-box"></textarea>
+            <div class="row" style="gap:8px"><button class="btn btn--primary btn--sm" type="submit">Share with my agent</button>
+              ${notes.length ? '<button class="btn btn--sm" id="shareClearAll" type="button">Clear all</button>' : ''}</div>
+          </form>
+          <div class="mt-2">${list}</div>`;
+      }, { empty: { text: 'Share-to-agent is unavailable right now.' } });
+      const form = document.getElementById('shareForm');
+      if (form) form.onsubmit = async (e) => {
+        e.preventDefault();
+        const body = document.getElementById('shareBody').value.trim();
+        if (!body) { toast('Paste some text first.'); return; }
+        const r = await fetchJSON('/api/ingest', { method: 'POST', timeoutMs: 15000, body: {
+          title: document.getElementById('shareTitle').value.trim(),
+          source: document.getElementById('shareSource').value.trim(),
+          body,
+        } });
+        toast(r?.ok ? 'Shared — your agent can reference it now.' : (r?.data?.detail || 'Could not save that.'));
+        if (r?.ok) drawShare();
+      };
+      const wrap = document.getElementById('c-newsshare');
+      if (wrap) wrap.addEventListener('click', async (e) => {
+        const del = e.target.closest('button[data-del]');
+        const all = e.target.closest('#shareClearAll');
+        if (del) {
+          const r = await fetchJSON('/api/ingest/delete', { method: 'POST', body: { id: del.getAttribute('data-del') } });
+          if (r?.ok) drawShare(); else toast('Could not remove that.');
+        } else if (all) {
+          const r = await fetchJSON('/api/ingest/delete', { method: 'POST', body: { id: 'all' } });
+          if (r?.ok) drawShare(); else toast('Could not clear.');
+        }
+      });
+    }
+
     refreshFeeds();
     drawNewsKey();
+    drawShare();
   }
 
   // Contract Studio — AI drafts Solidity, then the heuristic security-flag pass
