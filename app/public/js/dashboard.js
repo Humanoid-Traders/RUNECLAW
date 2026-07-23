@@ -4992,13 +4992,33 @@
     // The key travels once to the bot's encrypted store — this page only
     // ever sees the fingerprint back. Admins also get the ULTRA toggle.
     async function drawHubLlm() {
+      // Provider catalogue captured across the panel render so the cost hint
+      // can update as the user changes the select (uses the model info).
+      let llmProvs = [];
+      // Cost hint: roughly what THIS provider's key will cost before you connect
+      // it. Qualitative tier + speed + free-tier + the catalogue's price note —
+      // so nobody plugs in a premium key without knowing.
+      const provHint = (pid) => {
+        const p = llmProvs.find(x => x.id === pid);
+        if (!p) return '';
+        const bits = [];
+        if (p.free_tier) bits.push('🆓 free tier');
+        if (p.cost_label) bits.push('💳 ' + esc(p.cost_label));
+        if (p.speed_label) bits.push('⚡ ' + esc(p.speed_label));
+        const head = bits.length ? `<div class="small">${bits.join(' · ')}</div>` : '';
+        const note = p.notes ? `<div class="small muted" style="margin-top:2px">${esc(p.notes)}</div>` : '';
+        const link = p.get_key_url ? `<div class="small" style="margin-top:2px"><a href="${esc(p.get_key_url)}" target="_blank" rel="noopener">Get a ${esc(pid)} key →</a></div>` : '';
+        return head + note + link;
+      };
       await renderPanel(C('hubllm'), async () => {
         const r = await fetchJSON('/api/llm', { timeoutMs: 12000 });
         if (!r?.ok) return '<p class="muted small">LLM connect is unavailable right now (bot gateway offline?).</p>';
         const d = r.data;
         const provs = d.providers || [];
+        llmProvs = provs;
+        const selProv = d.provider || 'gemini';
         const opts = provs.map(p =>
-          `<option value="${esc(p.id)}" ${p.id === (d.provider || 'gemini') ? 'selected' : ''}>${esc(p.id)}${p.free_tier ? ' · free tier' : ''}</option>`).join('');
+          `<option value="${esc(p.id)}" ${p.id === selProv ? 'selected' : ''}>${esc(p.id)}${p.free_tier ? ' · free tier' : ''}</option>`).join('');
         const status = d.connected
           ? `<div class="kv-row"><span>Connected</span><b>🟢 ${esc(d.provider)} <span class="num small muted">${esc(d.fingerprint)}</span></b></div>
              <p class="small muted mt-1">Your chat and analysis answers run on YOUR key first (your quota, your model choice).</p>`
@@ -5016,8 +5036,14 @@
             <button class="btn btn--primary btn--sm" type="submit">${d.connected ? '↻ Replace key' : '🔌 Connect'}</button>
             ${d.connected ? '<button class="btn btn--sm" id="hubLlmClear" type="button">Disconnect</button>' : ''}
           </form>
+          <div id="hubLlmHint" class="mt-1">${provHint(selProv)}</div>
           ${enabledNote}${ultra}`;
       }, { empty: { text: 'LLM connect unavailable.' } });
+      // Update the cost hint live as the user picks a different provider.
+      const provSel = document.getElementById('hubLlmProv');
+      const hintEl = document.getElementById('hubLlmHint');
+      if (provSel && hintEl) provSel.addEventListener('change',
+        () => { hintEl.innerHTML = provHint(provSel.value); });
       const form = document.getElementById('hubLlmForm');
       if (form) form.onsubmit = async (e) => {
         e.preventDefault();

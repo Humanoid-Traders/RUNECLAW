@@ -110,6 +110,13 @@ async def test_status_lists_providers_and_no_key(monkeypatch, isolated_db):
         assert "gemini" in ids and "anthropic" in ids
         # Local/keyless providers are not connectable from the web.
         assert "ollama" not in ids and "runeclaw" not in ids and "custom" not in ids
+        # AI-6: each provider carries a human cost/speed hint so the BYOK panel
+        # can show roughly what a user's own key will cost before they connect.
+        gem = next(p for p in d["providers"] if p["id"] == "gemini")
+        assert gem["cost_label"] == "very low cost"
+        assert gem["speed_label"] and gem["free_tier"] is True
+        oai = next(p for p in d["providers"] if p["id"] == "openai")
+        assert oai["cost_label"] == "premium"
 
 
 async def test_set_key_stores_encrypted_and_returns_fingerprint_only(
