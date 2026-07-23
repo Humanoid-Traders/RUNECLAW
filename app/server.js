@@ -237,7 +237,8 @@ app.get('/agent/:address', (req, res) => { res.setHeader('Cache-Control', 'no-ca
 // slugs, e.g. /agents and /agents/dip-sniper). Bare /agents must precede the
 // parametised route so it isn't captured as a slug.
 app.get('/agents', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'agents.html')); });
-app.get('/agents/:slug', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'strategy.html')); });
+// NB: /agents/:slug is registered further down (after originFrom) so it can
+// server-render per-agent <head> metadata via lib/agent_seo.
 app.get('/developers', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'developers.html')); });
 app.get('/status', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'status.html')); });
 
@@ -281,6 +282,46 @@ app.get('/sitemap.xml', async (req, res) => {
   const xml = buildSitemap(origin, agents);
   _sitemapCache = { at: now, origin, xml };
   res.send(xml);
+});
+
+// Public per-agent page with server-rendered <head> metadata so each strategy
+// agent unfurls on social + ranks in search with its own title/description/
+// JSON-LD. The body is still client-rendered; we only fill the AGENT_SEO marker.
+const agentSeo = require('./lib/agent_seo');
+const fs = require('fs');
+let _strategyHtml = null;
+function strategyHtml() {
+  if (_strategyHtml == null) {
+    _strategyHtml = fs.readFileSync(path.join(__dirname, 'public', 'strategy.html'), 'utf8');
+  }
+  return _strategyHtml;
+}
+let _agentCat = null; // { at, agents }
+async function agentBySlug(slug) {
+  const now = Date.now();
+  if (!_agentCat || (now - _agentCat.at) > 5 * 60 * 1000) {
+    let agents = [];
+    try {
+      const gw = require('./lib/gateway');
+      if (gw.isConfigured()) {
+        const r = await gw.getGateway('/public/strategies', 8000);
+        if (r && r.status >= 200 && r.status < 300 && r.data && Array.isArray(r.data.agents)) {
+          agents = r.data.agents;
+        }
+      }
+    } catch (_) { /* best-effort: generic card still ships */ }
+    _agentCat = { at: now, agents };
+  }
+  return _agentCat.agents.find((a) => String(a && a.id).toLowerCase() === slug) || null;
+}
+app.get('/agents/:slug', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  const slug = String(req.params.slug || '').toLowerCase();
+  let agent = null;
+  try {
+    if (agentSeo.SLUG_RE.test(slug)) agent = await agentBySlug(slug);
+  } catch (_) { /* fall back to the generic card */ }
+  res.type('html').send(agentSeo.injectAgentMeta(strategyHtml(), agent, originFrom(req), slug));
 });
 
 // Error handler

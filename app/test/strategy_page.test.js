@@ -15,8 +15,12 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'strategy.html
 const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const dash = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
 
-test('the /agents/:slug route serves the standalone strategy page', () => {
-  assert.match(server, /app\.get\('\/agents\/:slug'.*strategy\.html/);
+test('the /agents/:slug route server-renders the strategy page with per-agent SEO', () => {
+  // The page is now injected with per-agent <head> meta via lib/agent_seo
+  // (strategyHtml() reads public/strategy.html) rather than a bare sendFile.
+  assert.match(server, /app\.get\('\/agents\/:slug'/);
+  assert.match(server, /injectAgentMeta\(strategyHtml\(\)/);
+  assert.match(server, /strategy\.html/);
   // distinct from the ERC-8004 identity card at /agent/:address
   assert.match(server, /app\.get\('\/agent\/:address'.*agent-card\.html/);
 });
