@@ -166,6 +166,7 @@ app.use('/api/trade', webtradeRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/leaderboard', leaderboardRouter);
 app.use('/api/public/proofofpnl', require('./routes/public_proofofpnl'));
+app.use('/api/public/flight', require('./routes/public_flight'));
 app.use('/api/public/leaderboard', require('./routes/public_leaderboard'));
 app.use('/api/public/strategies', require('./routes/public_strategies'));
 app.use('/api/public/letter', require('./routes/public_letter'));
@@ -233,6 +234,7 @@ app.get('/dashboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache')
 // Account-management landing pages reached from email links.
 app.get('/track', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'track.html')); });
 app.get('/proof', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'proof.html')); });
+app.get('/flight', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'flight.html')); });
 app.get('/leaderboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'leaderboard.html')); });
 app.get('/letter/:week?', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'letter.html')); });
 app.get('/wallet-link', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'wallet-link.html')); });

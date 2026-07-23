@@ -14,36 +14,9 @@
 
 const express = require('express');
 const { getLatestFlight } = require('./sync');
+const { inspectWindow } = require('../lib/flight');
 
 const router = express.Router();
-
-const HEX64 = /^[0-9a-f]{64}$/;
-
-/**
- * Lightweight web-side sanity pass over the synced window. This is NOT the
- * cryptographic proof (that's the engine's verify(), surfaced as chain.ok) —
- * it's a transparency check that every record carries a well-formed entry hash
- * and that sequence numbers are unique and strictly increasing. Reorders,
- * dropped rows, or malformed hashes in the visible window show up here.
- */
-function inspectWindow(records) {
-  const problems = [];
-  let lastSeq = -Infinity;
-  let hashed = 0;
-  for (let i = 0; i < records.length; i++) {
-    // records arrive newest-first; walk oldest-first for monotonic sequence.
-    const r = records[records.length - 1 - i];
-    const ch = (r && r.chain) || {};
-    const seq = ch.sequence;
-    if (typeof seq === 'number') {
-      if (seq <= lastSeq) problems.push(`sequence not increasing at ${seq}`);
-      lastSeq = seq;
-    }
-    if (ch.entry_hash && HEX64.test(String(ch.entry_hash))) hashed++;
-    else if (ch.entry_hash) problems.push(`malformed entry_hash at seq ${seq}`);
-  }
-  return { records_checked: records.length, well_formed_hashes: hashed, problems };
-}
 
 /**
  * GET /api/guardian/flight?limit=50

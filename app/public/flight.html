@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Agent Flight Recorder</title>
+<meta name="description" content="The black box behind every trade. RUNECLAW's Agent Flight Recorder shows the full decision chain — inputs, reasoning, voters, risk-gate verdict, intent policy, geometry and outcome — sealed into a hash-chained, engine-verified ledger. Percent/ratio only, no dollar amounts.">
+<meta property="og:title" content="RUNECLAW — Agent Flight Recorder">
+<meta property="og:description" content="The black box behind every agent trade: inputs → reasoning → risk verdict → outcome, sealed into a tamper-evident ledger you can re-inspect. Don't trust the P&L — read the decision.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/flight">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Agent Flight Recorder">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  /* Page-local composition only — tokens/components come from styles.css */
+  .fr-wrap { max-width: 940px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); } .topnav a:hover { color: var(--text-1); }
+  .fr-hero h1 { font-family: var(--font-display); letter-spacing: .06em; font-size: clamp(26px, 4vw, 40px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 70ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .chain-banner { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; border: 1px solid var(--line);
+    border-radius: var(--radius); padding: var(--s3) var(--s4); margin-bottom: var(--s4); font-family: var(--font-data); }
+  .chain-banner.ok { border-color: rgba(47,191,113,.4); }
+  .chain-banner.bad { border-color: rgba(224,82,82,.5); }
+  .chain-banner .dot { width: 10px; height: 10px; border-radius: 999px; flex: none; }
+  .chain-banner.ok .dot { background: var(--up); box-shadow: 0 0 10px var(--up); }
+  .chain-banner.bad .dot { background: var(--down); box-shadow: 0 0 10px var(--down); }
+  .chain-banner .st { color: var(--text-1); } .chain-banner .mut { color: var(--text-3); margin-left: auto; font-size: var(--fs-xs); }
+  .rec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s3);
+    transition: border-color .2s ease, box-shadow .2s ease; }
+  .rec.flash { border-color: var(--gold-bright); box-shadow: 0 0 0 1px var(--gold-bright), 0 10px 40px -18px var(--gold-bright); }
+  .rec-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .rec-head .sym { font-family: var(--font-display); font-size: 17px; letter-spacing: .02em; }
+  .chip { font-size: var(--fs-xs); padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); font-family: var(--font-data); }
+  .chip.long { color: var(--up); border-color: rgba(47,191,113,.5); }
+  .chip.short { color: var(--down); border-color: rgba(224,82,82,.5); }
+  .chip.ok { color: var(--up); border-color: rgba(47,191,113,.5); }
+  .chip.bad { color: var(--down); border-color: rgba(224,82,82,.5); }
+  .chip.mut { color: var(--text-3); }
+  .rec-head .when { margin-left: auto; color: var(--text-3); font-size: var(--fs-xs); font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+  .narr { margin: 10px 0 6px; color: var(--text-1); line-height: 1.5; }
+  .tagline { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 2px; }
+  .grid { display: grid; gap: var(--s3); margin-top: 10px; }
+  @media (min-width: 620px) { .grid { grid-template-columns: 1fr 1fr; } }
+  .cell .h { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin-bottom: 5px; }
+  .cell .b { font-size: var(--fs-sm); font-family: var(--font-data); }
+  .vote { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .vote .n { width: 120px; flex: none; font-size: var(--fs-xs); color: var(--text-2); }
+  .vote .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .vote .bar i { display: block; height: 100%; width: 0; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+  .vote .c { width: 44px; text-align: right; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text-3); }
+  code { font-family: var(--font-data); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 12px; word-break: break-all; }
+  .checks { color: var(--down); font-size: var(--fs-xs); margin-top: 4px; }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+  .empty { color: var(--text-3); padding: var(--s6) var(--s4); text-align: center; line-height: 1.6; }
+  .skel { height: 92px; border-radius: var(--radius); background: linear-gradient(90deg, var(--surface), var(--surface-2), var(--surface)); background-size: 200% 100%; animation: sh 1.3s infinite; margin-bottom: var(--s3); }
+  @keyframes sh { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .skel, .vote .bar i { animation: none; transition: none; } }
+</style>
+</head>
+<body>
+<div class="fr-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/proof">Proof of PnL</a>
+    <a href="/track">Track record</a>
+    <a href="/dashboard">Open the app</a>
+  </nav>
+  <div class="fr-hero"><h1>Agent Flight Recorder</h1></div>
+  <p class="lede">The black box behind every trade. Each decision the agent makes is sealed into a
+  <b>SHA-256 hash-chained, signed append-only ledger</b> — inputs, reasoning, the voters that moved it,
+  the risk-gate verdict, the intent policy that authorized it, the geometry and the outcome. Any edit,
+  deletion or reorder breaks the chain. <b>Don't trust the P&amp;L — read the decision.</b></p>
+
+  <div class="chain-banner" id="banner"><span class="dot"></span><span class="st">Loading the ledger…</span></div>
+  <div id="list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+
+  <p class="disc" id="disc">Public decision ledger · percent, ratio and R-multiple only — <b>no dollar amounts</b>
+  (prices shown are public market data). The cryptographic chain is verified by the engine; the
+  window integrity below is re-derived in your own browser. This is evidence, not investment advice.</p>
+</div>
+
+<script>
+(function () {
+  var HEX64 = /^[0-9a-f]{64}$/;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+  function fmtAgo(ts) {
+    var t = Date.parse(ts); if (!t) return '';
+    var s = Math.max(0, (Date.now() - t) / 1000);
+    if (s < 60) return Math.floor(s) + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  function shortHash(h) { h = String(h || ''); return h.length > 14 ? h.slice(0, 8) + '…' + h.slice(-4) : h; }
+  function fmtPrice(v) { v = Number(v); if (!isFinite(v)) return '—'; return v >= 1 ? v.toFixed(4) : v.toPrecision(4); }
+
+  // Re-derive the visible window's integrity in the browser — the same check the
+  // API returns, so a visitor can confirm it rather than trust our number.
+  function reInspect(records) {
+    var problems = [], lastSeq = -Infinity, hashed = 0;
+    for (var i = 0; i < records.length; i++) {
+      var r = records[records.length - 1 - i], ch = (r && r.chain) || {};
+      if (typeof ch.sequence === 'number') { if (ch.sequence <= lastSeq) problems.push('sequence'); lastSeq = ch.sequence; }
+      if (ch.entry_hash && HEX64.test(String(ch.entry_hash))) hashed++;
+      else if (ch.entry_hash) problems.push('hash');
+    }
+    return { checked: records.length, hashed: hashed, problems: problems };
+  }
+
+  function outcomeChip(rec) {
+    var res = rec.result || {};
+    // Dollar P&L is stripped server-side; show percent / R-multiple if present.
+    var pctv = res.pnl_pct != null ? res.pnl_pct : (res.return_pct != null ? res.return_pct : null);
+    var rmul = res.r_multiple != null ? res.r_multiple : (res.rr_realized != null ? res.rr_realized : null);
+    if (pctv != null || rmul != null) {
+      var pos = (Number(pctv != null ? pctv : rmul) >= 0);
+      var label = (pctv != null ? ((pctv >= 0 ? '+' : '') + Number(pctv).toFixed(2) + '%') : '')
+        + (rmul != null ? (pctv != null ? ' · ' : '') + (rmul >= 0 ? '+' : '') + Number(rmul).toFixed(2) + 'R' : '')
+        + (res.close_reason ? ' · ' + esc(res.close_reason) : '');
+      return '<span class="chip ' + (pos ? 'ok' : 'bad') + '">' + label + '</span>';
+    }
+    var o = String(rec.outcome || '');
+    if (o === 'EXECUTED_LIVE') return '<span class="chip ok">Executed · open</span>';
+    if (o.indexOf('REJECTED') === 0) return '<span class="chip bad">Rejected on re-check</span>';
+    return '<span class="chip mut">' + esc(o || 'recorded') + '</span>';
+  }
+
+  function voteRow(v) {
+    var dir = v.direction === 'bullish' ? 'var(--up)' : v.direction === 'bearish' ? 'var(--down)' : 'var(--text-3)';
+    var mag = Math.min(100, Math.abs(Number(v.contribution) || 0) * 100);
+    return '<div class="vote"><span class="n">' + esc(v.name) + '</span>'
+      + '<span class="bar"><i data-w="' + mag + '" style="background:' + dir + '"></i></span>'
+      + '<span class="c">' + (Number(v.contribution) || 0).toFixed(2) + '</span></div>';
+  }
+
+  function record(rec) {
+    var idea = rec.idea || {}, risk = rec.risk || {}, prov = idea.provenance || {}, explain = idea.explain || {};
+    var sym = esc(String(rec.symbol || '').replace(':USDT', '').replace('/USDT', '')) || '—';
+    var dir = String(idea.direction || '').toUpperCase();
+    var dc = dir === 'LONG' ? 'long' : dir === 'SHORT' ? 'short' : 'mut';
+    var conf = idea.confidence != null ? Math.round(idea.confidence * 100) + '%' : '—';
+    var seq = (rec.chain && rec.chain.sequence != null) ? '#' + rec.chain.sequence : '';
+    var votes = (idea.votes || []).slice(0, 6).map(voteRow).join('');
+    var prov_l = [
+      prov.model_provider ? 'model <code>' + esc(prov.model_provider) + '</code>' : '',
+      prov.prompt_hash ? 'prompt <code>' + esc(shortHash(prov.prompt_hash)) + '</code>' : '',
+      prov.analysis_version ? 'analyzer <code>' + esc(prov.analysis_version) + '</code>' : '',
+      prov.data_bars != null ? esc(prov.data_bars) + ' bars' : '',
+      prov.data_thin ? '<span style="color:var(--down)">thin data</span>' : ''
+    ].filter(Boolean).join(' · ');
+    var vok = String(risk.verdict) === 'APPROVED';
+    var risk_l = '<span class="chip ' + (vok ? 'ok' : 'bad') + '">' + esc(risk.verdict || '—') + '</span> '
+      + (risk.passed || 0) + ' checks passed' + (risk.failed ? ' · ' + risk.failed + ' failed' : '')
+      + (risk.checks_failed && risk.checks_failed.length ? '<div class="checks">' + risk.checks_failed.map(esc).join(', ') + '</div>' : '');
+    var pol = rec.policy || null;
+    var polText = pol ? esc(String(pol.mode || 'off') === 'enforce' ? 'Intent policy · ENFORCING' : (pol.mode === 'shadow' ? 'Intent policy · shadow' : 'Intent policy · off')) : 'Engine caps (no user policy)';
+    var narr = (rec.explanation && rec.explanation.narrative) ? esc(rec.explanation.narrative) : (idea.reasoning ? esc(idea.reasoning) : '');
+    var tagsB = (explain.top_bullish || []).map(function (x) { return '<span class="chip long">' + esc(x) + '</span>'; }).join('');
+    var tagsS = (explain.top_bearish || []).map(function (x) { return '<span class="chip short">' + esc(x) + '</span>'; }).join('');
+
+    return '<article class="rec" id="d-' + esc(rec.decision_id || '') + '">'
+      + '<div class="rec-head"><span class="sym">' + sym + '</span>'
+      + '<span class="chip ' + dc + '">' + esc(dir || '—') + '</span>'
+      + '<span class="chip mut">conf ' + conf + '</span>'
+      + outcomeChip(rec)
+      + '<span class="when">' + esc(fmtAgo(rec.timestamp)) + ' · ' + esc(seq) + '</span></div>'
+      + (narr ? '<p class="narr">🗣️ ' + narr + '</p>' : '')
+      + ((tagsB || tagsS) ? '<div class="tagline">' + tagsB + tagsS + '</div>' : '')
+      + '<div class="grid">'
+      +   '<div class="cell"><div class="h">Why — ranked voter contributions</div>' + (votes || '<div class="b" style="color:var(--text-3)">no active voters this bar</div>') + '</div>'
+      +   '<div class="cell"><div class="h">Risk gate</div><div class="b">' + risk_l + '</div>'
+      +     '<div class="h" style="margin-top:10px">Authorized by</div><div class="b">' + polText + '</div></div>'
+      +   '<div class="cell"><div class="h">Model &amp; data provenance</div><div class="b">' + (prov_l || '—') + '</div></div>'
+      +   '<div class="cell"><div class="h">Trade geometry</div><div class="b">entry ' + fmtPrice(idea.entry) + ' · SL ' + fmtPrice(idea.sl) + ' · TP ' + fmtPrice(idea.tp) + (idea.rr ? ' · ' + esc(idea.rr) + 'R' : '') + (idea.timeframe ? ' · ' + esc(idea.timeframe) : '') + '</div></div>'
+      + '</div>'
+      + '<div class="cell" style="margin-top:10px"><div class="h">Ledger</div><div class="b">decision <code>' + esc(rec.decision_id || '—') + '</code> · entry hash <code>' + esc(shortHash(rec.chain && rec.chain.entry_hash)) + '</code></div></div>'
+      + '</article>';
+  }
+
+  function animateBars(root) {
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      root.querySelectorAll('.vote .bar i').forEach(function (el) { el.style.width = el.dataset.w + '%'; }); return;
+    }
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      root.querySelectorAll('.vote .bar i').forEach(function (el) { el.style.width = el.dataset.w + '%'; });
+    }); });
+  }
+
+  function render(d) {
+    var banner = document.getElementById('banner'), list = document.getElementById('list');
+    var records = (d && d.records) || [];
+    if (!records.length) {
+      banner.className = 'chain-banner';
+      banner.innerHTML = '<span class="dot" style="background:var(--text-3)"></span><span class="st">No decisions recorded yet.</span>';
+      list.innerHTML = '<div class="empty">The Flight Recorder fills as the agent trades. Check back soon, or ' +
+        '<a href="/proof">see the verified track record →</a></div>';
+      return;
+    }
+    var chain = d.chain || {};
+    var win = reInspect(records);
+    var ok = (chain.ok !== false) && !win.problems.length;
+    banner.className = 'chain-banner ' + (ok ? 'ok' : 'bad');
+    banner.innerHTML = '<span class="dot"></span>'
+      + '<span class="st">' + (ok ? 'Ledger intact' : 'Chain anomaly — see below') + '</span>'
+      + '<span class="mut">' + records.length + ' decisions · ' + win.hashed + '/' + win.checked + ' hashed'
+      + (chain.length != null ? ' · chain length ' + esc(chain.length) : '')
+      + (chain.tip_hash ? ' · tip ' + esc(shortHash(chain.tip_hash)) : '') + '</span>';
+    list.innerHTML = records.map(record).join('');
+    animateBars(list);
+
+    // Permalink: ?d=<decisionId> scrolls to and flashes that record.
+    var want = new URLSearchParams(location.search).get('d');
+    if (want) {
+      var el = document.getElementById('d-' + want);
+      if (el) { el.classList.add('flash'); try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }
+    }
+    if (d.disclosure) document.getElementById('disc').innerHTML = esc(d.disclosure);
+  }
+
+  function load() {
+    fetch('/api/public/flight?limit=60', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () {
+        document.getElementById('banner').className = 'chain-banner bad';
+        document.getElementById('banner').innerHTML = '<span class="dot"></span><span class="st">Flight Recorder unavailable — which itself tells you something. Retry shortly.</span>';
+        document.getElementById('list').innerHTML = '';
+      });
+  }
+  load();
+  setInterval(load, 30000);
+})();
+</script>
+</body>
+</html>
