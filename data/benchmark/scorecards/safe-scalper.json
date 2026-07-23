@@ -1,0 +1,37 @@
+{
+  "agent_id": "safe-scalper",
+  "bars": 1500,
+  "dataset": "majors_1h",
+  "dataset_hash": "8dbe73514ce8d2aeecd767a193c005cd1a179221bdce5df2cbe4ded2886bde36",
+  "engine": "runeclaw.backtest",
+  "format": "runeclaw.agent.scorecard.v1",
+  "gates": {
+    "confidence_threshold": 0.75,
+    "regime_filter": null,
+    "rsi_max": null,
+    "symbols": "top3_volume",
+    "volume_spike_min": null
+  },
+  "honest": true,
+  "metrics": {
+    "calmar_ratio": -3.7,
+    "max_drawdown_pct": 0.47,
+    "profit_factor": 0.29,
+    "sharpe_ratio": -9.38,
+    "sortino_ratio": -4.43,
+    "total_return_pct": -0.3,
+    "total_trades": 11,
+    "win_rate": 0.3636
+  },
+  "note": "Design backtest on FROZEN benchmark data \u2014 percent/ratio only, never a dollar figure. Re-run the identical backtest in the Strategy Lab to reproduce.",
+  "preset": "safe scalper",
+  "symbols": [
+    "BTC/USDT:USDT",
+    "ETH/USDT:USDT",
+    "SOL/USDT:USDT"
+  ],
+  "unmodeled": [
+    "sl_atr_mult",
+    "tp_atr_mult"
+  ]
+}

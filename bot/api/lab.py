@@ -58,6 +58,13 @@ class LabRunRequest(BaseModel):
     last_bars: int = 1500
     confidence_threshold: float = 0.0
     balance: float = 10_000.0
+    # Preset entry gates (marketplace "Reproduce in Lab"). All OFF by default so
+    # a normal Lab run is unchanged; when set they let the Lab replay a named
+    # Strategy-Agent's exact filters (validated/clamped below before reaching
+    # the runner). See bot/backtest — BacktestConfig / _rejected_by_preset_gate.
+    volume_spike_min: Optional[float] = None
+    regime_filter: str = ""
+    rsi_max: Optional[float] = None
 
 
 def _datasets() -> dict[str, dict]:
@@ -120,6 +127,25 @@ async def lab_run(req: LabRunRequest):
     confidence = max(0.0, min(1.0, float(req.confidence_threshold)))
     balance = max(100.0, min(1_000_000.0, float(req.balance)))
 
+    # Preset entry gates (marketplace "Reproduce in Lab"). Validated/clamped
+    # here before reaching the runner; all optional so a normal run omits them.
+    gate_args: list[str] = []
+    gate_params: dict = {}
+    if req.volume_spike_min is not None:
+        vsm = max(0.0, min(50.0, float(req.volume_spike_min)))
+        gate_args += ["--volume-spike-min", str(vsm)]
+        gate_params["volume_spike_min"] = vsm
+    regime = (req.regime_filter or "").strip().upper()
+    if regime:
+        if not re.fullmatch(r"[A-Z_]{1,20}", regime):
+            raise HTTPException(status_code=400, detail="Invalid regime filter.")
+        gate_args += ["--regime-filter", regime]
+        gate_params["regime_filter"] = regime
+    if req.rsi_max is not None:
+        rmax = max(1.0, min(100.0, float(req.rsi_max)))
+        gate_args += ["--rsi-max", str(rmax)]
+        gate_params["rsi_max"] = rmax
+
     job_id = uuid.uuid4().hex[:12]
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_file = _OUT_DIR / f"{job_id}.json"
@@ -132,12 +158,12 @@ async def lab_run(req: LabRunRequest):
         "--balance", str(balance),
         "--honest", "--strict-data",
         "--output", str(out_file),
-    ]
+    ] + gate_args
     _jobs[job_id] = {
         "status": "running", "started_at": time.time(),
         "params": {"dataset": req.dataset, "symbols": symbols,
                    "last_bars": last_bars, "confidence_threshold": confidence,
-                   "balance": balance},
+                   "balance": balance, **gate_params},
     }
     _running_id = job_id
     _last_submit = now

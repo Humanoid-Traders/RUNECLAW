@@ -118,3 +118,49 @@ test('the strategies gateway route is registered bot-side', () => {
     path.join(__dirname, '..', '..', 'bot', 'web', 'user_gateway.py'), 'utf8');
   assert.match(gw, /add_get\("\/public\/strategies",\s*handle_strategies_public\)/);
 });
+
+// ── Phase 2b: verified scorecards + reproduce-in-Lab ──
+
+test('agent cards render a verified scorecard stat block with provenance', () => {
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
+  assert.match(dash, /function scoreBlock\(sc\)/);
+  assert.match(dash, /a\.scorecard/);
+  assert.match(dash, /total_return_pct/);
+  assert.match(dash, /profit_factor/);
+  assert.match(dash, /max_drawdown_pct/);
+  assert.match(dash, /Frozen backtest ·/);          // provenance line
+  assert.match(dash, /low sample/);                  // low-trade-count guard
+});
+
+test('the primary CTA becomes "Reproduce in Lab" when a scorecard exists', () => {
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
+  assert.match(dash, /hasSc \? 'Reproduce in Lab' : 'Backtest in Lab'/);
+  // The click handler stashes the EXACT scorecard gates for the Lab to re-run.
+  assert.match(dash, /_labReproduce = \{/);
+  assert.match(dash, /volume_spike_min: sc\.gates\.volume_spike_min/);
+  assert.match(dash, /regime_filter: sc\.gates\.regime_filter/);
+  assert.match(dash, /rsi_max: sc\.gates\.rsi_max/);
+  // The Lab auto-runs the stashed body through the shared submit path.
+  assert.match(dash, /if \(_labReproduce\)/);
+  assert.match(dash, /submitLabRun\(rep\.body/);
+});
+
+test('the Lab route forwards the preset gate params to the bridge', () => {
+  const lab = fs.readFileSync(path.join(__dirname, '..', 'routes', 'lab.js'), 'utf8');
+  assert.match(lab, /body\.volume_spike_min = parseFloat/);
+  assert.match(lab, /body\.regime_filter = String\(b\.regime_filter\)/);
+  assert.match(lab, /body\.rsi_max = parseFloat/);
+});
+
+test('the Lab bridge validates + clamps the preset gates', () => {
+  const lab = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'bot', 'api', 'lab.py'), 'utf8');
+  assert.match(lab, /volume_spike_min: Optional\[float\] = None/);
+  assert.match(lab, /regime_filter: str = ""/);
+  assert.match(lab, /rsi_max: Optional\[float\] = None/);
+  assert.match(lab, /"--volume-spike-min"/);
+  assert.match(lab, /"--regime-filter"/);
+  assert.match(lab, /"--rsi-max"/);
+  // Regime is validated against an allowlist pattern before reaching the shell.
+  assert.match(lab, /re\.fullmatch\(r"\[A-Z_\]\{1,20\}", regime\)/);
+});

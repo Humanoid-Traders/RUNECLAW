@@ -14,8 +14,18 @@ Lab backtester + the verifiable leaderboard), never invented here.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from typing import Any, Optional
+
+# Committed, reproducible per-agent benchmark scorecards (generated offline by
+# scripts/gen_agent_scorecards.py). Percent/ratio only, stamped with the dataset
+# hash — see that script. Loaded fail-soft so a missing scorecard just omits the
+# stats from the card, never breaks the catalogue.
+_SCORECARD_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "benchmark", "scorecards")
 
 # Editorial, marketplace-facing metadata keyed by the real preset id. Kept
 # deliberately small — the substance (how it trades) is derived, not authored.
@@ -97,6 +107,37 @@ def _how_it_trades(cfg: dict[str, Any]) -> str:
     return "Trades " + ", ".join(parts) + "."
 
 
+def _load_scorecard(agent_id: str) -> Optional[dict]:
+    """The committed benchmark scorecard for this agent slug, or None. Public-safe
+    by construction (the generator writes percent/ratio only); we still strip any
+    non-metric/dollar-ish keys defensively before it reaches a card."""
+    try:
+        path = os.path.join(_SCORECARD_DIR, f"{agent_id}.json")
+        with open(path, encoding="utf-8") as fh:
+            card = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(card, dict):
+        return None
+    metrics = card.get("metrics") or {}
+    return {
+        "dataset": card.get("dataset", ""),
+        "dataset_hash": (card.get("dataset_hash", "") or "")[:12],
+        "symbols": card.get("symbols", []),
+        "bars": card.get("bars"),
+        "gates": card.get("gates", {}),
+        "unmodeled": card.get("unmodeled", []),
+        "metrics": {
+            "total_return_pct": metrics.get("total_return_pct"),
+            "profit_factor": metrics.get("profit_factor"),
+            "win_rate": metrics.get("win_rate"),
+            "max_drawdown_pct": metrics.get("max_drawdown_pct"),
+            "sharpe_ratio": metrics.get("sharpe_ratio"),
+            "total_trades": metrics.get("total_trades"),
+        },
+    }
+
+
 def _run_alias(key: str) -> str:
     """The chat/Telegram shortcut for this agent (e.g. 'dip' -> dip sniper)."""
     from bot.skills.skill_registry import RunStrategySkill
@@ -119,8 +160,9 @@ def catalog() -> list[dict]:
     for key, cfg in presets.items():
         meta = _META.get(key, {})
         risk = meta.get("risk", "balanced")
+        aid = _slug(key)
         out.append({
-            "id": _slug(key),
+            "id": aid,
             "name": cfg.get("label", key.title()),
             "icon": cfg.get("icon", "🤖"),
             "tagline": meta.get("tagline", ""),
@@ -130,6 +172,10 @@ def catalog() -> list[dict]:
             "risk_label": _RISK_LABEL.get(risk, "🟡 Balanced"),
             "horizon": meta.get("horizon", ""),
             "run": _run_alias(key),
+            # Reproducible frozen-benchmark scorecard (percent/ratio only), or
+            # None if not yet generated. Lets the marketplace card show verified
+            # numbers with a one-tap "reproduce in the Lab".
+            "scorecard": _load_scorecard(aid),
         })
     return out
 
