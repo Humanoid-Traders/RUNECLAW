@@ -882,7 +882,20 @@ async function getLatestFlight() {
 module.exports = router;
 // Named accessor for routes/reports.js (in-memory + DB cold-start fallback).
 module.exports.getLatestReports = getLatestReports;
-// Named accessor for routes/macro.js — the synced scan's BTC regime block.
-module.exports.getLatestScan = () => latestScan;
+// Named accessor for routes/macro.js + lib/status.js. In-memory first, then the
+// DB (scan_cache) on cold start — so a web restart (every deploy on an
+// ephemeral host) doesn't reset the scan to "no data" while the last engine
+// push is still sitting in the DB. Mirrors getLatestReports().
+async function getLatestScan() {
+  if (latestScan) return latestScan;
+  try {
+    const [rows] = await pool.execute('SELECT scan_json FROM scan_cache WHERE id = 1');
+    if (rows.length > 0 && rows[0].scan_json) {
+      latestScan = JSON.parse(rows[0].scan_json);
+    }
+  } catch (err) { /* cold-start miss / table absent is fine */ }
+  return latestScan;
+}
+module.exports.getLatestScan = getLatestScan;
 // Named accessor for routes/guardian.js — the Flight Recorder ledger mirror.
 module.exports.getLatestFlight = getLatestFlight;
