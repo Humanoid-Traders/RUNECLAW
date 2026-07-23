@@ -532,8 +532,23 @@ a.mc-chip:hover { border-color: var(--accent, var(--up)); }
 .hero-note { margin-top: var(--s3); color: var(--text-3); }
 /* Objection-killer badges under the hero CTA (conversion trust row). */
 .trust-badges { list-style: none; margin: var(--s4) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }
-.trust-badge { display: inline-flex; align-items: center; gap: 7px; font-size: var(--fs-sm); color: var(--text-2); }
+.trust-badge { display: inline-flex; align-items: center; gap: 7px; font-size: var(--fs-sm); color: var(--text-2);
+  transition: color .2s ease, transform .2s ease; animation: rc-badge-in .5s var(--ease-out) both; }
+.trust-badge:hover { color: var(--text); transform: translateY(-1px); }
+.trust-badge:nth-child(1) { animation-delay: .05s; } .trust-badge:nth-child(2) { animation-delay: .11s; }
+.trust-badge:nth-child(3) { animation-delay: .17s; } .trust-badge:nth-child(4) { animation-delay: .23s; }
 .trust-badge a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+@keyframes rc-badge-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+
+/* Hero stat strip skeleton: honest structure on first paint — number-free
+   shimmer pills that the verified track record replaces (or that clear if
+   there's nothing to show). Same shimmer as the panel .skel. */
+.hero-stat-skel { display: inline-block; width: 76px; height: 15px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%; animation: shimmer 1.4s infinite; opacity: .55; }
+.hero-stat-skel:nth-child(2) { width: 58px; } .hero-stat-skel:nth-child(3) { width: 68px; }
+.hero-stat-skel:nth-child(4) { width: 84px; }
+@media (prefers-reduced-motion: reduce) { .hero-stat-skel { animation: none; } .trust-badge { animation: none; } }
 /* Sticky mobile CTA — always-reachable primary action on phones. */
 .mobile-cta { display: none; }
 @media (max-width: 639px) {
