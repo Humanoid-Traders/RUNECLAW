@@ -74,6 +74,38 @@
     return `<span class="spark spark--${dir}" aria-hidden="true"><span class="spark-fill" style="width:${w}%"></span></span>`;
   }
 
+  // A segmented composition bar: turns a set of {label, value, cls} parts into a
+  // single stacked bar (widths ∝ value) plus a labelled legend. Used for the
+  // net-worth split. Returns '' when there's nothing positive to show.
+  function stackBar(parts) {
+    var items = (parts || []).filter(function (p) { return p && Number(p.value) > 0; });
+    var total = items.reduce(function (s, p) { return s + Number(p.value); }, 0);
+    if (!items.length || total <= 0) return '';
+    var seg = items.map(function (p) {
+      var pct = (Number(p.value) / total) * 100;
+      return '<span class="stackbar-seg ' + (p.cls || '') + '" style="width:' + pct.toFixed(2)
+        + '%" title="' + esc(p.label) + ' — ' + pct.toFixed(1) + '%"></span>';
+    }).join('');
+    var legend = items.map(function (p) {
+      var pct = (Number(p.value) / total) * 100;
+      return '<span class="stackbar-key"><i class="stackbar-dot ' + (p.cls || '') + '"></i>'
+        + esc(p.label) + ' <b class="num">' + pct.toFixed(0) + '%</b></span>';
+    }).join('');
+    return '<div class="stackbar" aria-hidden="true">' + seg + '</div>'
+      + '<div class="stackbar-legend">' + legend + '</div>';
+  }
+
+  // A compact liquidation-risk meter for an Aave health factor: HF is clamped to
+  // a 0–3 window (HF≥3 reads as fully safe), and the fill colour follows the
+  // same danger/warn/safe thresholds as the number beside it. Decorative.
+  function hfMeter(hf) {
+    if (hf == null || !isFinite(hf)) return '';
+    var frac = Math.max(0, Math.min(Number(hf), 3)) / 3;
+    var cls = Number(hf) < 1.1 ? 'down' : Number(hf) < 1.5 ? 'warn' : 'up';
+    return '<span class="hfmeter hfmeter--' + cls + '" aria-hidden="true">'
+      + '<span class="hfmeter-fill" style="width:' + Math.round(frac * 100) + '%"></span></span>';
+  }
+
   // ── Shared data caches ────────────────────────────────────────────────
   const cache = { scan: null, scanAt: 0, tickers: {}, portfolio: null, insightOk: null };
 
@@ -2563,11 +2595,20 @@
         rows.push(`<div class="kv-row"><span>📄 Paper portfolio <span class="muted small">simulated — not counted</span></span>
           <b class="num muted">$${fmt(p.equity_usd, 2)}</b></div>`);
       }
+      // Composition bar: how the real total splits across the connected
+      // exchange vs the on-chain wallet (paper is simulated, so it's excluded —
+      // same rule as total_real_usd). Percent split; the dollars stay in the
+      // per-user rows above, which §4 permits on a private surface.
+      const composition = stackBar([
+        { label: (c && c.venue ? c.venue.toUpperCase() : 'Exchange'), value: (c && c.ok ? c.equity_usd : 0), cls: 'chip--info' },
+        { label: 'Wallet', value: (w && w.linked ? w.total_usd : 0), cls: 'chip--up' },
+      ]);
       return rows.join('')
         + `<div class="kv-row" style="border-top:1px solid var(--line);margin-top:var(--s2);padding-top:var(--s2)">
             <span><b>Real total</b></span>
-            <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>
-          <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
+            <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>`
+        + composition
+        + `<p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
     }, { empty: { icon: 'icon-globe', text: 'Net worth aggregates once a venue or wallet is reachable.' } });
 
     // Funds by venue & wallet — the same real money as net worth, but itemised
@@ -2780,7 +2821,7 @@
         const hfCls = a.health_factor === null ? '' : a.health_factor < 1.1 ? 'down' : a.health_factor < 1.5 ? 'chip--warn' : 'up';
         bits.push(`<div class="kv-row"><span>🏦 Aave v3 · ${esc(a.label)}</span>
           <b class="num">$${fmt(a.collateral_usd, 0)} coll · $${fmt(a.debt_usd, 0)} debt ·
-          ${a.health_factor === null ? '<span class="muted small">no debt</span>' : `HF <span class="${hfCls}">${a.health_factor}</span>`}</b></div>`);
+          ${a.health_factor === null ? '<span class="muted small">no debt</span>' : `HF <span class="${hfCls}">${a.health_factor}</span>${hfMeter(a.health_factor)}`}</b></div>`);
       }
       if (d.lido) {
         bits.push(`<div class="kv-row"><span>🌊 Lido stETH</span>
