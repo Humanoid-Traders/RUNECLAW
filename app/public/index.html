@@ -84,6 +84,19 @@
     aspect-ratio: 1 / 1; z-index: 1; pointer-events: auto;
   }
   @media (max-width: 900px) { .hero-agent3d[data-rc3d-state="ready"], .hero-agent3d[data-rc3d-state="loading"] { position: static; margin: 0 auto; width: 240px; } }
+  /* Marketplace preview: real strategy-agent cards on the landing page so the
+     marketplace is visible, not buried in the nav. Percent/ratio only (§4). */
+  .mkt-card { display: block; color: inherit; text-decoration: none; transition: transform .18s ease, border-color .2s ease, box-shadow .22s ease; }
+  .mkt-card:hover, .mkt-card:focus-visible { transform: translateY(-3px); border-color: var(--line-2); box-shadow: var(--shadow), var(--glow); }
+  .mkt-card .mkt-h { display: flex; align-items: center; gap: 8px; }
+  .mkt-card .mkt-emo { font-size: 22px; line-height: 1; }
+  .mkt-card .mkt-h h3 { margin: 0; }
+  .mkt-stats { display: flex; gap: var(--s4); margin-top: var(--s2); }
+  .mkt-stat { display: flex; flex-direction: column; }
+  .mkt-stat .k { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); }
+  .mkt-stat .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .mkt-stat .v.up { color: var(--up); } .mkt-stat .v.down { color: var(--down); }
+  @media (prefers-reduced-motion: reduce) { .mkt-card { transition: none; } .mkt-card:hover, .mkt-card:focus-visible { transform: none; } }
 </style>
 </head>
 <body>
@@ -94,7 +107,7 @@
   <div class="spacer"></div>
   <div class="nav-links">
     <a href="/dashboard" data-i18n="nav.dashboard">Dashboard</a>
-    <a href="/agents" data-i18n="nav.agents">Agents</a>
+    <a href="/agents" data-i18n="nav.agents">Marketplace</a>
     <a href="/track" data-i18n="nav.track">Track record</a>
     <a href="/proof" data-i18n="nav.proof">Proof of PnL</a>
     <a href="/leaderboard" data-i18n="nav.leaderboard">Leaderboard</a>
@@ -104,7 +117,7 @@
       <summary aria-label="Open menu">☰ <span data-i18n="nav.menu">Menu</span></summary>
       <div class="nav-menu-panel">
         <a href="/dashboard" data-i18n="nav.dashboard">Dashboard</a>
-        <a href="/agents" data-i18n="nav.agents">Agents</a>
+        <a href="/agents" data-i18n="nav.agents">Marketplace</a>
         <a href="/track" data-i18n="nav.track">Track record</a>
         <a href="/proof" data-i18n="nav.proof">Proof of PnL</a>
         <a href="/leaderboard" data-i18n="nav.leaderboard">Leaderboard</a>
@@ -204,6 +217,23 @@
     </table></div>
     <p class="muted small" style="margin-top:var(--s2)"><a href="/leaderboard">See the full verifiable board →</a> · Size-agnostic by design · Past results ≠ future results.</p>
   </div>
+</section>
+
+<!-- The Strategy Agent Marketplace, surfaced on the landing page itself (not
+     just the nav): each card is one of the engine's real strategy agents with a
+     verified, frozen backtest — design + regime only, percent/ratio never a
+     dollar figure (§4). Cards link into the public /agents marketplace. -->
+<section class="section reveal-on-scroll" id="marketplaceTease" aria-labelledby="mkt-h">
+  <div class="section-head">
+    <h2 id="mkt-h" data-i18n="sec.mkt_h">The Strategy Agent Marketplace</h2>
+    <p data-i18n="sec.mkt_p">Browse the engine's strategy agents — each one a real preset with a verified, reproducible backtest. Follow one, copy its picks on paper, or reproduce its numbers yourself in the Lab.</p>
+  </div>
+  <div class="feature-grid rc-stagger" id="marketplaceCards">
+    <p class="muted small" data-i18n="sec.mkt_loading">Loading the agent catalogue…</p>
+  </div>
+  <p style="margin-top:var(--s4)">
+    <a class="btn btn--primary btn--sm" href="/agents" data-i18n="sec.mkt_cta">Browse the full marketplace →</a>
+  </p>
 </section>
 
 <section class="section reveal-on-scroll" aria-labelledby="features-h">
@@ -377,7 +407,7 @@
     <a class="brand" href="/" style="font-size:15px"><svg class="brand-mark" aria-hidden="true"><use href="#brand-mark"></use></svg>RUNECLAW</a>
     <div class="links">
       <a href="/dashboard">Dashboard</a>
-      <a href="/agents">Agents</a>
+      <a href="/agents">Marketplace</a>
       <a href="/track">Track record</a>
       <a href="/proof">Proof of PnL</a>
       <a href="/leaderboard">Leaderboard</a>
@@ -420,7 +450,7 @@
   </form>
 </section>
 
-<script src="/js/i18n.js?v=2"></script>
+<script src="/js/i18n.js?v=3"></script>
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=24" defer></script>
@@ -554,6 +584,40 @@
       section.classList.remove('hidden');
       section.hidden = false;
     }).catch(function () {});
+})();
+
+// Marketplace preview: a live slice of the real strategy-agent catalogue, right
+// on the landing page. Each card links into the public /agents marketplace.
+// Percent/ratio only — never a dollar figure (§4). Best-effort: on any failure
+// the CTA below still points at the full marketplace.
+(function () {
+  var wrap = document.getElementById('marketplaceCards');
+  if (!wrap) return;
+  var esc = (window.RC && RC.esc) || function (s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  };
+  var pct = function (v) { return v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(1) + '%'; };
+  var fallback = '<p class="muted small"><a href="/agents">Open the Strategy Agent Marketplace →</a></p>';
+  fetch('/api/public/strategies', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      var agents = (d && d.agents) || [];
+      if (!agents.length) { wrap.innerHTML = fallback; return; }
+      wrap.innerHTML = agents.slice(0, 6).map(function (a) {
+        var m = a.scorecard && a.scorecard.metrics;
+        var stats = m ? '<div class="mkt-stats">'
+          + '<div class="mkt-stat"><span class="k">Return</span><span class="v ' + (m.total_return_pct >= 0 ? 'up' : 'down') + '">' + esc(pct(m.total_return_pct)) + '</span></div>'
+          + '<div class="mkt-stat"><span class="k">Win rate</span><span class="v">' + (m.win_rate == null ? '—' : (m.win_rate * 100).toFixed(0) + '%') + '</span></div>'
+          + '<div class="mkt-stat"><span class="k">PF</span><span class="v">' + (m.profit_factor == null ? '—' : Number(m.profit_factor).toFixed(2)) + '</span></div>'
+          + '</div>' : '';
+        return '<a class="feature mkt-card" href="/agents/' + encodeURIComponent(a.id) + '">'
+          + '<div class="mkt-h"><span class="mkt-emo">' + esc(a.icon || '🤖') + '</span><h3>' + esc(a.name) + '</h3></div>'
+          + (a.tagline ? '<p>' + esc(a.tagline) + '</p>' : '')
+          + stats + '</a>';
+      }).join('');
+    }).catch(function () { wrap.innerHTML = fallback; });
 })();
 
 // Honest hero: the eyebrow and a live proof strip come from the RECORDED
