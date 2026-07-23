@@ -227,6 +227,14 @@ _KB_DASH = InlineKeyboardMarkup([
 ])
 
 
+def _dashboard_url() -> str:
+    """The web dashboard deep-link surfaced in /start. Reuses the same
+    WEBSITE_URL env + default the rest of the bot uses (user_middleware,
+    website_sync) so the bot and web stay pointed at one origin."""
+    base = os.getenv("WEBSITE_URL", "https://pmvc58g2.mule.page").rstrip("/")
+    return f"{base}/dashboard#home"
+
+
 def _chat_ret(text: str, cfg, return_meta: bool):
     """Shape _llm_chat's return: plain string (default, every existing caller),
     or (string, meta) when the caller wants model transparency (the web
@@ -2135,6 +2143,7 @@ class TelegramHandler:
                  tier=tier_label,
                  trade_mode=trade_mode,
                  trade_mode_zh=trade_mode_zh,
+                 web_url=_dashboard_url(),
                  time=time)
 
         msg = f"<b>RUNECLAW</b>\n{SEP}\n\n{body}"

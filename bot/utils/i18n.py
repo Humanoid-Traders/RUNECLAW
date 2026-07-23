@@ -53,6 +53,7 @@ _STRINGS: dict[str, dict[str, str]] = {
             "<b>Talk to me:</b>\n"
             "<i>\"scan BTC\" - \"show my positions\" - \"what's the risk?\"</i>\n"
             "<i>\"analyze SOL\" - \"how's my PnL?\" - \"pause the bot\"</i>\n\n"
+            "🌐 <a href=\"{web_url}\">Open your web dashboard →</a>\n\n"
             "Just type what you need, no commands required.\n\n"
             "<i>{time}</i>"
         ),
@@ -66,6 +67,7 @@ _STRINGS: dict[str, dict[str, str]] = {
             "<b>跟我說：</b>\n"
             "<i>\"掃描 BTC\" - \"顯示持倉\" - \"風險如何？\"</i>\n"
             "<i>\"分析 SOL\" - \"損益如何？\" - \"暫停交易\"</i>\n\n"
+            "🌐 <a href=\"{web_url}\">開啟你的網頁儀表板 →</a>\n\n"
             "直接輸入你的需求，不需要指令。\n\n"
             "<i>{time}</i>"
         ),
