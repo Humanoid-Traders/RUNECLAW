@@ -1197,6 +1197,20 @@ class TelegramHandler:
         """
         import asyncio
 
+        # FAQ short-circuit: the landing-page starter questions (what is
+        # RUNECLAW / risk / liquidity sweep / leverage / supported exchanges)
+        # get an instant, deterministic, §4-safe answer from the built-in FAQ —
+        # no LLM, no cost, and it ALWAYS works, including before any provider is
+        # connected (the public-web default). Only CLOSE matches answer here;
+        # free-form questions fall through to the model below.
+        try:
+            from bot.core.faq_kb import faq_answer as _faq_answer
+            _canned = _faq_answer(question)
+        except Exception:
+            _canned = None
+        if _canned is not None:
+            return _chat_ret(_canned, None, return_meta)
+
         # Resolve active LLM config (BYOK runtime > .env)
         env_config = LLMConfig(
             provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
@@ -1336,9 +1350,20 @@ class TelegramHandler:
             configs_to_try.append(("primary", active_cfg))
 
         if not configs_to_try:
-            return _chat_ret(
-                "No LLM configured. Use /setllm to set a provider, or add LLM_API_KEY to .env.",
-                None, return_meta)
+            # No live model reachable. NEVER surface internal config guidance
+            # (provider setup, keys, .env) to a public/non-admin visitor — that's
+            # both a broken first impression and a config leak (F-15). Serve a
+            # friendly, useful fallback instead; the operator gets an actionable
+            # (non-leaky) hint on their own bot.
+            from bot.core.faq_kb import public_fallback
+            if is_admin and not public:
+                return _chat_ret(
+                    "The live AI model isn't connected yet — run /setllm to add "
+                    "a provider. Meanwhile I can still answer the basics: what "
+                    "RUNECLAW is, how it manages risk, leverage, liquidity "
+                    "sweeps, and which exchanges are supported.",
+                    None, return_meta)
+            return _chat_ret(public_fallback(), None, return_meta)
 
         # Budget guard: refuse to spend once the shared daily LLM budget is
         # exhausted, mirroring analyzer.py's guard for trade-thesis calls.
