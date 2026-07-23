@@ -3450,10 +3450,15 @@
           // Follow-the-agent topics are per-account prefs (opt-in, default off).
           const prof = await fetchJSON('/api/profile').catch(() => null);
           const boardOn = !!prof?.data?.prefs?.push_board;
+          const copyOn = !!prof?.data?.prefs?.push_copy;
           return `<p class="small" style="color:var(--text-2)">✅ This device gets a notification when the agent opens or closes a trade, or raises a warning.</p>
             <label class="small" style="display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--text-2)">
               <input type="checkbox" id="pushBoard" ${boardOn ? 'checked' : ''}>
               Also follow the <a href="/leaderboard">verifiable board</a> — rank moves, entries, exits (handles only, never amounts)
+            </label>
+            <label class="small" style="display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--text-2)">
+              <input type="checkbox" id="pushCopy" ${copyOn ? 'checked' : ''}>
+              Notify me when a <a href="#agents">Strategy Agent I follow</a> finds a new live pick (paper-only, no amounts)
             </label>
             <button class="btn btn--sm" id="pushOff" type="button">Turn off on this device</button>`;
         }
@@ -3463,14 +3468,15 @@
       }, { empty: { text: 'Push status unavailable.' } });
     }
     C('apush').addEventListener('change', async (e) => {
-      const cb = e.target.closest('#pushBoard');
-      if (!cb) return;
-      const r = await fetchJSON('/api/profile', {
-        method: 'PUT', body: { prefs: { push_board: cb.checked } },
-      }).catch(() => ({ ok: false }));
+      const board = e.target.closest('#pushBoard');
+      const copy = e.target.closest('#pushCopy');
+      if (!board && !copy) return;
+      const prefs = board ? { push_board: board.checked } : { push_copy: copy.checked };
+      const on = (board || copy).checked;
+      const r = await fetchJSON('/api/profile', { method: 'PUT', body: { prefs } }).catch(() => ({ ok: false }));
+      const label = board ? 'Board' : 'New-pick';
       toast(r.ok
-        ? (cb.checked ? 'Following the board — rank moves will reach this account.'
-                      : 'Board notifications off.')
+        ? (on ? `${label} notifications on — they'll reach this account.` : `${label} notifications off.`)
         : 'Could not save the preference — try again.', r.ok ? 'up' : 'down');
     });
     C('apush').addEventListener('click', async (e) => {

@@ -267,4 +267,9 @@ app.use((err, req, res, next) => {
   // Follow-the-agent: hourly watch on the public verifiable board; rank moves
   // push a digest to users who opted into the 'board' topic.
   require('./lib/board_watch').startBoardWatch();
+
+  // Follow-an-agent (Marketplace Phase 3b): watch followed agents' live gate
+  // matches; a NEW pick pushes to that agent's followers who opted into
+  // push_copy. Baseline-on-boot, best-effort, paper-only.
+  require('./lib/copy_watch').startCopyWatch();
 })();
