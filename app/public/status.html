@@ -19,6 +19,8 @@
   .banner.ok { border-color: rgba(47,191,113,.4); color: var(--up); }
   .banner.partial { border-color: rgba(230,176,60,.4); color: var(--gold-bright); }
   .banner.degraded { border-color: rgba(224,82,82,.5); color: var(--down); }
+  .build { color: var(--text-3); font-family: var(--font-data); font-size: var(--fs-xs); margin: -6px 0 var(--s4); }
+  .build code { color: var(--text-2); background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 4px; }
   .comp { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4) var(--s5); margin-bottom: var(--s3); display: flex; gap: var(--s3); align-items: baseline; flex-wrap: wrap; }
   .comp .name { font-family: var(--font-data); min-width: 180px; color: var(--text-1); }
   .comp .note { color: var(--text-3); font-size: var(--fs-xs); flex-basis: 100%; }
@@ -81,6 +83,14 @@
         var html = '<div class="banner ' + esc(d.status) + '">Overall: '
           + esc(String(d.status).toUpperCase())
           + ' · checked ' + esc(new Date(d.generated_at).toLocaleTimeString()) + '</div>';
+        var b = d.build;
+        if (b && b.sha) {
+          var built = b.committed_at ? new Date(b.committed_at).toLocaleString() : 'unknown';
+          var boot = b.started_at ? new Date(b.started_at).toLocaleString() : 'unknown';
+          html += '<div class="build">Running build <code>' + esc(b.sha) + '</code>'
+            + ' · commit ' + esc(built)
+            + ' · started ' + esc(boot) + '</div>';
+        }
         var comps = d.components || {};
         Object.keys(comps).forEach(function (k) {
           var c = comps[k] || {};

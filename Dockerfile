@@ -30,6 +30,10 @@ WORKDIR /app
 
 COPY . .
 
+# Stamp the build so /api/version and /status report the real commit even in a
+# .git-less image (app/lib/version.js reads this at the repo root).
+RUN printf '{"sha":"%s","committed_at":"%s"}\n' "$BUILD_SHA" "$BUILD_DATE" > /app/build-info.json
+
 RUN mkdir -p /app/logs /app/data
 
 # Non-root user (security hardening)

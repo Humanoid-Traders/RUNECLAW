@@ -92,3 +92,7 @@ data/*
 # private CI backup dir stays ignored.
 .github_ci_backup/
 .playwright-cli/
+
+# Build stamp written at image build time (see Dockerfile / app/lib/version.js)
+build-info.json
+app/build-info.json
