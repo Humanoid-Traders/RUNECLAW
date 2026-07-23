@@ -72,6 +72,36 @@
     return;
   }
 
+  // Community strategies are configs (intent rules), not backtests — render the
+  // rules instead of a scorecard.
+  var RULE_LABEL = {
+    max_position_pct: 'Max size/trade', max_symbol_exposure_pct: 'Max per-symbol',
+    max_portfolio_exposure_pct: 'Max portfolio', max_open_positions: 'Max open',
+    min_confidence: 'Min confidence', min_rr: 'Min R:R', max_daily_loss_pct: 'Max daily loss',
+    max_drawdown_pct: 'Max drawdown', min_free_margin_pct: 'Min free margin',
+    allowed_symbols: 'Only', blocked_symbols: 'Never', allowed_strategy_types: 'Only strategies',
+    direction: 'Direction',
+  };
+  function ruleVal(r) {
+    var v = r.value;
+    if (Array.isArray(v)) return v.join(', ');
+    if (r.type === 'min_confidence') return Math.round(Number(v) * 100) + '%';
+    if (/pct$/.test(r.type)) return v + '%';
+    if (r.type === 'min_rr') return v + 'R';
+    if (r.type === 'direction') return String(v).replace('_', ' ');
+    return String(v);
+  }
+  function rulesBlock(rules) {
+    if (!rules || !rules.length) return '';
+    var chips = rules.map(function (r) {
+      return '<span class="chip"><span style="color:var(--text-3)">' + esc(RULE_LABEL[r.type] || r.type)
+        + '</span>&nbsp;<b>' + esc(ruleVal(r)) + '</b></span>';
+    }).join('');
+    return '<div class="sc"><div class="k" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-3);margin-bottom:8px">Strategy rules</div>'
+      + '<div class="chips" style="margin:0">' + chips + '</div>'
+      + '<p class="prov">A member-authored config — intent rules, not a verified backtest. No dollar figures, no performance claims.</p></div>';
+  }
+
   function scoreBlock(sc) {
     if (!sc || !sc.metrics) {
       return '<div class="sc"><p class="prov">Verified backtest pending — run it in the '
@@ -108,18 +138,26 @@
       + (a.tagline ? '<p class="tagline">' + esc(a.tagline) + '</p>' : '') + '</div></div>'
       + (a.how ? '<p class="how"><b>How it trades:</b> ' + esc(a.how) + '</p>' : '')
       + (chips ? '<div class="chips">' + chips + '</div>' : '')
-      + scoreBlock(a.scorecard)
+      + (a.community ? rulesBlock(a.rules) : scoreBlock(a.scorecard))
       + '<div class="cta-row">'
-      // Deep-link straight into the Lab with THIS agent auto-running its exact
-      // backtest — the page's "reproduce its numbers" promise, delivered in one tap.
-      + '<a class="btn btn--primary btn--sm" href="/dashboard?lab_agent=' + encodeURIComponent(a.id) + '#lab">Reproduce this backtest in the Lab</a>'
-      + '<a class="btn btn--sm" href="/dashboard#agents">Follow in the app</a>'
+      + (a.community
+        // A member config — no frozen backtest to reproduce; point into the app.
+        ? '<a class="btn btn--primary btn--sm" href="/dashboard#agents">Open in the app</a>'
+        // Deep-link straight into the Lab with THIS agent auto-running its exact
+        // backtest — the page's "reproduce its numbers" promise, in one tap.
+        : '<a class="btn btn--primary btn--sm" href="/dashboard?lab_agent=' + encodeURIComponent(a.id) + '#lab">Reproduce this backtest in the Lab</a>'
+          + '<a class="btn btn--sm" href="/dashboard#agents">Follow in the app</a>')
       + '<button class="btn btn--sm" id="shareBtn" type="button">Share</button>'
       + '</div>'
-      + '<p class="disc">Every RUNECLAW agent is one of the engine\'s real strategies, backtested on '
-      + 'frozen, content-hashed benchmark data — percent and ratio only, never a dollar figure. '
-      + 'Reproduce the identical backtest yourself in the Lab, or watch verified live ranks on the '
-      + '<a href="/leaderboard">leaderboard</a>. Nothing here is financial advice.</p>'
+      + '<p class="disc">' + (a.community
+        ? 'A community strategy is a member-authored <b>config</b> — intent rules and a description, '
+          + 'never a dollar figure and never a performance claim. Verified backtests live in the '
+          + '<a href="/dashboard#lab">Lab</a>; verified live ranks on the <a href="/leaderboard">leaderboard</a>. '
+          + 'Nothing here is financial advice.'
+        : 'Every RUNECLAW agent is one of the engine\'s real strategies, backtested on '
+          + 'frozen, content-hashed benchmark data — percent and ratio only, never a dollar figure. '
+          + 'Reproduce the identical backtest yourself in the Lab, or watch verified live ranks on the '
+          + '<a href="/leaderboard">leaderboard</a>. Nothing here is financial advice.') + '</p>'
       + '</article>';
     var sb = document.getElementById('shareBtn');
     if (sb) sb.addEventListener('click', function () {
@@ -132,17 +170,25 @@
     });
   }
 
+  function notFound() {
+    root.innerHTML = '<div class="empty">No strategy named “' + esc(slug) + '”. '
+      + 'See the <a href="/dashboard#agents">full catalogue</a>.</div>';
+  }
+  // Try the engine catalogue first, then fall back to a published community
+  // strategy — the same slug space serves both.
   fetch('/api/public/strategies', { headers: { Accept: 'application/json' } })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
       var agents = (d && d.agents) || [];
       var a = agents.filter(function (x) { return String(x.id).toLowerCase() === slug; })[0];
-      if (!a) { root.innerHTML = '<div class="empty">No agent named “' + esc(slug) + '”. '
-        + 'See the <a href="/dashboard#agents">full catalogue</a>.</div>'; return; }
-      render(a);
+      if (a) { render(a); return; }
+      fetch('/api/public/user-strategies/' + encodeURIComponent(slug), { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (cd) { if (cd && cd.agent) render(cd.agent); else notFound(); })
+        .catch(function () { notFound(); });
     })
     .catch(function () {
-      root.innerHTML = '<div class="empty">The agent catalogue is unavailable right now. '
+      root.innerHTML = '<div class="empty">The catalogue is unavailable right now. '
         + 'Try the <a href="/dashboard#agents">app</a>.</div>';
     });
 })();

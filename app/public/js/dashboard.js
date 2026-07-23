@@ -4885,7 +4885,8 @@
         ${a.tagline ? `<p class="small" style="color:var(--text-2);margin:0">${esc(a.tagline)}</p>` : ''}
         ${a.how ? `<p class="small muted" style="margin:0"><b>How it trades:</b> ${esc(a.how)}</p>` : ''}
         ${tags ? `<div class="row" style="gap:5px;flex-wrap:wrap">${tags}</div>` : ''}
-        <div class="row" style="gap:5px;flex-wrap:wrap">${chips}</div></article>`;
+        <div class="row" style="gap:5px;flex-wrap:wrap">${chips}</div>
+        <a class="small" href="/agents/${encodeURIComponent(a.slug || a.id)}" style="margin-top:auto">Open shareable page →</a></article>`;
     }
     async function loadCommunity() {
       const panel = document.getElementById('p-community'), host = document.getElementById('c-community');
