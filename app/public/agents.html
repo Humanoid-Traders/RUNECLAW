@@ -41,6 +41,11 @@
   .ag-card .go { color: var(--gold-bright); font-size: var(--fs-sm); margin-top: var(--s3); }
   .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s5); }
   .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
+  .ag-controls { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; margin: 0 0 var(--s4); }
+  .ag-controls input, .ag-controls select { background: var(--surface); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 11px; font: inherit; font-size: var(--fs-sm); }
+  .ag-controls input { flex: 1 1 220px; min-width: 0; }
+  .ag-controls input:focus, .ag-controls select:focus { outline: none; border-color: var(--gold-bright); }
+  .ag-count { color: var(--text-3); font-size: var(--fs-xs); margin-left: auto; font-variant-numeric: tabular-nums; }
   @media (prefers-reduced-motion: reduce) { .ag-card { transition: none; } .ag-card:hover, .ag-card:focus-visible { transform: none; } }
 </style>
 </head>
@@ -89,15 +94,71 @@
       + mx + '<div class="go">View agent →</div></a>';
   }
 
+  var num = function (v) { return v == null || isNaN(v) ? null : Number(v); };
+  var metric = function (a, key) { return num(a.scorecard && a.scorecard.metrics && a.scorecard.metrics[key]); };
+
+  // Sorters. Missing metrics sink to the bottom on numeric sorts so agents with
+  // a verified backtest lead; name is the stable tiebreaker and default.
+  var sorters = {
+    name: function (x, y) { return String(x.name || '').localeCompare(String(y.name || '')); },
+    return: function (x, y) { return desc(metric(x, 'total_return_pct'), metric(y, 'total_return_pct')); },
+    win: function (x, y) { return desc(metric(x, 'win_rate'), metric(y, 'win_rate')); },
+    pf: function (x, y) { return desc(metric(x, 'profit_factor'), metric(y, 'profit_factor')); },
+  };
+  function desc(a, b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1; if (b == null) return -1;   // nulls last
+    return b - a;
+  }
+
+  var all = [];
+  function regimes() {
+    var seen = {};
+    all.forEach(function (a) { if (a.regime) seen[a.regime] = true; });
+    return Object.keys(seen).sort();
+  }
+
+  function render() {
+    var q = (document.getElementById('ag-q').value || '').trim().toLowerCase();
+    var reg = document.getElementById('ag-reg').value;
+    var sort = document.getElementById('ag-sort').value;
+    var list = all.filter(function (a) {
+      if (reg && String(a.regime || '') !== reg) return false;
+      if (!q) return true;
+      return (String(a.name || '') + ' ' + String(a.tagline || '') + ' ' + String(a.regime || ''))
+        .toLowerCase().indexOf(q) !== -1;
+    });
+    list.sort(sorters[sort] || sorters.name);
+    var grid = document.getElementById('ag-grid');
+    var count = document.getElementById('ag-count');
+    count.textContent = list.length + (list.length === 1 ? ' agent' : ' agents');
+    grid.innerHTML = list.length
+      ? list.map(card).join('')
+      : '<div class="empty">No agents match — clear the search or filter.</div>';
+  }
+
   fetch('/api/public/strategies', { headers: { Accept: 'application/json' } })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
-      var agents = (d && d.agents) || [];
-      if (!agents.length) { root.innerHTML = '<div class="empty">The catalogue is unavailable right now — try the <a href="/dashboard#agents">app</a>.</div>'; return; }
-      root.innerHTML = '<div class="ag-grid">' + agents.map(card).join('') + '</div>'
+      all = (d && d.agents) || [];
+      if (!all.length) { root.innerHTML = '<div class="empty">The catalogue is unavailable right now — try the <a href="/dashboard#agents">app</a>.</div>'; return; }
+      var regOpts = regimes().map(function (r) { return '<option value="' + esc(r) + '">' + esc(r) + '</option>'; }).join('');
+      root.innerHTML =
+        '<div class="ag-controls">'
+        + '<input id="ag-q" type="search" placeholder="Search agents…" aria-label="Search agents" autocomplete="off">'
+        + '<select id="ag-reg" aria-label="Filter by regime"><option value="">All regimes</option>' + regOpts + '</select>'
+        + '<select id="ag-sort" aria-label="Sort agents">'
+        + '<option value="return">Top return</option><option value="win">Win rate</option>'
+        + '<option value="pf">Profit factor</option><option value="name">Name (A–Z)</option></select>'
+        + '<span class="ag-count" id="ag-count"></span></div>'
+        + '<div class="ag-grid" id="ag-grid"></div>'
         + '<p class="disc">Nothing here is financial advice. Verified live ranks are on the '
         + '<a href="/leaderboard">leaderboard</a>; every backtest is reproducible in the '
         + '<a href="/dashboard#lab">Strategy Lab</a>.</p>';
+      document.getElementById('ag-q').addEventListener('input', render);
+      document.getElementById('ag-reg').addEventListener('change', render);
+      document.getElementById('ag-sort').addEventListener('change', render);
+      render();
     })
     .catch(function () {
       root.innerHTML = '<div class="empty">The catalogue is unavailable right now — try the <a href="/dashboard#agents">app</a>.</div>';

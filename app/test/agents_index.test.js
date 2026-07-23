@@ -26,8 +26,26 @@ test('bare /agents is routed BEFORE /agents/:slug (else it is captured as a slug
 
 test('the directory renders every agent from the public catalogue, linking to each slug', () => {
   assert.match(html, /fetch\('\/api\/public\/strategies'/);
-  assert.match(html, /agents\.map\(card\)/);
+  assert.match(html, /list\.map\(card\)/);
   assert.match(html, /href="\/agents\/' \+ encodeURIComponent\(a\.id\)/);
+});
+
+test('the directory offers search, regime filter, and sort controls', () => {
+  assert.match(html, /id="ag-q"/);       // search box
+  assert.match(html, /id="ag-reg"/);     // regime filter
+  assert.match(html, /id="ag-sort"/);    // sort select
+  // wired to a re-render on interaction
+  assert.match(html, /addEventListener\('input', render\)/);
+  assert.match(html, /addEventListener\('change', render\)/);
+  // the four sort modes exist
+  ['return', 'win', 'pf', 'name'].forEach(function (k) {
+    assert.ok(new RegExp("sorters\\." + k + "\\b|value=\"" + k + "\"").test(html), 'sort mode ' + k);
+  });
+});
+
+test('numeric sorts sink agents with no verified metric to the bottom (nulls last)', () => {
+  // the desc() comparator must place null metrics after real ones
+  assert.match(html, /if \(a == null\) return 1; if \(b == null\) return -1;/);
 });
 
 test('§4: the directory shows percent/ratio only — no dollar figure', () => {
