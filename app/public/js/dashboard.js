@@ -912,8 +912,8 @@
         </section>
         <section class="panel" id="p-radar3d"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Sector sweep — live 3D radar
           <span class="badge" style="margin-left:auto" title="Live tokens plotted by momentum &amp; volume on a tilted radar, swept in real time. Visualization only — it never trades.">read-only</span></h2>
-          <canvas id="radar3dCanvas" style="width:100%;height:264px;display:block"></canvas>
-          <p class="small muted" id="radar3dLegend" style="margin-top:var(--s2)">Each blip is a live token — angle by sector, distance by 24h volume, colour by direction. The beam lights them as it passes.</p>
+          <canvas id="radar3dCanvas" style="width:100%;height:320px;display:block"></canvas>
+          <p class="small muted" id="radar3dLegend" style="margin-top:var(--s2)">Each blip is a live token — angle by sector, distance by 24h volume, height by 24h momentum, colour by direction. The plane orbits, the beam sweeps, and strong movers ping on contact. Hover a blip to name it.</p>
         </section>
         <section class="panel" id="p-rwa"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>RWA &amp; on-chain radar
           <span class="badge" style="margin-left:auto" title="Market intelligence from live venue tickers — the radar never trades">read-only</span></h2>
@@ -996,7 +996,7 @@
         cats.forEach((c) => (c.tokens || []).forEach((t) => { maxVol = Math.max(maxVol, Number(t.volume_24h_usd) || 0); }));
         cats.forEach((c, ci) => {
           const base = cats.length ? ci / cats.length : 0;
-          (c.tokens || []).slice(0, 8).forEach((t, ti, arr) => {
+          (c.tokens || []).slice(0, 10).forEach((t, ti, arr) => {
             const jitter = arr.length > 1 ? (ti / arr.length) * (1 / Math.max(1, cats.length)) : 0;
             const vol = Number(t.volume_24h_usd) || 0;
             const chg = Number(t.change_24h_pct) || 0;
@@ -1005,6 +1005,8 @@
               angle: (base + jitter) % 1,
               radius: 0.28 + 0.66 * Math.sqrt(vol / maxVol),
               intensity: Math.max(0.2, Math.min(1, Math.abs(chg) / 8)),
+              // Height off the plane = 24h momentum magnitude → big movers rise.
+              elev: Math.max(0.12, Math.min(1, Math.abs(chg) / 6)),
               up: chg >= 0,
             });
           });
@@ -1012,7 +1014,7 @@
         if (_radar3d) _radar3d.update(pts);
         const legend = document.getElementById('radar3dLegend');
         if (legend && pts.length) {
-          legend.textContent = `${pts.length} live tokens across ${cats.length} sectors · green = up, red = down over 24h · distance = 24h volume. Visualization only — it never trades.`;
+          legend.textContent = `${pts.length} live tokens across ${cats.length} sectors · green = up, red = down over 24h · distance = volume · height = momentum · hover to name. Visualization only — it never trades.`;
         }
       } catch (_) { /* radar is decorative — never block the view */ }
     })();
