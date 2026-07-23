@@ -259,6 +259,27 @@ router.get('/strengthmap', async (req, res) => {
   }
 });
 
+// GET /api/market/sentinel — Systemic Risk Sentinel: a market-wide crowding /
+// herding read over the whole USDT-perp universe from public data. Heuristic
+// flags, never a verdict (§4). Its own ΔOI snapshot so its surge read is stable.
+const { buildSentinel } = require('../lib/sentinel');
+let _sentinelOi = null;
+router.get('/sentinel', async (req, res) => {
+  try {
+    const raw = await cached('tickers', 5000, () =>
+      fetchJSON('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES')
+    )();
+    const tickers = (raw && Array.isArray(raw.data)) ? raw.data : [];
+    if (!tickers.length) return res.status(502).json({ error: 'Market data unavailable' });
+    const { coins, oiSnapshot } = buildStrengthMap(tickers, _sentinelOi, 400);
+    _sentinelOi = oiSnapshot;
+    res.setHeader('Cache-Control', 'public, max-age=15');
+    res.json(buildSentinel(coins, Date.now()));
+  } catch (err) {
+    res.status(502).json({ error: 'Sentinel unavailable' });
+  }
+});
+
 // GET /api/market/venues/:base — CEX + DEX venues where a coin is tradeable, as
 // deep links, for the Strength Map's "open the trade" picker. Recommendations
 // only; RUNECLAW never auto-routes an order.
