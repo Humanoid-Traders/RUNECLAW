@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Strategy Agent</title>
+<meta name="description" content="A RUNECLAW Strategy Agent: a real engine preset with a verified, reproducible backtest — design and regime only, percent/ratio never dollars. Follow it, reproduce its numbers in the Lab, or ask it anything.">
+<!-- Social share cards: absolute URLs — unfurlers ignore relative og:image. -->
+<meta property="og:title" content="RUNECLAW — Strategy Agent">
+<meta property="og:description" content="A real engine preset with a verified, reproducible backtest. Follow it, reproduce its numbers in the Lab, or ask it anything.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/agents">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Strategy Agent">
+<meta name="twitter:description" content="A real engine preset with a verified, reproducible backtest. Follow it, reproduce its numbers in the Lab, or ask it anything.">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  /* Page-local composition only — tokens/components come from styles.css */
+  .sa-wrap { max-width: 760px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); }
+  .topnav a:hover { color: var(--text-1); }
+  .spacer { flex: 1; }
+  .sa-card { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--gold-bright); border-radius: var(--radius); padding: var(--s5); margin-bottom: var(--s4); }
+  .sa-head { display: flex; gap: var(--s3); align-items: center; }
+  .sa-head .icon-emoji { font-size: 40px; line-height: 1; }
+  .sa-head h1 { font-family: var(--font-display); letter-spacing: .04em; font-size: clamp(24px, 4vw, 34px); margin: 0; }
+  .tagline { color: var(--text-2); margin: var(--s2) 0 0; }
+  .how { color: var(--text-2); font-size: var(--fs-sm); margin: var(--s3) 0 0; }
+  .how b { color: var(--text-1); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: var(--s3) 0 0; }
+  .chip { display: inline-flex; align-items: center; font-size: var(--fs-xs); padding: 3px 10px; border-radius: 999px; font-family: var(--font-data); background: var(--surface-2); color: var(--text-2); border: 1px solid var(--line-2); }
+  .sc { border-top: 1px solid var(--line); margin-top: var(--s4); padding-top: var(--s4); }
+  .sc-grid { display: flex; gap: var(--s4); flex-wrap: wrap; }
+  .sc-tile { min-width: 84px; }
+  .sc-tile .k { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); }
+  .sc-tile .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: var(--fs-lg); font-weight: 600; }
+  .v.up { color: var(--up); } .v.down { color: var(--down); }
+  .prov { font-size: 10px; color: var(--text-3); margin: var(--s2) 0 0; }
+  .lowchip { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 999px; background: var(--warn-dim); color: var(--warn); margin-top: 6px; }
+  .cta-row { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s4); }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); }
+  .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
+</style>
+</head>
+<body>
+<div class="sa-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span class="spacer"></span>
+    <a href="/dashboard#agents">All agents</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/proof">Proof of PnL</a>
+  </nav>
+
+  <div id="sa-root"><div class="empty">Loading strategy agent…</div></div>
+</div>
+
+<script>
+(function () {
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  };
+  var pct = function (v) { return v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%'; };
+  var num = function (v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 2 : d); };
+  var cls = function (v) { return v == null ? '' : (Number(v) >= 0 ? 'up' : 'down'); };
+  var root = document.getElementById('sa-root');
+
+  // Slug is the last path segment of /agents/<slug>.
+  var parts = location.pathname.split('/').filter(Boolean);
+  var slug = decodeURIComponent(parts[parts.length - 1] || '').toLowerCase();
+  if (slug === 'agents' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
+    root.innerHTML = '<div class="empty">Pick an agent from the <a href="/dashboard#agents">catalogue</a>.</div>';
+    return;
+  }
+
+  function scoreBlock(sc) {
+    if (!sc || !sc.metrics) {
+      return '<div class="sc"><p class="prov">Verified backtest pending — run it in the '
+        + '<a href="/dashboard#lab">Lab</a>.</p></div>';
+    }
+    var m = sc.metrics;
+    var tiles = [
+      ['Return', pct(m.total_return_pct), cls(m.total_return_pct)],
+      ['Profit factor', num(m.profit_factor), cls((m.profit_factor || 1) - 1)],
+      ['Win rate', m.win_rate == null ? '—' : (m.win_rate * 100).toFixed(0) + '%', ''],
+      ['Max DD', m.max_drawdown_pct == null ? '—' : Number(m.max_drawdown_pct).toFixed(2) + '%', 'down'],
+      ['Sharpe', num(m.sharpe_ratio), ''],
+      ['Trades', m.total_trades == null ? '—' : String(m.total_trades), ''],
+    ];
+    var grid = tiles.map(function (t) {
+      return '<div class="sc-tile"><div class="k">' + esc(t[0]) + '</div>'
+        + '<div class="v ' + t[2] + '">' + esc(t[1]) + '</div></div>';
+    }).join('');
+    var low = (m.total_trades != null && m.total_trades < 10)
+      ? '<div class="lowchip">low sample · ' + m.total_trades + ' trades</div>' : '';
+    var prov = 'Frozen backtest · ' + esc(sc.dataset || '') + ' · ' + (sc.bars || '?') + ' bars'
+      + (sc.dataset_hash ? ' · #' + esc(sc.dataset_hash) : '');
+    return '<div class="sc"><div class="sc-grid">' + grid + '</div>' + low
+      + '<p class="prov">' + prov + '</p></div>';
+  }
+
+  function render(a) {
+    var chips = [a.risk_label, a.regime, a.horizon].filter(Boolean)
+      .map(function (c) { return '<span class="chip">' + esc(c) + '</span>'; }).join('');
+    document.title = 'RUNECLAW — ' + a.name;
+    root.innerHTML = '<article class="sa-card">'
+      + '<div class="sa-head"><span class="icon-emoji">' + esc(a.icon || '🤖') + '</span>'
+      + '<div><h1>' + esc(a.name) + '</h1>'
+      + (a.tagline ? '<p class="tagline">' + esc(a.tagline) + '</p>' : '') + '</div></div>'
+      + (a.how ? '<p class="how"><b>How it trades:</b> ' + esc(a.how) + '</p>' : '')
+      + (chips ? '<div class="chips">' + chips + '</div>' : '')
+      + scoreBlock(a.scorecard)
+      + '<div class="cta-row">'
+      + '<a class="btn btn--primary btn--sm" href="/dashboard#agents">Follow &amp; reproduce in the app</a>'
+      + '<button class="btn btn--sm" id="shareBtn" type="button">Share</button>'
+      + '</div>'
+      + '<p class="disc">Every RUNECLAW agent is one of the engine\'s real strategies, backtested on '
+      + 'frozen, content-hashed benchmark data — percent and ratio only, never a dollar figure. '
+      + 'Reproduce the identical backtest yourself in the Lab, or watch verified live ranks on the '
+      + '<a href="/leaderboard">leaderboard</a>. Nothing here is financial advice.</p>'
+      + '</article>';
+    var sb = document.getElementById('shareBtn');
+    if (sb) sb.addEventListener('click', function () {
+      var url = location.href;
+      var data = { title: 'RUNECLAW — ' + a.name, text: a.tagline || a.name, url: url };
+      if (navigator.share) { navigator.share(data).catch(function () {}); }
+      else if (navigator.clipboard) { navigator.clipboard.writeText(url).then(function () {
+        sb.textContent = 'Link copied'; setTimeout(function () { sb.textContent = 'Share'; }, 1500);
+      }).catch(function () {}); }
+    });
+  }
+
+  fetch('/api/public/strategies', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      var agents = (d && d.agents) || [];
+      var a = agents.filter(function (x) { return String(x.id).toLowerCase() === slug; })[0];
+      if (!a) { root.innerHTML = '<div class="empty">No agent named “' + esc(slug) + '”. '
+        + 'See the <a href="/dashboard#agents">full catalogue</a>.</div>'; return; }
+      render(a);
+    })
+    .catch(function () {
+      root.innerHTML = '<div class="empty">The agent catalogue is unavailable right now. '
+        + 'Try the <a href="/dashboard#agents">app</a>.</div>';
+    });
+})();
+</script>
+</body>
+</html>

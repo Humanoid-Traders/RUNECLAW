@@ -4709,7 +4709,8 @@
         return `<article class="panel" style="border-top:3px solid ${border};display:flex;flex-direction:column;gap:var(--s2)">
           <div class="row" style="gap:var(--s2);align-items:center">
             <span style="font-size:26px;line-height:1">${esc(a.icon || '🤖')}</span>
-            <div style="min-width:0"><b style="font-size:var(--fs-lg)">${esc(a.name)}</b></div>
+            <div style="min-width:0"><b style="font-size:var(--fs-lg)">${esc(a.name)}</b>
+              <a href="/agents/${esc(a.id)}" title="Public shareable page" style="margin-left:6px;font-size:var(--fs-sm);color:var(--text-3)" aria-label="Public page for ${esc(a.name)}">↗</a></div>
           </div>
           ${a.tagline ? `<p class="small" style="color:var(--text-2)">${esc(a.tagline)}</p>` : ''}
           <p class="small muted" style="margin:0"><b>How it trades:</b> ${esc(a.how)}</p>
