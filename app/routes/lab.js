@@ -75,6 +75,13 @@ router.post('/run', async (req, res) => {
     confidence_threshold: parseFloat(b.confidence_threshold) || 0,
     balance: parseFloat(b.balance) || 10000,
   };
+  // Optional preset entry gates (marketplace "Reproduce in Lab"). Forwarded only
+  // when present; the bridge validates/clamps them. Omitted -> a normal run.
+  if (b.volume_spike_min != null && b.volume_spike_min !== '') {
+    body.volume_spike_min = parseFloat(b.volume_spike_min);
+  }
+  if (b.regime_filter) body.regime_filter = String(b.regime_filter).slice(0, 20);
+  if (b.rsi_max != null && b.rsi_max !== '') body.rsi_max = parseFloat(b.rsi_max);
   const r = await relay('POST', '/lab/run', body);
   res.status(r.status).json(r.data);
 });

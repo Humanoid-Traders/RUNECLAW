@@ -4519,7 +4519,36 @@
       }
       const agents = (r.ok && r.data && r.data.agents) || [];
       if (!agents.length) return null;
+      agentCards = agents;
       const note = (r.data && r.data.note) || '';
+      // Verified frozen-benchmark scorecard block (percent/ratio only, §4). Low
+      // trade counts are flagged so a sparse PF isn't read as a real edge.
+      const scPct = v => (v == null ? '—' : `${v >= 0 ? '+' : ''}${(+v).toFixed(2)}%`);
+      const scNum = (v, d = 2) => (v == null ? '—' : (+v).toFixed(d));
+      function scoreBlock(sc) {
+        if (!sc || !sc.metrics) {
+          return `<p class="small muted" style="margin:0">Verified backtest pending — run it in the <a href="#lab">Lab</a>.</p>`;
+        }
+        const m = sc.metrics;
+        const tiles = [
+          ['Return', scPct(m.total_return_pct), pnlClass(m.total_return_pct)],
+          ['Profit factor', scNum(m.profit_factor), pnlClass((m.profit_factor || 1) - 1)],
+          ['Win rate', m.win_rate == null ? '—' : `${(m.win_rate * 100).toFixed(0)}%`, ''],
+          ['Max DD', m.max_drawdown_pct == null ? '—' : `${(+m.max_drawdown_pct).toFixed(2)}%`, 'neg'],
+          ['Sharpe', scNum(m.sharpe_ratio), ''],
+          ['Trades', m.total_trades == null ? '—' : String(m.total_trades), ''],
+        ];
+        const grid = tiles.map(([k, v, cls]) => `
+          <div style="min-width:70px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em">${k}</div>
+            <div class="num ${cls || ''}" style="font-size:var(--fs-md);font-weight:600">${v}</div></div>`).join('');
+        const low = (m.total_trades != null && m.total_trades < 10)
+          ? `<div class="chip chip--warn" style="font-size:10px;margin-top:4px">low sample · ${m.total_trades} trades</div>` : '';
+        const prov = `Frozen backtest · ${esc(sc.dataset || '')} · ${sc.bars || '?'} bars${sc.dataset_hash ? ` · #${esc(sc.dataset_hash)}` : ''}`;
+        const unmodeled = (sc.unmodeled && sc.unmodeled.length)
+          ? ` · exit mults not modeled (${sc.unmodeled.map(esc).join(', ')})` : '';
+        return `<div class="row" style="gap:var(--s3);flex-wrap:wrap">${grid}</div>${low}
+          <p class="muted" style="font-size:10px;margin:4px 0 0">${prov}${unmodeled}</p>`;
+      }
       const cards = agents.map(a => {
         const border = _riskBorder[a.risk] || 'var(--gold-bright)';
         const chips = [
@@ -4527,6 +4556,7 @@
           a.regime ? `<span class="chip" style="font-size:11px">${esc(a.regime)}</span>` : '',
           a.horizon ? `<span class="chip" style="font-size:11px">${esc(a.horizon)}</span>` : '',
         ].filter(Boolean).join('');
+        const hasSc = !!(a.scorecard && a.scorecard.metrics);
         return `<article class="panel" style="border-top:3px solid ${border};display:flex;flex-direction:column;gap:var(--s2)">
           <div class="row" style="gap:var(--s2);align-items:center">
             <span style="font-size:26px;line-height:1">${esc(a.icon || '🤖')}</span>
@@ -4535,26 +4565,50 @@
           ${a.tagline ? `<p class="small" style="color:var(--text-2)">${esc(a.tagline)}</p>` : ''}
           <p class="small muted" style="margin:0"><b>How it trades:</b> ${esc(a.how)}</p>
           <div class="row" style="gap:6px;flex-wrap:wrap">${chips}</div>
+          <div style="border-top:1px solid rgba(128,128,128,.15);padding-top:var(--s2)">${scoreBlock(a.scorecard)}</div>
           <div class="row mt-2" style="gap:var(--s2);flex-wrap:wrap;margin-top:auto">
-            <button class="btn btn--primary btn--sm" data-agentlab="${esc(a.id)}" type="button">Backtest in Lab</button>
+            <button class="btn btn--primary btn--sm" data-agentlab="${esc(a.id)}" type="button">${hasSc ? 'Reproduce in Lab' : 'Backtest in Lab'}</button>
             <button class="btn btn--ghost btn--sm" data-agentask="${esc(a.name)}" type="button">Ask the agent</button>
           </div>
         </article>`;
       }).join('');
-      return `<div class="grid-cards" style="display:grid;gap:var(--s3);grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">${cards}</div>
+      return `<div class="grid-cards" style="display:grid;gap:var(--s3);grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">${cards}</div>
         ${note ? `<p class="muted small mt-3">${esc(note)}</p>` : ''}
-        <p class="muted small mt-1">Every agent is one of the engine's real strategies. Returns are never claimed here — run any of them on frozen benchmark data in the <a href="#lab">Strategy Lab</a> to see honest percent/ratio results, or watch verified ranks on the <a href="#leaderboard">leaderboard</a>.</p>`;
+        <p class="muted small mt-1">Every agent is one of the engine's real strategies, backtested on frozen, content-hashed benchmark data — percent/ratio only, never a dollar figure. Hit <b>Reproduce in Lab</b> to re-run the identical backtest yourself, or watch verified live ranks on the <a href="#leaderboard">leaderboard</a>.</p>`;
     }, { errorText: 'The agent catalogue is unavailable right now.' });
 
     onView('click', (e) => {
       const lab = e.target.closest('[data-agentlab]');
-      if (lab) { showView('lab'); return; }
+      if (lab) {
+        // Reproduce the agent's EXACT scorecard gates in the Lab so the card's
+        // numbers are verifiable in place; fall back to just opening the Lab.
+        const a = (agentCards || []).find(x => x.id === lab.dataset.agentlab);
+        const sc = a && a.scorecard;
+        if (sc && sc.gates && sc.dataset) {
+          _labReproduce = {
+            _agent: a.name,
+            body: {
+              dataset: sc.dataset,
+              symbols: sc.symbols || [],
+              last_bars: sc.bars || 1500,
+              confidence_threshold: sc.gates.confidence_threshold || 0,
+              volume_spike_min: sc.gates.volume_spike_min,
+              regime_filter: sc.gates.regime_filter || '',
+              rsi_max: sc.gates.rsi_max,
+            },
+          };
+        }
+        showView('lab');
+        return;
+      }
       const ask = e.target.closest('[data-agentask]');
       if (ask && window.RCChat) {
         window.RCChat.ask(`How does the "${ask.dataset.agentask}" strategy agent work, and what market conditions suit it?`);
       }
     });
   }
+  let agentCards = [];       // last-rendered agent catalogue (for Reproduce lookup)
+  let _labReproduce = null;  // stashed {_agent, body} for the Lab to auto-run
 
   async function renderLeaderboard() {
     container.innerHTML = viewHead('Leaderboard', 'Opt-in ranks by return % — anonymous handles, no dollar amounts');
@@ -4710,45 +4764,69 @@
     onView('change', (e) => { if (e.target.id === 'labDs') fillSyms(); });
 
     let pollTimer = null;
+    // Submit a backtest and poll to completion. Shared by the form's Run button
+    // and the marketplace "Reproduce in Lab" flow (which passes a body built
+    // from the agent's exact scorecard gates), so both take the identical path.
+    async function submitLabRun(body, msg, btn) {
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = 'Submitting…';
+      const r = await fetchJSON('/api/lab/run', { method: 'POST', timeoutMs: 16000, body });
+      if (!r.ok) {
+        if (btn) btn.disabled = false;
+        if (msg) msg.textContent = r.data?.detail || r.data?.error || 'Could not start the run.';
+        return;
+      }
+      const jobId = r.data.job_id;
+      const started = Date.now();
+      if (msg) msg.textContent = 'Running…';
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        if (!document.getElementById('p-labres')) { clearInterval(pollTimer); pollTimer = null; return; }
+        const st = await fetchJSON(`/api/lab/status/${jobId}`, { timeoutMs: 16000 });
+        if (!st.ok) return;
+        const s = st.data;
+        if (s.status === 'running') {
+          if (msg) msg.textContent = `Running… ${Math.round((Date.now() - started) / 1000)}s (analyzing every bar, be patient)`;
+          return;
+        }
+        clearInterval(pollTimer); pollTimer = null;
+        if (btn) btn.disabled = false;
+        if (s.status === 'error') { if (msg) msg.textContent = s.error || 'Run failed.'; return; }
+        if (msg) msg.textContent = 'Done.';
+        drawLabResult(s.result, s.params);
+      }, 3000);
+    }
+
     onView('click', async (e) => {
       if (e.target.id !== 'labRun') return;
       const msg = document.getElementById('labMsg');
       const syms = [...document.querySelectorAll('#labSyms input:checked')].map(i => i.value).slice(0, 4);
       if (!syms.length) { msg.textContent = 'Pick at least one symbol.'; return; }
-      e.target.disabled = true;
-      msg.textContent = 'Submitting…';
-      const r = await fetchJSON('/api/lab/run', { method: 'POST', timeoutMs: 16000, body: {
+      submitLabRun({
         dataset: document.getElementById('labDs').value,
         symbols: syms,
         last_bars: parseInt(document.getElementById('labBars').value, 10),
         confidence_threshold: parseFloat(document.getElementById('labConf').value),
         balance: parseFloat(document.getElementById('labBal').value) || 10000,
-      }});
-      if (!r.ok) {
-        e.target.disabled = false;
-        msg.textContent = r.data?.detail || r.data?.error || 'Could not start the run.';
-        return;
-      }
-      const jobId = r.data.job_id;
-      const started = Date.now();
-      msg.textContent = 'Running…';
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(async () => {
-        if (!document.getElementById('labMsg')) { clearInterval(pollTimer); pollTimer = null; return; }
-        const st = await fetchJSON(`/api/lab/status/${jobId}`, { timeoutMs: 16000 });
-        if (!st.ok) return;
-        const s = st.data;
-        if (s.status === 'running') {
-          msg.textContent = `Running… ${Math.round((Date.now() - started) / 1000)}s (analyzing every bar, be patient)`;
-          return;
-        }
-        clearInterval(pollTimer); pollTimer = null;
-        e.target.disabled = false;
-        if (s.status === 'error') { msg.textContent = s.error || 'Run failed.'; return; }
-        msg.textContent = 'Done.';
-        drawLabResult(s.result, s.params);
-      }, 3000);
+      }, msg, e.target);
     });
+
+    // Marketplace "Reproduce in Lab": if an agent stashed its exact scorecard
+    // gates, run that identical backtest immediately so the card's numbers are
+    // verifiable in place. Cleared on use so a later manual Lab visit is normal.
+    if (_labReproduce) {
+      const rep = _labReproduce; _labReproduce = null;
+      const host = C('labform');
+      if (host) {
+        const banner = document.createElement('p');
+        banner.className = 'small mt-2';
+        banner.style.color = 'var(--gold-bright)';
+        banner.setAttribute('aria-live', 'polite');
+        banner.textContent = `Reproducing "${rep._agent}" — identical gates on ${rep.body.dataset}. `;
+        host.appendChild(banner);
+        submitLabRun(rep.body, banner, null);
+      }
+    }
 
     function drawLabResult(res, params) {
       const panel = document.getElementById('p-labres');

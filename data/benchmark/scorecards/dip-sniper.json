@@ -1,0 +1,34 @@
+{
+  "agent_id": "dip-sniper",
+  "bars": 1500,
+  "dataset": "majors_1h",
+  "dataset_hash": "8dbe73514ce8d2aeecd767a193c005cd1a179221bdce5df2cbe4ded2886bde36",
+  "engine": "runeclaw.backtest",
+  "format": "runeclaw.agent.scorecard.v1",
+  "gates": {
+    "confidence_threshold": 0.7,
+    "regime_filter": "TREND_DOWN",
+    "rsi_max": 35,
+    "symbols": null,
+    "volume_spike_min": null
+  },
+  "honest": true,
+  "metrics": {
+    "calmar_ratio": -0.74,
+    "max_drawdown_pct": 0.87,
+    "profit_factor": 0.91,
+    "sharpe_ratio": -1.59,
+    "sortino_ratio": -0.7,
+    "total_return_pct": -0.11,
+    "total_trades": 19,
+    "win_rate": 0.4737
+  },
+  "note": "Design backtest on FROZEN benchmark data \u2014 percent/ratio only, never a dollar figure. Re-run the identical backtest in the Strategy Lab to reproduce.",
+  "preset": "dip sniper",
+  "symbols": [
+    "BTC/USDT:USDT",
+    "ETH/USDT:USDT",
+    "SOL/USDT:USDT"
+  ],
+  "unmodeled": []
+}

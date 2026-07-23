@@ -34,13 +34,15 @@ def test_every_card_has_the_marketplace_shape():
 
 
 def test_catalog_is_section4_safe_no_dollar_amounts():
-    import re
     blob = repr(sc.catalog())
     assert "$" not in blob, "no dollar sign may appear in the public catalogue"
-    # No claimed-return phrasing either — the catalogue describes design, not P&L.
+    # No DOLLAR metric keys leak onto a card. (Percent metrics like
+    # total_return_pct and symbols like BTC/USDT are §4-safe — the rule is no
+    # absolute dollar amounts, not "no percentages".)
     lowered = blob.lower()
-    assert not re.search(r"\d[\d,.]*\s*%\s*(return|profit|gain)", lowered)
-    for leaky in ("net_pnl", "return_pct", "usd"):
+    # (Not "balance" — the "🟡 Balanced" risk label legitimately contains it.)
+    for leaky in ("net_pnl", "total_pnl", "final_equity", "avg_win_usd",
+                  "max_drawdown_usd", "'balance'"):
         assert leaky not in lowered
 
 
