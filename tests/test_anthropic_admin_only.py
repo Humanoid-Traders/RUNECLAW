@@ -143,8 +143,15 @@ class TestChatFallbackChainAdminGate:
 
         answer = _run(H._llm_chat(self._stub(), "hello", is_admin=False))
 
-        assert "no llm configured" in answer.lower()
-        create_client_mock.assert_not_called()
+        # With only the admin-only Anthropic key available, a non-admin caller
+        # gets the friendly public fallback — never an Anthropic answer, and
+        # never a leaky internal-config hint (F-15). The security property is
+        # that the admin-only provider was never reached.
+        low = answer.lower()
+        assert "runeclaw" in low                       # the public fallback text
+        assert "no llm configured" not in low          # no raw internal error
+        assert "setllm" not in low and ".env" not in low and "api_key" not in low
+        create_client_mock.assert_not_called()         # admin-only provider untouched
 
     def test_admin_chat_can_use_anthropic_fallback(self, monkeypatch):
         import bot.skills.telegram_handler as th_mod
