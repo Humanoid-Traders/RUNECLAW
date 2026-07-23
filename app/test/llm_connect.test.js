@@ -58,3 +58,15 @@ test('agent hub renders the AI engine panel with connect + ultra hooks', () => {
   // The key input never echoes a stored key back into the DOM.
   assert.match(src, /id="hubLlmKey" type="password"/);
 });
+
+test('AI-6: the panel shows a per-provider cost hint that updates on change', () => {
+  const src = read('public/js/dashboard.js');
+  assert.match(src, /function drawHubLlm\(/);
+  // a hint element + a builder that reads the catalogue cost/speed labels
+  assert.match(src, /id="hubLlmHint"/);
+  assert.match(src, /const provHint = \(pid\) =>/);
+  assert.match(src, /p\.cost_label/);
+  assert.match(src, /p\.speed_label/);
+  // the hint re-renders when the provider select changes
+  assert.match(src, /provSel\.addEventListener\('change'/);
+});

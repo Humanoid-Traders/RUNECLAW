@@ -2126,17 +2126,43 @@ _WEB_LLM_PROVIDERS = ("openai", "anthropic", "gemini", "groq", "mistral",
 _MAX_LLM_KEY_LEN = 512
 
 
+# Human labels for the catalogue's qualitative cost tier — so the BYOK panel
+# can show a user roughly what their own key will cost BEFORE they connect it.
+# Qualitative (not live prices) on purpose: honest and low-maintenance; the
+# per-provider `notes` carry the concrete $/MTok figures for those who want them.
+_LLM_COST_LABEL = {
+    "zero": "free (self-hosted)",
+    "very_low": "very low cost",
+    "low": "low cost",
+    "medium": "mid cost",
+    "high": "premium",
+    "variable": "varies by model",
+}
+_LLM_SPEED_LABEL = {
+    "very_fast": "very fast",
+    "fast": "fast",
+    "medium": "medium",
+    "variable": "varies",
+}
+
+
 def _llm_provider_rows() -> list[dict]:
     from bot.llm.provider import PROVIDER_CATALOG, LLMProvider
     rows = []
     for name in _WEB_LLM_PROVIDERS:
         cat = PROVIDER_CATALOG.get(LLMProvider(name), {})
+        cost = cat.get("cost", "")
+        speed = cat.get("speed", "")
         rows.append({
             "id": name,
             "default_model": cat.get("default_model", ""),
             "free_tier": bool(cat.get("free_tier")),
             "get_key_url": cat.get("get_key_url") or "",
             "notes": cat.get("notes", ""),
+            "cost": cost,
+            "cost_label": _LLM_COST_LABEL.get(cost, ""),
+            "speed": speed,
+            "speed_label": _LLM_SPEED_LABEL.get(speed, ""),
         })
     return rows
 
