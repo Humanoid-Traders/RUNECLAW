@@ -4635,6 +4635,11 @@
     container.innerHTML = viewHead('Strategy Agents',
       'Browse the engine\'s strategy agents — each one real, backtestable, and honest');
     container.insertAdjacentHTML('beforeend', `
+      ${LOGGED_IN ? `<section class="panel" id="p-agentpicks" hidden>
+        <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Following — live picks
+          <span class="right muted small">what your followed agents would trade now · paper-only</span></h2>
+        <div id="c-agentpicks"></div>
+      </section>` : ''}
       <section class="panel" id="p-agents">
         <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>The lineup
           <span class="right muted small">real presets · design &amp; regime only · verified % in the Lab</span></h2>
@@ -4650,6 +4655,14 @@
       const agents = (r.ok && r.data && r.data.agents) || [];
       if (!agents.length) return null;
       agentCards = agents;
+      // Which agents does this user follow? (logged-in only; drives the button
+      // state + the live-picks panel below.)
+      if (LOGGED_IN) {
+        try {
+          const fr = await fetchJSON('/api/copy', { timeoutMs: 10000 });
+          _agentFollows = new Set((fr.ok && fr.data && fr.data.following) || []);
+        } catch (_) { _agentFollows = new Set(); }
+      }
       const note = (r.data && r.data.note) || '';
       // Verified frozen-benchmark scorecard block (percent/ratio only, §4). Low
       // trade counts are flagged so a sparse PF isn't read as a real edge.
@@ -4698,6 +4711,7 @@
           <div style="border-top:1px solid rgba(128,128,128,.15);padding-top:var(--s2)">${scoreBlock(a.scorecard)}</div>
           <div class="row mt-2" style="gap:var(--s2);flex-wrap:wrap;margin-top:auto">
             <button class="btn btn--primary btn--sm" data-agentlab="${esc(a.id)}" type="button">${hasSc ? 'Reproduce in Lab' : 'Backtest in Lab'}</button>
+            ${LOGGED_IN ? `<button class="btn btn--sm ${_agentFollows.has(a.id) ? 'btn--ghost' : ''}" data-agentfollow="${esc(a.id)}" type="button">${_agentFollows.has(a.id) ? '✓ Following' : '+ Follow'}</button>` : ''}
             <button class="btn btn--ghost btn--sm" data-agentask="${esc(a.name)}" type="button">Ask the agent</button>
           </div>
         </article>`;
@@ -4707,7 +4721,68 @@
         <p class="muted small mt-1">Every agent is one of the engine's real strategies, backtested on frozen, content-hashed benchmark data — percent/ratio only, never a dollar figure. Hit <b>Reproduce in Lab</b> to re-run the identical backtest yourself, or watch verified live ranks on the <a href="#leaderboard">leaderboard</a>.</p>`;
     }, { errorText: 'The agent catalogue is unavailable right now.' });
 
-    onView('click', (e) => {
+    // Live "would-take" picks for the agents this user follows. Paper-only: each
+    // pick reuses the standard one-tap paper-trade prefill (data-ptrade) — the
+    // user reviews and places every trade; nothing is auto-executed.
+    async function loadAgentPicks() {
+      if (!LOGGED_IN) return;
+      const panel = document.getElementById('p-agentpicks');
+      const host = document.getElementById('c-agentpicks');
+      if (!panel || !host) return;
+      if (!_agentFollows.size) { panel.hidden = true; return; }
+      panel.hidden = false;
+      host.innerHTML = '<div class="skel"></div>';
+      let d = null;
+      try { const r = await fetchJSON('/api/copy/picks', { timeoutMs: 16000 }); d = r.ok ? r.data : null; } catch (_) {}
+      const groups = (d && d.agents) || [];
+      if (!groups.length) { panel.hidden = true; return; }
+      const blocks = groups.map(g => {
+        const head = `<div class="row" style="gap:8px;align-items:center;margin:var(--s2) 0 6px">
+            <span style="font-size:18px">${esc(g.icon || '🤖')}</span><b>${esc(g.name)}</b>
+            <button class="btn btn--ghost btn--sm" data-agentunfollow="${esc(g.id)}" type="button" style="margin-left:auto">Unfollow</button></div>`;
+        if (g.unavailable) return head + `<p class="small muted">Gates unavailable — the catalogue bridge is offline.</p>`;
+        if (!g.picks || !g.picks.length) {
+          return head + `<p class="small muted">No live signal matches this agent's gates right now${g.matched_on && g.matched_on.length ? ` (matched on ${g.matched_on.map(esc).join(', ')})` : ''}.</p>`;
+        }
+        const rows = g.picks.map(s => {
+          const up = String(s.direction || '').toUpperCase() === 'LONG';
+          const pt = esc(JSON.stringify({ d: s.direction, sy: s.symbol, e: s.entry_price, sl: s.stop_loss, tp: s.take_profit }));
+          return `<div class="row" style="gap:8px;align-items:center;padding:5px 0;border-top:1px solid rgba(128,128,128,.12)">
+              <b>${esc(String(s.symbol || '').replace(/[:/].*$/, ''))}</b>
+              <span class="chip ${up ? 'chip--up' : 'chip--down'}" style="font-size:10px">${up ? 'LONG' : 'SHORT'}</span>
+              <span class="muted small">conf ${s.confidence != null ? (Number(s.confidence) * 100).toFixed(0) + '%' : '—'}${s.regime ? ' · ' + esc(s.regime) : ''}</span>
+              <button class="btn btn--sm btn--primary" data-ptrade='${pt}' style="margin-left:auto">Paper-trade</button></div>`;
+        }).join('');
+        return head + rows;
+      }).join('');
+      const note = (d && d.note) ? `<p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>` : '';
+      host.innerHTML = blocks + note;
+    }
+    loadAgentPicks();
+
+    onView('click', async (e) => {
+      const foll = e.target.closest('[data-agentfollow]');
+      const unf = e.target.closest('[data-agentunfollow]');
+      if (foll || unf) {
+        const id = (foll || unf).getAttribute(foll ? 'data-agentfollow' : 'data-agentunfollow');
+        const following = foll && !_agentFollows.has(id);   // toggle on the lineup button
+        const path = (following) ? '/api/copy/follow' : '/api/copy/unfollow';
+        const btn = (foll || unf); btn.disabled = true;
+        try {
+          const r = await fetchJSON(path, { method: 'POST', body: { agent_id: id }, timeoutMs: 10000 });
+          if (r.ok && r.data && Array.isArray(r.data.following)) _agentFollows = new Set(r.data.following);
+        } catch (_) {}
+        btn.disabled = false;
+        // Reflect the lineup follow button + refresh the picks panel.
+        const lineupBtn = document.querySelector(`[data-agentfollow="${id}"]`);
+        if (lineupBtn) {
+          const on = _agentFollows.has(id);
+          lineupBtn.textContent = on ? '✓ Following' : '+ Follow';
+          lineupBtn.classList.toggle('btn--ghost', on);
+        }
+        loadAgentPicks();
+        return;
+      }
       const lab = e.target.closest('[data-agentlab]');
       if (lab) {
         // Reproduce the agent's EXACT scorecard gates in the Lab so the card's
@@ -4738,6 +4813,7 @@
     });
   }
   let agentCards = [];       // last-rendered agent catalogue (for Reproduce lookup)
+  let _agentFollows = new Set(); // agent_ids this user follows (copy/follow)
   let _labReproduce = null;  // stashed {_agent, body} for the Lab to auto-run
 
   async function renderLeaderboard() {

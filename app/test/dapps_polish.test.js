@@ -55,6 +55,6 @@ test('the dApp cards stay read-only external links (never connect/sign in-app)',
 });
 
 test('cache-busters were bumped so the dApps/Worlds polish ships', () => {
-  assert.match(html, /dashboard\.js\?v=76/);
+  assert.match(html, /dashboard\.js\?v=(7[6-9]|8\d)/);
   assert.match(html, /styles\.css\?v=18/);
 });

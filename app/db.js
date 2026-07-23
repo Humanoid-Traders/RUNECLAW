@@ -46,6 +46,8 @@ class MemoryDB {
     this.userAlerts = [];     // custom "tell me when…" tripwires
     this._nextAlertId = 1;
     this.agentLetters = [];   // weekly agent letters (UPSERT-free; one per week_key)
+    this.copySubs = [];       // strategy-agent follows (UNIQUE user_id+agent_id)
+    this._nextCopySubId = 1;
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -196,6 +198,30 @@ class MemoryDB {
       const rows = cmd.includes('WHERE USER_ID')
         ? this.pushSubs.filter(s => s.user_id === params[0])
         : [...this.pushSubs].sort((a, b) => b.id - a.id);
+      return [rows.map(s => ({ ...s })), []];
+    }
+
+    // -- COPY SUBSCRIPTIONS (strategy-agent follows; UNIQUE user_id+agent_id) --
+    if (cmd.includes('INSERT INTO COPY_SUBSCRIPTIONS')) {
+      // params: user_id, agent_id. Idempotent on (user_id, agent_id).
+      if (!this.copySubs.some(s => s.user_id === params[0] && s.agent_id === params[1])) {
+        this.copySubs.push({ id: this._nextCopySubId++, user_id: params[0],
+          agent_id: params[1], created_at: new Date() });
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM COPY_SUBSCRIPTIONS')) {
+      // params: user_id, agent_id (user-scoped unfollow).
+      this.copySubs = this.copySubs.filter(
+        s => !(s.user_id === params[0] && s.agent_id === params[1]));
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM COPY_SUBSCRIPTIONS') && cmd.includes('COUNT(*)')) {
+      return [[{ n: this.copySubs.filter(s => s.user_id === params[0]).length }], []];
+    }
+    if (cmd.includes('FROM COPY_SUBSCRIPTIONS')) {
+      const rows = this.copySubs.filter(s => s.user_id === params[0])
+        .sort((a, b) => a.id - b.id);
       return [rows.map(s => ({ ...s })), []];
     }
 
@@ -973,6 +999,20 @@ async function migrate() {
         keys_json TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_push_user (user_id)
+      )
+    `);
+    // Strategy-Agent follows (Marketplace Phase 3). A user "follows" a listed
+    // agent to surface its live would-take picks and (opt-in) milestone alerts.
+    // Follow-only — nothing here moves real funds; copying is user-initiated and
+    // paper-only via the normal trade ticket. agent_id is a catalogue slug.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS copy_subscriptions (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        agent_id VARCHAR(64) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_copy_user_agent (user_id, agent_id),
+        INDEX idx_copy_user (user_id)
       )
     `);
     // Per-user agent profile: the user's OWN risk preference (display + chat

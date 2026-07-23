@@ -177,6 +177,7 @@ app.use('/api/feed', feedRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/profile', profileRouter);
 app.use('/api/push', require('./routes/push'));
+app.use('/api/copy', require('./routes/copy'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/replay', require('./routes/replay'));
 app.use('/api/letter', require('./routes/letter'));
