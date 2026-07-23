@@ -28,6 +28,19 @@ class BacktestConfig(BaseModel):
     # (--wf-optimize) sweeps this to find the entry cutoff that generalizes OOS,
     # so it must actually filter trades; the engine honors it in _evaluate_bar.
     confidence_threshold: float = 0.0
+    # Preset entry gates (marketplace Strategy-Agent scorecards / replay). All
+    # default OFF (None/"") — an unset gate is a strict no-op, so existing runs
+    # stay byte-identical. When set they mirror the live RunStrategySkill preset
+    # filters so a NAMED agent backtests with its real entry semantics:
+    #   volume_spike_min — require the bar's volume/rolling-avg ratio >= this
+    #     (or the boolean spike flag), matching "momentum hunter" (vol spike > 3x).
+    #   regime_filter — only enter when the analyzer's per-symbol regime equals
+    #     this (e.g. "TREND_DOWN" for "dip sniper", "TREND_UP" for momentum).
+    #   rsi_max — only enter when RSI(14) over the window is <= this (oversold
+    #     dip entry, e.g. "dip sniper" RSI < 35).
+    volume_spike_min: Optional[float] = None
+    regime_filter: str = ""
+    rsi_max: Optional[float] = None
     # Entry fill convention (audit fix #15). "close" = fill at the same bar's
     # close that generated the signal (legacy; optimistic — assumes you can
     # transact at the closing print). "next_open" = queue the approved idea and

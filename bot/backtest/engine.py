@@ -138,6 +138,9 @@ class BacktestEngine:
         self._ideas_generated = 0
         self._ideas_rejected_risk = 0
         self._ideas_rejected_confidence = 0
+        # Preset entry-gate rejections (volume-spike / regime / RSI). 0 unless a
+        # named-agent replay set one of the BacktestConfig gates.
+        self._ideas_rejected_preset = 0
         # Per-gate risk-rejection tally (gate token -> count). Makes A/B
         # path-dependence visible: a diff in the STATEFUL gates below means two
         # runs took a different trade SET (not the parameter under test).
@@ -201,6 +204,55 @@ class BacktestEngine:
         per-run ``confidence_threshold``. ``threshold <= 0`` disables the gate. A
         confidence exactly AT the threshold passes (gate is strict ``<``)."""
         return threshold > 0.0 and float(confidence) < float(threshold)
+
+    def _rejected_by_preset_gate(self, idea, signal, window) -> bool:
+        """True if a named-agent preset gate rejects this entry. Every gate is
+        OFF by default (None/"") so the common path returns False immediately and
+        an unconfigured run is unaffected. When set, each gate mirrors the live
+        ``RunStrategySkill`` preset filter of the same name so a marketplace
+        agent backtests with its REAL entry semantics (see BacktestConfig):
+
+          * ``volume_spike_min`` — require the bar's volume/rolling-avg ratio
+            ``>=`` this, OR the boolean spike flag (matches the live
+            ``volume_spike_ratio >= min or volume_spike`` filter).
+          * ``regime_filter`` — only enter when the analyzer's per-symbol regime
+            equals this (case-insensitive), e.g. ``TREND_DOWN`` / ``TREND_UP``.
+          * ``rsi_max`` — only enter when RSI(14) over the window is ``<=`` this
+            (oversold-dip entry). Fewer than 15 bars => RSI unknown => no reject.
+        """
+        cfg = self.config
+        vmin = getattr(cfg, "volume_spike_min", None)
+        regime_want = (getattr(cfg, "regime_filter", "") or "").strip().upper()
+        rsi_max = getattr(cfg, "rsi_max", None)
+        if vmin is None and not regime_want and rsi_max is None:
+            return False  # common path: no preset gates configured
+
+        if vmin is not None:
+            ratio = float(getattr(signal, "volume_spike_ratio", 0.0) or 0.0)
+            if ratio < float(vmin) and not getattr(signal, "volume_spike", False):
+                return True
+
+        if regime_want:
+            try:
+                reg = self.analyzer._current_regimes.get(signal.symbol)
+                reg_val = (getattr(reg, "value", "") or "").upper()
+            except Exception:
+                reg_val = ""
+            if reg_val != regime_want:
+                return True
+
+        if rsi_max is not None and len(window) >= 15:
+            try:
+                import numpy as _np
+                from bot.core.ta_utils import rsi_series
+                closes = _np.asarray([b.close for b in window], dtype=float)
+                rsi_now = float(rsi_series(closes)[-1])
+                if rsi_now > float(rsi_max):
+                    return True
+            except Exception:
+                pass  # RSI unavailable -> don't reject on it
+
+        return False
 
     def cleanup(self) -> None:
         """Explicitly remove the temp state directory. Call after backtest completes.
@@ -410,6 +462,14 @@ class BacktestEngine:
         thr = getattr(self.config, "confidence_threshold", 0.0) or 0.0
         if self._below_confidence_gate(idea.confidence, thr):
             self._ideas_rejected_confidence += 1
+            return
+
+        # Preset entry gates (marketplace Strategy-Agent replay). Each is OFF by
+        # default so a normal run is byte-identical; when set they mirror the
+        # live RunStrategySkill preset filters so a named agent backtests with
+        # its real entry semantics. See BacktestConfig / _rejected_by_preset_gate.
+        if self._rejected_by_preset_gate(idea, signal, window):
+            self._ideas_rejected_preset += 1
             return
 
         self._ideas_generated += 1
@@ -1131,11 +1191,16 @@ class BacktestEngine:
         else:
             change_pct = 0
 
-        # Volume spike: compare to rolling average
+        # Volume spike: compare to rolling average. Carry the RATIO too so the
+        # preset volume-spike gate (BacktestConfig.volume_spike_min, e.g. the
+        # "momentum hunter" > 3x rule) can filter on the same field the live
+        # scanner exposes (MarketSignal.volume_spike_ratio).
         if len(window) >= 6:
             avg_vol = sum(b.volume for b in window[-6:-1]) / 5
+            vol_ratio = (bar.volume / avg_vol) if avg_vol > 0 else 0.0
             volume_spike = bar.volume > avg_vol * 2.0
         else:
+            vol_ratio = 0.0
             volume_spike = False
 
         momentum = max(min(change_pct / 10.0, 1.0), -1.0)
@@ -1148,6 +1213,7 @@ class BacktestEngine:
             change_pct_24h=round(change_pct, 2),
             volume_usd_24h=round(bar.volume, 2),
             volume_spike=volume_spike,
+            volume_spike_ratio=round(vol_ratio, 3),
             momentum_score=round(momentum, 3),
             timestamp=bar.timestamp,
         )

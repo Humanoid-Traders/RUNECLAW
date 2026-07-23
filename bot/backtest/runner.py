@@ -263,6 +263,20 @@ async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool, str]
         return bars, True, "synthetic_fallback"
 
 
+def _preset_gate_kwargs(args: argparse.Namespace) -> dict:
+    """BacktestConfig kwargs for the named-agent preset entry gates (marketplace
+    Strategy-Agent replay). Every value is OFF unless set on args, so spreading
+    this into a config is a strict no-op for a normal run. Shared by all runner
+    config paths so single / portfolio / walk-forward honor a preset replay
+    identically."""
+    return {
+        "confidence_threshold": getattr(args, "confidence_threshold", 0.0) or 0.0,
+        "volume_spike_min": getattr(args, "volume_spike_min", None),
+        "regime_filter": getattr(args, "regime_filter", "") or "",
+        "rsi_max": getattr(args, "rsi_max", None),
+    }
+
+
 async def _run_backtest(args: argparse.Namespace) -> None:
     """Execute a backtest with the given CLI arguments."""
     _apply_honest_fidelity(args)
@@ -278,6 +292,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         use_recorded_llm=args.use_recorded_llm,
         use_recorded_order_flow=args.use_recorded_order_flow,
         recorded_order_flow_path=args.of_snapshot_path,
+        **_preset_gate_kwargs(args),
     )
 
     # Load data (real-data-first; see _load_bars).
@@ -400,6 +415,18 @@ Examples:
                                   "higher-conviction trades -> less commission churn; A/B against "
                                   "the frozen benchmark to see if it's worth the lost trade count. "
                                   "Wired into --symbols/--dataset portfolio runs.")
+    # Preset entry gates — reproduce a NAMED marketplace Strategy-Agent's real
+    # filters on frozen data. All default OFF (unset = no-op), so a normal run
+    # is unchanged. See BacktestConfig / _rejected_by_preset_gate.
+    trade_group.add_argument("--volume-spike-min", type=float, default=None,
+                             help="Only enter when the bar's volume/rolling-avg ratio >= this "
+                                  "(or the spike flag). Mirrors 'momentum hunter' (vol spike > 3x).")
+    trade_group.add_argument("--regime-filter", type=str, default="",
+                             help="Only enter when the analyzer's per-symbol regime equals this "
+                                  "(e.g. TREND_DOWN for 'dip sniper', TREND_UP for momentum).")
+    trade_group.add_argument("--rsi-max", type=float, default=None,
+                             help="Only enter when RSI(14) over the window is <= this "
+                                  "(oversold-dip entry, e.g. 'dip sniper' RSI < 35).")
     trade_group.add_argument("--fill-mode", choices=("close", "next_open"), default="close",
                              help="Entry fill convention: same-bar close (legacy, optimistic) "
                                   "or next-bar open (conservative; audit fix #15). Run both "
@@ -662,7 +689,7 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
         use_llm=args.use_llm, use_recorded_llm=args.use_recorded_llm,
         use_recorded_order_flow=args.use_recorded_order_flow,
         recorded_order_flow_path=args.of_snapshot_path,
-        confidence_threshold=getattr(args, "confidence_threshold", 0.0) or 0.0,
+        **_preset_gate_kwargs(args),
     )
     data = {}
     if getattr(args, "dataset", None):
@@ -745,6 +772,7 @@ async def _run_walk_forward(args: argparse.Namespace) -> None:
         use_recorded_llm=args.use_recorded_llm,
         use_recorded_order_flow=args.use_recorded_order_flow,
         recorded_order_flow_path=args.of_snapshot_path,
+        **_preset_gate_kwargs(args),
     )
     print(f"\n  Loading data for {config.symbol}...")
     bars, used_synthetic, data_source = await _load_bars(args, config)
