@@ -47,6 +47,8 @@ class MemoryDB {
     this.pendingFlatten = []; // pending_flatten (UPSERT by user_id)
     this.userAlerts = [];     // custom "tell me when…" tripwires
     this._nextAlertId = 1;
+    this.userStrategies = []; // user-authored marketplace strategies (config only)
+    this._nextStrategyId = 1;
     this.agentLetters = [];   // weekly agent letters (UPSERT-free; one per week_key)
     this.copySubs = [];       // strategy-agent follows (UNIQUE user_id+agent_id)
     this._nextCopySubId = 1;
@@ -165,6 +167,71 @@ class MemoryDB {
       }
       // engine sweep: WHERE active = 1
       return [this.userAlerts.filter(a => a.active === 1).map(r => ({ ...r })), []];
+    }
+
+    // -- USER STRATEGIES (user-authored marketplace strategies; config only) --
+    // Placed before USERS handlers so a substring match on 'USERS' can't swallow
+    // these ('USER_STRATEGIES' shares the 'USER' prefix). No dollar fields (§4).
+    if (cmd.includes('INSERT INTO USER_STRATEGIES')) {
+      // params: user_id, slug, name, tagline, how, icon, rules, risk_label, regime, horizon, created_at, updated_at
+      this.userStrategies.push({
+        id: this._nextStrategyId++, user_id: params[0], slug: params[1], name: params[2],
+        tagline: params[3], how: params[4], icon: params[5], rules: params[6],
+        risk_label: params[7], regime: params[8], horizon: params[9],
+        visibility: 'draft', created_at: params[10], updated_at: params[11],
+      });
+      return [{ affectedRows: 1, insertId: this._nextStrategyId - 1 }, []];
+    }
+    if (cmd.includes('FROM USER_STRATEGIES') && cmd.includes('COUNT(*)')) {
+      const pub = cmd.includes("VISIBILITY = 'PUBLIC'");
+      const n = this.userStrategies.filter(
+        s => s.user_id === params[0] && (!pub || s.visibility === 'public')).length;
+      return [[{ n }], []];
+    }
+    if (cmd.includes('UPDATE USER_STRATEGIES')) {
+      if (cmd.includes('SET VISIBILITY')) {
+        // params: visibility, updated_at, id, user_id
+        const s = this.userStrategies.find(x => x.id === params[2] && x.user_id === params[3]);
+        if (!s) return [{ affectedRows: 0 }, []];
+        s.visibility = params[0]; s.updated_at = params[1];
+        return [{ affectedRows: 1 }, []];
+      }
+      // full-row edit — params: name, tagline, how, icon, rules, risk_label, regime, horizon, updated_at, id, user_id
+      const s = this.userStrategies.find(x => x.id === params[9] && x.user_id === params[10]);
+      if (!s) return [{ affectedRows: 0 }, []];
+      s.name = params[0]; s.tagline = params[1]; s.how = params[2]; s.icon = params[3];
+      s.rules = params[4]; s.risk_label = params[5]; s.regime = params[6]; s.horizon = params[7];
+      s.updated_at = params[8];
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM USER_STRATEGIES')) {
+      // params: id, user_id (own rows only)
+      const before = this.userStrategies.length;
+      this.userStrategies = this.userStrategies.filter(
+        s => !(s.id === params[0] && s.user_id === params[1]));
+      return [{ affectedRows: before - this.userStrategies.length }, []];
+    }
+    if (cmd.includes('FROM USER_STRATEGIES')) {
+      if (cmd.includes('AND USER_ID')) {
+        // getById: WHERE id = ? AND user_id = ?
+        const rows = this.userStrategies.filter(s => s.id === params[0] && s.user_id === params[1]);
+        return [rows.map(r => ({ ...r })), []];
+      }
+      if (cmd.includes('WHERE USER_ID')) {
+        const rows = this.userStrategies.filter(s => s.user_id === params[0])
+          .sort((a, b) => b.id - a.id).slice(0, 50);
+        return [rows.map(r => ({ ...r })), []];
+      }
+      if (cmd.includes('WHERE SLUG')) {
+        const rows = this.userStrategies.filter(
+          s => s.slug === params[0] && s.visibility === 'public');
+        return [rows.map(r => ({ ...r })), []];
+      }
+      // public list: WHERE visibility = 'public'
+      const rows = this.userStrategies.filter(s => s.visibility === 'public')
+        .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+        .slice(0, Number(params[0]) || 120);
+      return [rows.map(r => ({ ...r })), []];
     }
 
     // -- PUSH SUBSCRIPTIONS (web push; UPSERT by endpoint) --
@@ -1119,6 +1186,30 @@ async function migrate() {
         triggered_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_alerts_user (user_id),
         INDEX idx_alerts_active (active)
+      )
+    `);
+    // User-authored marketplace strategies. A strategy is a CONFIG (intent-rule
+    // chips + prose), never a performance claim — no dollar/stat columns (§4).
+    // `rules` is a JSON array of {type,value}; `visibility` gates the public
+    // marketplace. Saving/publishing never touches a trade.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS user_strategies (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        slug VARCHAR(64) NOT NULL,
+        name VARCHAR(80) NOT NULL,
+        tagline VARCHAR(160),
+        how VARCHAR(600),
+        icon VARCHAR(8),
+        rules JSON NOT NULL,
+        risk_label VARCHAR(24),
+        regime VARCHAR(24),
+        horizon VARCHAR(24),
+        visibility VARCHAR(12) NOT NULL DEFAULT 'draft',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_strat_user (user_id),
+        INDEX idx_strat_pub (visibility, slug)
       )
     `);
     // Bot-pushed intelligence reports (funding scan / arb tracker / parity /

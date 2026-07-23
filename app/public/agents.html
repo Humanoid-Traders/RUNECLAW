@@ -39,6 +39,18 @@
   .ag-card .mx .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 600; }
   .v.up { color: var(--up); } .v.down { color: var(--down); }
   .ag-card .go { color: var(--gold-bright); font-size: var(--fs-sm); margin-top: var(--s3); }
+  /* Community (member-authored) cards — config chips, no scorecard */
+  .ag-card--comm { border-top-color: var(--accent, #3fb6ff); cursor: default; }
+  .ag-card--comm:hover { transform: none; box-shadow: var(--shadow); }
+  .ag-card .how { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.5; margin: var(--s2) 0 0; }
+  .ag-card .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: var(--s2); }
+  .ag-card .tag { font-size: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-3); text-transform: capitalize; }
+  .ag-card .tag--comm { margin-left: auto; border-color: var(--accent, #3fb6ff); color: var(--accent, #3fb6ff); text-transform: none; }
+  .ag-card .rules { display: flex; gap: 5px; flex-wrap: wrap; margin-top: var(--s3); }
+  .rchip { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); font-family: var(--font-data); }
+  .rchip .rk { color: var(--text-3); }
+  .ag-build { margin-left: auto; align-self: center; font-size: var(--fs-sm); color: var(--accent, #3fb6ff); border: 1px solid var(--accent, #3fb6ff); border-radius: 999px; padding: 5px 12px; text-decoration: none; white-space: nowrap; }
+  .ag-build:hover { background: rgba(63,182,255,.1); }
   .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s5); }
   .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
   .ag-controls { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; margin: 0 0 var(--s4); }
@@ -79,7 +91,45 @@
   var cls = function (v) { return v == null ? '' : (Number(v) >= 0 ? 'up' : 'down'); };
   var root = document.getElementById('ag-root');
 
+  // Intent-rule labels (mirrors the engine's vocabulary) for community cards.
+  var RULE_LABEL = {
+    max_position_pct: 'Max size/trade', max_symbol_exposure_pct: 'Max per-symbol',
+    max_portfolio_exposure_pct: 'Max portfolio', max_open_positions: 'Max open',
+    min_confidence: 'Min confidence', min_rr: 'Min R:R', max_daily_loss_pct: 'Max daily loss',
+    max_drawdown_pct: 'Max drawdown', min_free_margin_pct: 'Min free margin',
+    allowed_symbols: 'Only', blocked_symbols: 'Never', allowed_strategy_types: 'Only strategies',
+    direction: 'Direction',
+  };
+  function ruleVal(r) {
+    var v = r.value;
+    if (Array.isArray(v)) return v.join(', ');
+    if (r.type === 'min_confidence') return Math.round(Number(v) * 100) + '%';
+    if (/pct$/.test(r.type)) return v + '%';
+    if (r.type === 'min_rr') return v + 'R';
+    if (r.type === 'direction') return String(v).replace('_', ' ');
+    return String(v);
+  }
+  function ruleChips(rules) {
+    return (rules || []).map(function (r) {
+      return '<span class="rchip"><span class="rk">' + esc(RULE_LABEL[r.type] || r.type) + '</span> '
+        + '<b>' + esc(ruleVal(r)) + '</b></span>';
+    }).join('');
+  }
+
   function card(a) {
+    if (a.community) {
+      var chips = [a.regime, a.horizon, a.risk_label].filter(Boolean)
+        .map(function (c) { return '<span class="tag">' + esc(c) + '</span>'; }).join('');
+      return '<article class="ag-card ag-card--comm">'
+        + '<div class="h"><span class="emo">' + esc(a.icon || '🧠') + '</span>'
+        + '<span class="nm">' + esc(a.name) + '</span>'
+        + '<span class="tag tag--comm">Community</span></div>'
+        + (a.tagline ? '<p class="tg">' + esc(a.tagline) + '</p>' : '<p class="tg"></p>')
+        + (a.how ? '<p class="how"><b>How it trades:</b> ' + esc(a.how) + '</p>' : '')
+        + (chips ? '<div class="tags">' + chips + '</div>' : '')
+        + '<div class="rules">' + ruleChips(a.rules) + '</div>'
+        + '<div class="go">Config-only · no dollar figures</div></article>';
+    }
     var sc = a.scorecard && a.scorecard.metrics;
     var mx = sc
       ? '<div class="mx"><div><div class="k">Return</div><div class="v ' + cls(sc.total_return_pct) + '">'
@@ -137,24 +187,31 @@
       : '<div class="empty">No agents match — clear the search or filter.</div>';
   }
 
-  fetch('/api/public/strategies', { headers: { Accept: 'application/json' } })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (d) {
-      all = (d && d.agents) || [];
+  function getJSON(url) {
+    return fetch(url, { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+  }
+  // The engine catalogue AND the published community strategies, side by side.
+  Promise.all([getJSON('/api/public/strategies'), getJSON('/api/public/user-strategies')])
+    .then(function (res) {
+      var engine = (res[0] && res[0].agents) || [];
+      var community = (res[1] && res[1].agents) || [];
+      all = engine.concat(community);
       if (!all.length) { root.innerHTML = '<div class="empty">The catalogue is unavailable right now — try the <a href="/dashboard#agents">app</a>.</div>'; return; }
       var regOpts = regimes().map(function (r) { return '<option value="' + esc(r) + '">' + esc(r) + '</option>'; }).join('');
       root.innerHTML =
         '<div class="ag-controls">'
-        + '<input id="ag-q" type="search" placeholder="Search agents…" aria-label="Search agents" autocomplete="off">'
+        + '<input id="ag-q" type="search" placeholder="Search strategies…" aria-label="Search strategies" autocomplete="off">'
         + '<select id="ag-reg" aria-label="Filter by regime"><option value="">All regimes</option>' + regOpts + '</select>'
-        + '<select id="ag-sort" aria-label="Sort agents">'
+        + '<select id="ag-sort" aria-label="Sort strategies">'
         + '<option value="return">Top return</option><option value="win">Win rate</option>'
         + '<option value="pf">Profit factor</option><option value="name">Name (A–Z)</option></select>'
+        + '<a class="ag-build" href="/dashboard#agents">＋ Build your own</a>'
         + '<span class="ag-count" id="ag-count"></span></div>'
         + '<div class="ag-grid" id="ag-grid"></div>'
-        + '<p class="disc">Nothing here is financial advice. Verified live ranks are on the '
-        + '<a href="/leaderboard">leaderboard</a>; every backtest is reproducible in the '
-        + '<a href="/dashboard#lab">Strategy Lab</a>.</p>';
+        + '<p class="disc">Engine agents carry verified frozen backtests; <b>community</b> strategies are member-authored configs '
+        + '(intent rules, no dollar figures, no performance claims). Nothing here is financial advice. Verified live ranks are on the '
+        + '<a href="/leaderboard">leaderboard</a>; build your own in the <a href="/dashboard#agents">app</a>.</p>';
       document.getElementById('ag-q').addEventListener('input', render);
       document.getElementById('ag-reg').addEventListener('change', render);
       document.getElementById('ag-sort').addEventListener('change', render);
