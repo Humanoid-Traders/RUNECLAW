@@ -111,6 +111,36 @@ def subdegree_turn_confirmed(
         return False, "confirmation check error"
 
 
+def auto_entry_allowed(
+    regime: str,
+    direction: str,
+    opens: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+) -> tuple[bool, str]:
+    """Fail-safe gate for AUTONOMOUS (auto-confirm) entries — the live analog of
+    the backtest's armed-setup arming, scoped to ENTRY_TIMING_REGIMES.
+
+    Returns ``(allowed, reason)``. When the timing gate is active for this
+    regime, an autonomous entry is allowed only once the sub-degree confirms
+    the turn; otherwise it is DEFERRED (the engine re-checks on a later scan).
+    A human who explicitly confirms is never routed through this gate.
+
+    Fail-open by construction: an inactive gate, too little history, or ANY
+    error returns ``allowed=True`` — the gate can never block trading on a bug.
+    """
+    try:
+        if not timing_active(regime or ""):
+            return True, "timing gate inactive for this regime"
+        if not closes or len(closes) < 10:
+            return True, "fail-safe: insufficient sub-degree history"
+        confirmed, reason = subdegree_turn_confirmed(direction, highs, lows, closes, opens=opens)
+        return (bool(confirmed), reason)
+    except Exception:  # noqa: BLE001 — never block an entry on a timing bug
+        return True, "fail-safe: timing check error"
+
+
 def invalidated(direction: str, stop_loss: float, bar_high: float,
                 bar_low: float) -> bool:
     """True when the would-be stop was touched while still ARMED — the
