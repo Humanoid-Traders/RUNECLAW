@@ -37,6 +37,7 @@
     'nav.agents': { en: 'Marketplace', es: 'Mercado', zh: '市場', pt: 'Mercado', fr: 'Place de marché', ar: 'السوق' },
     'nav.strengthmap': { en: 'Strength Map', es: 'Mapa de fuerza', zh: '強度地圖', pt: 'Mapa de força', fr: 'Carte de force', ar: 'خريطة القوة' },
     'nav.proof': { en: 'Proof of PnL', es: 'Prueba de PnL', zh: 'PnL 證明', pt: 'Prova de PnL', fr: 'Preuve de PnL', ar: 'إثبات الأرباح' },
+    'nav.flight': { en: 'Flight Recorder', es: 'Registro de vuelo', zh: '飛行記錄儀', pt: 'Registro de voo', fr: 'Boîte noire', ar: 'مسجل الرحلة' },
     'nav.leaderboard': { en: 'Leaderboard', es: 'Clasificación', zh: '排行榜', pt: 'Classificação', fr: 'Classement', ar: 'المتصدرون' },
     'nav.letter': { en: 'Agent Letter', es: 'Carta del agente', zh: '代理週報', pt: 'Carta do agente', fr: 'Lettre de l’agent', ar: 'رسالة الوكيل' },
     'nav.docs': { en: 'Docs', es: 'Docs', zh: '文件', pt: 'Docs', fr: 'Docs', ar: 'الوثائق' },
