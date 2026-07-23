@@ -23,10 +23,25 @@ test('RC3DRadar exposes a mount() returning update + destroy', () => {
 
 test('the radar is reduced-motion safe and self-cleaning', () => {
   assert.match(radar, /prefers-reduced-motion: reduce/);
-  // reduced-motion (or no rAF) → draw ONE static frame, never start the loop.
-  assert.match(radar, /if \(reduced\(\) \|\| !global\.requestAnimationFrame\) \{ draw\(null\); return; \}/);
-  // destroy stops the loop.
+  // reduced-motion (or no rAF) → draw ONE static, un-animated frame, never loop.
+  assert.match(radar, /if \(reduced\(\) \|\| !global\.requestAnimationFrame\) \{ draw\(null, 0, false\); return; \}/);
+  // destroy stops the loop AND unbinds the pointer listeners it added.
   assert.match(radar, /destroy:[\s\S]*cancelAnimationFrame/);
+  assert.match(radar, /removeEventListener\('mousemove'/);
+});
+
+test('the radar is a genuine orbiting 3D scene, not a flat disc', () => {
+  // Camera yaw (scene orbit), per-blip elevation off the plane with a depth
+  // sort, contact pings on beam crossings, a parallax starfield, and hover.
+  assert.match(radar, /yaw = animate/);                 // scene orbit
+  assert.match(radar, /\.elev/);                         // blips lifted by elevation
+  assert.match(radar, /depth: Math\.sin/);               // per-point depth
+  assert.match(radar, /resolved\.sort\(/);               // painter's depth order
+  assert.match(radar, /pings\.push\(/);                  // beam-contact ping rings
+  assert.match(radar, /buildStars\(\)/);                 // starfield backdrop
+  assert.match(radar, /hover/);                          // pointer inspection
+  // Elevation is animation-only detail; reduced-motion still renders one frame.
+  assert.match(radar, /animate\) drawStarfield/);
 });
 
 test('the radar is pure Canvas 2D — no WebGL / three dependency', () => {
@@ -49,4 +64,10 @@ test('dashboard mounts the radar from real RWA data and tears it down on nav', (
 
 test('the radar is presented as visualization only (never trades)', () => {
   assert.match(dash, /Visualization only — it never trades/);
+});
+
+test('the dashboard feeds blip elevation from real momentum', () => {
+  // Height off the plane is derived from live 24h change, not invented.
+  assert.match(dash, /elev: Math\.max\(0\.12, Math\.min\(1, Math\.abs\(chg\) \/ 6\)\)/);
+  assert.match(dash, /height = momentum/);   // legend explains the new axis
 });
