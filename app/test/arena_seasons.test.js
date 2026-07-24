@@ -1,0 +1,124 @@
+'use strict';
+/**
+ * Arena competition seasons — a season is a NAMED TIME WINDOW, never a reset:
+ * the season board ranks realized percent return from trades closed inside the
+ * window, so nobody can erase a bad run and the all-time board keeps running.
+ * §4: public payload is opt-in handles + percent only; authoring is operator-only.
+ */
+process.env.JWT_SECRET = 'j'.repeat(64);
+delete process.env.DATABASE_URL;
+
+const test = require('node:test');
+const assert = require('node:assert');
+const http = require('node:http');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const authModule = require('../auth');
+const { seasonStatus, validateSeason, seasonRanking } = require('../lib/arena_seasons');
+const { setTickerFetcher } = require('../lib/tickers');
+const { pool } = require('../db');
+
+// ---- Pure helpers -------------------------------------------------------
+
+test('seasonStatus walks upcoming → live → ended', () => {
+  const s = { starts_at: '2026-08-01T00:00:00Z', ends_at: '2026-09-01T00:00:00Z' };
+  assert.equal(seasonStatus(s, new Date('2026-07-30T00:00:00Z')), 'upcoming');
+  assert.equal(seasonStatus(s, new Date('2026-08-15T00:00:00Z')), 'live');
+  assert.equal(seasonStatus(s, new Date('2026-09-02T00:00:00Z')), 'ended');
+});
+
+test('validateSeason enforces name, order and length', () => {
+  assert.ok(validateSeason({ name: 'Genesis Season', starts_at: '2026-08-01', ends_at: '2026-09-01' }).ok);
+  assert.ok(!validateSeason({ name: 'x', starts_at: '2026-08-01', ends_at: '2026-09-01' }).ok);
+  assert.ok(!validateSeason({ name: 'Backwards', starts_at: '2026-09-01', ends_at: '2026-08-01' }).ok);
+  assert.ok(!validateSeason({ name: 'Too Long', starts_at: '2026-01-01', ends_at: '2026-12-31' }).ok);
+});
+
+test('seasonRanking sums in-window pnl vs the uniform stake, opt-in only', () => {
+  const trades = [
+    { user_id: 1, pnl: 500 }, { user_id: 1, pnl: -200 },   // +3% net
+    { user_id: 2, pnl: 1000 },                              // +10% but no handle
+    { user_id: 3, pnl: 800 },                               // +8%
+  ];
+  const rows = seasonRanking(trades, new Map([[1, 'ace'], [3, 'bravo']]));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].handle, 'bravo');
+  assert.equal(rows[0].return_pct, 8);
+  assert.equal(rows[1].handle, 'ace');
+  assert.equal(rows[1].return_pct, 3);
+  const blob = JSON.stringify(rows).toLowerCase();
+  for (const needle of ['balance', 'equity', 'user_id', 'email']) {
+    assert.ok(!blob.includes(needle), `season rows must not contain "${needle}"`);
+  }
+});
+
+// ---- API ----------------------------------------------------------------
+
+let server, base;
+test.before(async () => {
+  setTickerFetcher(async () => ({ BTCUSDT: { price: 100, change: 0, volume: 1 } }));
+  const app = express();
+  app.use(express.json());
+  app.use('/api/auth', authModule.router);
+  app.use('/api/arena', require('../routes/arena'));
+  await new Promise((res) => { server = app.listen(0, '127.0.0.1', res); });
+  base = `http://127.0.0.1:${server.address().port}`;
+});
+test.after(() => { if (server) server.close(); setTickerFetcher(null); });
+
+function req(method, p, { token, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const r = http.request(`${base}${p}`, { method, headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(payload ? { 'Content-Type': 'application/json' } : {}) } }, (res) => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => resolve({ status: res.statusCode, data: d ? JSON.parse(d) : {} }));
+    });
+    r.on('error', reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+test('season read is public and honest when none is authored', async () => {
+  const r = await req('GET', '/api/arena/season');
+  assert.equal(r.status, 200);
+  assert.equal(r.data.season, null);
+});
+
+test('authoring a season is operator-only; a live season ranks in-window closes', async () => {
+  const reg = await req('POST', '/api/auth/register', { body: { email: 'season1@example.com', password: 'longenough1' } });
+  const token = reg.data.token;
+  // non-admin refused
+  const deny = await req('POST', '/api/arena/season', { token, body: { name: 'Genesis Season', starts_at: '2026-01-01', ends_at: '2026-03-01' } });
+  assert.equal(deny.status, 403);
+  // promote to admin directly in the in-memory store (mock mode), then author
+  // a season spanning "now"
+  const urow = pool.users.find((u) => u.email === 'season1@example.com');
+  urow.plan = 'admin';
+  const start = new Date(Date.now() - 3600000), end = new Date(Date.now() + 86400000);
+  const ok = await req('POST', '/api/arena/season', { token, body: { name: 'Genesis Season', starts_at: start, ends_at: end } });
+  assert.equal(ok.status, 200);
+  // an in-window closed trade counts once the user has a handle
+  await pool.execute('INSERT INTO arena_accounts (user_id, balance, created_at) VALUES (?, ?, ?)', [reg.data.user_id, 10000, new Date()]);
+  await pool.execute(
+    'INSERT INTO arena_trades (user_id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [reg.data.user_id, 'BTCUSDT', 'LONG', 100, 110, 1000, 5, 500, 'manual', new Date(), new Date()]);
+  await pool.execute('UPDATE users SET leaderboard_handle = ? WHERE id = ?', ['season_ace', reg.data.user_id]);
+  const s = await req('GET', '/api/arena/season');
+  assert.equal(s.data.season.status, 'live');
+  const me = (s.data.rows || []).find((x) => x.handle === 'season_ace');
+  assert.ok(me, 'ranked in the live season');
+  assert.equal(me.return_pct, 5);
+  assert.ok(!/balance|equity|email/i.test(JSON.stringify(s.data)));
+});
+
+test('the /arena page mounts the season banner + standings', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /id="seasonPanel"/);
+  assert.match(html, /api\/arena\/season/);
+  assert.match(html, /ends in |starts in /);
+  assert.match(html, /final standings/);
+});

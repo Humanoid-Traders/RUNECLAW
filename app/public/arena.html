@@ -59,6 +59,13 @@
   .lb-row { display: grid; grid-template-columns: 44px 1fr auto auto; gap: var(--s3); padding: 8px 4px; border-bottom: 1px solid var(--line); align-items: baseline; font-family: var(--font-data); font-size: var(--fs-sm); }
   .lb-row .rk { color: var(--gold-bright); }
   .lb-row .tr { color: var(--text-3); font-size: var(--fs-xs); }
+  .season-head { display: flex; gap: var(--s3); align-items: baseline; flex-wrap: wrap; margin-bottom: var(--s2); }
+  .season-head .nm { font-family: var(--font-display); letter-spacing: .04em; font-size: var(--fs-lg); color: var(--gold-bright); }
+  .season-head .st-chip { font-size: 9px; text-transform: uppercase; letter-spacing: .06em; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line-2); font-family: var(--font-data); }
+  .season-head .st-chip.live { color: var(--up); border-color: var(--up); }
+  .season-head .st-chip.upcoming { color: var(--gold-bright); border-color: var(--gold-bright); }
+  .season-head .st-chip.ended { color: var(--text-3); }
+  .season-head .cd { font-family: var(--font-data); color: var(--text-2); font-size: var(--fs-sm); }
   .optin { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
   .optin input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: var(--fs-sm); }
   .cta { display: inline-block; margin-top: var(--s2); }
@@ -82,6 +89,13 @@
   the Stress Lab models them, and the public board ranks <b>percent return</b> under anonymous handles.
   Prove your edge before you ever connect a real account — and when paper competitions run, this is where
   they'll happen.</p>
+
+  <!-- Competition season banner + standings (populated when one is authored) -->
+  <section class="panel" id="seasonPanel" hidden>
+    <h2>Competition season</h2>
+    <div class="season-head" id="seasonHead"></div>
+    <div id="seasonRows"></div>
+  </section>
 
   <!-- Logged-out pitch -->
   <section class="panel" id="loginPitch" hidden>
@@ -266,9 +280,36 @@
     });
   }
 
+  async function loadSeason() {
+    var r = await RC.fetchJSON('/api/arena/season', { auth: false, timeoutMs: 12000 }).catch(function () { return null; });
+    var d = r && r.ok && r.data;
+    if (!d || !d.season) return;                       // no season authored yet
+    var s = d.season;
+    $('seasonPanel').hidden = false;
+    var now = Date.now();
+    var target = s.status === 'upcoming' ? new Date(s.starts_at).getTime() : new Date(s.ends_at).getTime();
+    var left = Math.max(0, target - now);
+    var dDays = Math.floor(left / 86400000), dHrs = Math.floor((left % 86400000) / 3600000);
+    var cd = s.status === 'live' ? ('ends in ' + dDays + 'd ' + dHrs + 'h')
+      : s.status === 'upcoming' ? ('starts in ' + dDays + 'd ' + dHrs + 'h') : 'final standings';
+    $('seasonHead').innerHTML = '<span class="nm">' + esc(s.name) + '</span>'
+      + '<span class="st-chip ' + esc(s.status) + '">' + esc(s.status) + '</span>'
+      + '<span class="cd">' + esc(cd) + '</span>';
+    var rows = d.rows || [];
+    $('seasonRows').innerHTML = s.status === 'upcoming'
+      ? '<div class="empty">Standings open when the season starts — trades closed inside the window count.</div>'
+      : rows.length ? rows.map(function (x) {
+          return '<div class="lb-row"><span class="rk">#' + x.rank + '</span><span>' + esc(x.handle) + '</span>'
+            + '<span class="' + pnlCls(x.return_pct) + '">' + (x.return_pct > 0 ? '+' : '') + fmt2(x.return_pct) + '%</span>'
+            + '<span class="tr">' + x.trades + ' trades</span></div>';
+        }).join('') : '<div class="empty">No closed trades in the window yet — the season crown is up for grabs.</div>';
+  }
+
   loadSymbols();
   loadBoard();
+  loadSeason();
   setInterval(loadBoard, 45000);
+  setInterval(loadSeason, 60000);
 })();
 </script>
 </body>
