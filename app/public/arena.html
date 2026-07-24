@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Paper Trading Arena</title>
+<link rel="canonical" href="https://pmvc58g2.mule.page/arena">
+<meta name="description" content="Every RUNECLAW account gets a paper trading account with the same 10,000 vUSDT virtual stake — no exchange API keys needed. Trade live crypto markets risk-free at real Bitget prices, track your PnL, and climb the public leaderboard (percent return, anonymous handles). The zero-friction way to prove your edge.">
+<meta property="og:title" content="RUNECLAW — Paper Trading Arena">
+<meta property="og:description" content="Trade live markets with a virtual 10,000 vUSDT stake — no API keys, no risk, real prices. Climb the leaderboard on percent return.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/arena">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Paper Trading Arena">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  .ar-wrap { max-width: 1040px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); } .topnav a:hover { color: var(--text-1); }
+  .ar-hero h1 { font-family: var(--font-display); letter-spacing: .05em; font-size: clamp(26px, 4vw, 40px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 74ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
+  /* Account strip */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s3); }
+  .stat { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--s3); }
+  .stat .k { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); }
+  .stat .v { font-family: var(--font-data); font-size: var(--fs-lg); margin-top: 4px; }
+  .up-c { color: var(--up); } .down-c { color: var(--down); }
+  /* Ticket */
+  .ticket { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: end; }
+  .ticket label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); margin-bottom: 5px; }
+  .ticket input, .ticket select { width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 9px 10px; font: inherit; font-size: var(--fs-sm); }
+  .dirbtns { display: flex; gap: 6px; }
+  .dirbtn { flex: 1; padding: 9px 0; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg); color: var(--text-2); cursor: pointer; font: inherit; font-size: var(--fs-sm); }
+  .dirbtn.on-long { border-color: var(--up); color: var(--up); }
+  .dirbtn.on-short { border-color: var(--down); color: var(--down); }
+  .lev-val { font-family: var(--font-data); color: var(--gold-bright); margin-left: 6px; }
+  .tmsg { font-size: var(--fs-xs); color: var(--text-3); min-height: 1.2em; margin-top: var(--s2); }
+  /* Positions + history tables */
+  .tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+  .tbl th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .tbl td { padding: 8px; border-bottom: 1px solid var(--line); font-family: var(--font-data); }
+  .tbl .sym { color: var(--text-1); font-weight: 600; }
+  .tbl-scroll { overflow-x: auto; }
+  .closebtn { font-size: var(--fs-xs); padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text-2); cursor: pointer; }
+  .closebtn:hover { border-color: var(--down); color: var(--down); }
+  .muted { color: var(--text-3); }
+  .empty { color: var(--text-3); padding: var(--s3) 0; font-size: var(--fs-sm); }
+  /* Leaderboard */
+  .lb-row { display: grid; grid-template-columns: 44px 1fr auto auto; gap: var(--s3); padding: 8px 4px; border-bottom: 1px solid var(--line); align-items: baseline; font-family: var(--font-data); font-size: var(--fs-sm); }
+  .lb-row .rk { color: var(--gold-bright); }
+  .lb-row .tr { color: var(--text-3); font-size: var(--fs-xs); }
+  .optin { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
+  .optin input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: var(--fs-sm); }
+  .cta { display: inline-block; margin-top: var(--s2); }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
+  @media (max-width: 520px) { .lb-row { grid-template-columns: 34px 1fr auto; } .lb-row .tr { display: none; } }
+</style>
+</head>
+<body>
+<div class="ar-wrap" role="main">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/guardian">Guardian</a>
+    <a href="/dashboard">Open the app</a>
+  </nav>
+  <div class="ar-hero"><h1>Paper Trading Arena</h1></div>
+  <p class="lede">Every account starts with the same <b>10,000 vUSDT virtual stake</b> — no exchange API keys,
+  no setup, no risk. Fills and marks use <b>real live Bitget prices</b>, liquidations are enforced exactly like
+  the Stress Lab models them, and the public board ranks <b>percent return</b> under anonymous handles.
+  Prove your edge before you ever connect a real account — and when paper competitions run, this is where
+  they'll happen.</p>
+
+  <!-- Logged-out pitch -->
+  <section class="panel" id="loginPitch" hidden>
+    <h2>Join the arena</h2>
+    <p class="lede" style="margin-bottom:var(--s2)">A free account is all it takes — your paper account is created
+    the moment you open the Arena. No exchange keys, no deposit, nothing to configure.</p>
+    <a class="btn btn--primary btn--sm cta" href="/dashboard">Sign in / create a free account →</a>
+  </section>
+
+  <!-- Account (logged in) -->
+  <section class="panel" id="acctPanel" hidden>
+    <h2>Your paper account <span class="muted" style="text-transform:none;letter-spacing:0">· virtual funds only</span></h2>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel" id="ticketPanel" hidden>
+    <h2>Open a paper position</h2>
+    <div class="ticket">
+      <div><label for="tSym">Symbol</label>
+        <input id="tSym" list="symList" value="BTCUSDT" maxlength="20" autocomplete="off" spellcheck="false">
+        <datalist id="symList"></datalist></div>
+      <div><label>Direction</label>
+        <div class="dirbtns">
+          <button class="dirbtn on-long" id="dirLong" type="button">▲ Long</button>
+          <button class="dirbtn" id="dirShort" type="button">▼ Short</button>
+        </div></div>
+      <div><label for="tMargin">Margin (vUSDT)</label>
+        <input id="tMargin" type="number" min="10" step="10" value="500"></div>
+      <div><label for="tLev">Leverage<span class="lev-val" id="levVal">3×</span></label>
+        <input id="tLev" type="range" min="1" max="20" step="1" value="3"></div>
+      <div><button class="btn btn--primary" id="openBtn" type="button">Open paper position</button></div>
+    </div>
+    <div class="tmsg" id="tMsg" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="panel" id="posPanel" hidden>
+    <h2>Open positions</h2>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr>
+      <th>Symbol</th><th>Side</th><th>Lev</th><th>Entry</th><th>Mark</th><th>PnL (vUSDT)</th><th>Liq. price</th><th></th>
+    </tr></thead><tbody id="posBody"></tbody></table></div>
+    <div class="empty" id="posEmpty" hidden>No open positions — open your first paper trade above.</div>
+  </section>
+
+  <section class="panel" id="histPanel" hidden>
+    <h2>Closed trades</h2>
+    <div class="tbl-scroll"><table class="tbl"><thead><tr>
+      <th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL (vUSDT)</th><th>How</th>
+    </tr></thead><tbody id="histBody"></tbody></table></div>
+    <div class="empty" id="histEmpty" hidden>Nothing closed yet.</div>
+  </section>
+
+  <!-- Leaderboard (public) -->
+  <section class="panel">
+    <h2>Arena leaderboard <span class="muted" style="text-transform:none;letter-spacing:0">· percent return · anonymous handles</span></h2>
+    <div id="lbRows"><div class="empty">Loading the board…</div></div>
+    <div class="optin" id="optin" hidden>
+      <input id="handleInput" maxlength="24" placeholder="Pick an anonymous handle to appear on the board">
+      <button class="btn btn--sm" id="optinBtn" type="button">Join the board</button>
+    </div>
+    <div class="tmsg" id="lbMsg" role="status" aria-live="polite"></div>
+  </section>
+
+  <p class="disc">The Arena is <b>paper trading</b>: balances are virtual, no real funds ever move, and no order
+  reaches any exchange. Prices are live public Bitget USDT-M marks; fills are simulated at the last price with no
+  slippage or fees, so real trading results will differ. The public board shows percent return and opt-in
+  anonymous handles only. Practice and competition — not investment advice.</p>
+</div>
+
+<script src="/js/app.js?v=3"></script>
+<script>
+(function () {
+  var RC = window.RC || {};
+  var esc = RC.esc || function (s) { return String(s == null ? '' : s); };
+  var $ = function (id) { return document.getElementById(id); };
+  var fmtP = function (n) { return n == null ? '—' : Number(n) >= 1000 ? Number(n).toLocaleString('en-US', { maximumFractionDigits: 1 }) : String(Number(n).toPrecision(5)).replace(/\.?0+$/, ''); };
+  var fmt2 = function (n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  var direction = 'LONG';
+
+  function pnlCls(n) { return n > 0 ? 'up-c' : n < 0 ? 'down-c' : ''; }
+
+  function renderAccount(d) {
+    var r = d.return_pct;
+    $('stats').innerHTML =
+      '<div class="stat"><div class="k">Balance</div><div class="v">' + fmt2(d.balance) + ' <span class="muted">vUSDT</span></div></div>'
+      + '<div class="stat"><div class="k">Equity</div><div class="v">' + fmt2(d.equity) + ' <span class="muted">vUSDT</span></div></div>'
+      + '<div class="stat"><div class="k">Return</div><div class="v ' + pnlCls(r) + '">' + (r > 0 ? '+' : '') + fmt2(r) + '%</div></div>'
+      + '<div class="stat"><div class="k">Open positions</div><div class="v">' + d.positions.length + ' <span class="muted">/ ' + d.limits.max_open + '</span></div></div>';
+    var pb = $('posBody');
+    pb.innerHTML = d.positions.map(function (p) {
+      return '<tr><td class="sym">' + esc(p.symbol) + '</td>'
+        + '<td class="' + (p.direction === 'LONG' ? 'up-c' : 'down-c') + '">' + esc(p.direction) + '</td>'
+        + '<td>' + p.leverage + '×</td>'
+        + '<td>' + fmtP(p.entry) + '</td><td>' + fmtP(p.mark) + '</td>'
+        + '<td class="' + pnlCls(p.pnl) + '">' + (p.pnl == null ? '—' : (p.pnl > 0 ? '+' : '') + fmt2(p.pnl) + ' (' + (p.pnl_pct > 0 ? '+' : '') + fmt2(p.pnl_pct) + '%)') + '</td>'
+        + '<td class="muted">' + fmtP(p.liq_price) + '</td>'
+        + '<td><button class="closebtn" data-close="' + p.id + '" type="button">Close</button></td></tr>';
+    }).join('');
+    $('posEmpty').hidden = d.positions.length > 0;
+    var hb = $('histBody');
+    hb.innerHTML = (d.history || []).map(function (t) {
+      return '<tr><td class="sym">' + esc(t.symbol) + '</td>'
+        + '<td class="' + (t.direction === 'LONG' ? 'up-c' : 'down-c') + '">' + esc(t.direction) + '</td>'
+        + '<td>' + fmtP(t.entry) + '</td><td>' + fmtP(t.exit_price) + '</td>'
+        + '<td class="' + pnlCls(t.pnl) + '">' + (t.pnl > 0 ? '+' : '') + fmt2(t.pnl) + '</td>'
+        + '<td class="muted">' + esc(t.reason) + '</td></tr>';
+    }).join('');
+    $('histEmpty').hidden = (d.history || []).length > 0;
+  }
+
+  async function loadAccount() {
+    var r = await RC.fetchJSON('/api/arena/account', { timeoutMs: 14000 }).catch(function () { return null; });
+    if (r && r.ok && r.data) renderAccount(r.data);
+  }
+
+  async function loadBoard() {
+    var r = await RC.fetchJSON('/api/arena/leaderboard', { auth: false, timeoutMs: 14000 }).catch(function () { return null; });
+    var d = r && r.ok && r.data;
+    if (!d) { $('lbRows').innerHTML = '<div class="empty">The board is unavailable right now.</div>'; return; }
+    $('lbRows').innerHTML = d.rows.length ? d.rows.map(function (x) {
+      return '<div class="lb-row"><span class="rk">#' + x.rank + '</span><span>' + esc(x.handle) + '</span>'
+        + '<span class="' + pnlCls(x.return_pct) + '">' + (x.return_pct > 0 ? '+' : '') + fmt2(x.return_pct) + '%</span>'
+        + '<span class="tr">' + x.trades + ' trades</span></div>';
+    }).join('') : '<div class="empty">Nobody on the board yet — open a paper trade, pick a handle, and take rank #1.</div>';
+  }
+
+  async function loadSymbols() {
+    // Raw Bitget shape: { data: [ { symbol, lastPr, usdtVolume, ... } ] }
+    var r = await RC.fetchJSON('/api/market/tickers', { auth: false, timeoutMs: 12000 }).catch(function () { return null; });
+    var list = r && r.ok && r.data && Array.isArray(r.data.data) ? r.data.data : [];
+    var syms = list.filter(function (t) { return t && /USDT$/.test(t.symbol || ''); })
+      .sort(function (a, b) { return (parseFloat(b.usdtVolume) || 0) - (parseFloat(a.usdtVolume) || 0); })
+      .slice(0, 60).map(function (t) { return t.symbol; });
+    $('symList').innerHTML = syms.map(function (s) { return '<option value="' + esc(s) + '">'; }).join('');
+  }
+
+  function tmsg(t) { $('tMsg').textContent = t || ''; }
+
+  if (!RC.LOGGED_IN) {
+    $('loginPitch').hidden = false;
+  } else {
+    $('acctPanel').hidden = false; $('ticketPanel').hidden = false;
+    $('posPanel').hidden = false; $('histPanel').hidden = false;
+    $('optin').hidden = false;
+    loadAccount();
+    setInterval(loadAccount, 20000);
+
+    $('dirLong').addEventListener('click', function () {
+      direction = 'LONG';
+      $('dirLong').classList.add('on-long'); $('dirShort').classList.remove('on-short');
+    });
+    $('dirShort').addEventListener('click', function () {
+      direction = 'SHORT';
+      $('dirShort').classList.add('on-short'); $('dirLong').classList.remove('on-long');
+    });
+    $('tLev').addEventListener('input', function () { $('levVal').textContent = $('tLev').value + '×'; });
+
+    $('openBtn').addEventListener('click', async function () {
+      $('openBtn').disabled = true; tmsg('Opening…');
+      var r = await RC.fetchJSON('/api/arena/open', { method: 'POST', body: {
+        symbol: $('tSym').value, direction: direction,
+        margin: Number($('tMargin').value), leverage: Number($('tLev').value),
+      }, timeoutMs: 14000 }).catch(function () { return null; });
+      $('openBtn').disabled = false;
+      if (r && r.ok) { tmsg('Filled ' + r.data.filled.direction + ' ' + r.data.filled.symbol + ' @ ' + fmtP(r.data.filled.entry)); loadAccount(); loadBoard(); }
+      else tmsg((r && r.data && r.data.error) || 'Open failed — try again.');
+    });
+
+    $('posBody').addEventListener('click', async function (e) {
+      var b = e.target.closest('[data-close]'); if (!b) return;
+      b.disabled = true;
+      var r = await RC.fetchJSON('/api/arena/close', { method: 'POST', body: { position_id: Number(b.getAttribute('data-close')) }, timeoutMs: 14000 }).catch(function () { return null; });
+      if (r && r.ok) { tmsg('Closed ' + r.data.closed.symbol + ' — PnL ' + (r.data.closed.pnl > 0 ? '+' : '') + fmt2(r.data.closed.pnl) + ' vUSDT'); loadAccount(); loadBoard(); }
+      else { b.disabled = false; tmsg((r && r.data && r.data.error) || 'Close failed — try again.'); }
+    });
+
+    $('optinBtn').addEventListener('click', async function () {
+      var h = $('handleInput').value.trim();
+      if (!h) { $('lbMsg').textContent = 'Pick a handle first.'; return; }
+      var r = await RC.fetchJSON('/api/leaderboard/opt-in', { method: 'POST', body: { handle: h }, timeoutMs: 12000 }).catch(function () { return null; });
+      $('lbMsg').textContent = r && r.ok ? 'You are on the board as “' + h + '”.' : ((r && r.data && (r.data.detail || r.data.error)) || 'Could not join the board.');
+      if (r && r.ok) loadBoard();
+    });
+  }
+
+  loadSymbols();
+  loadBoard();
+  setInterval(loadBoard, 45000);
+})();
+</script>
+</body>
+</html>

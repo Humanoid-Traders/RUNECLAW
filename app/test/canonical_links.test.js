@@ -20,7 +20,7 @@ const FILE_FOR = {
   '/developers': 'developers.html', '/status': 'status.html', '/guardian': 'guardian.html',
   '/intent': 'intent.html', '/firewall': 'firewall.html', '/escape': 'escape.html',
   '/sentinel': 'sentinel.html', '/stress': 'stress.html', '/flight': 'flight.html',
-  '/strengthmap': 'strengthmap.html',
+  '/strengthmap': 'strengthmap.html', '/arena': 'arena.html',
 };
 const read = (f) => fs.readFileSync(path.join(PUB, f), 'utf8');
 const canonOf = (h) => (h.match(/<link rel="canonical" href="([^"]+)"/) || [])[1];
