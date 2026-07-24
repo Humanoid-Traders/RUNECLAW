@@ -246,15 +246,34 @@ app.get('/escape', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); r
 app.get('/intent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'intent.html')); });
 app.get('/leaderboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'leaderboard.html')); });
 app.get('/arena', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'arena.html')); });
-// Public Arena trader card — SSR-lite: the handle is injected into the title
-// and og tags so shared links unfurl personally. The handle is regex-validated
-// then HTML-escaped; all data stays client-fetched from the §4-safe API.
-app.get('/trader/:handle', (req, res) => {
+// Public Arena trader card — SSR unfurl: the handle AND the trader's live
+// stats are injected into the title/og tags, so a pasted link unfurls as
+// "ace — +12.4% on the RUNECLAW Paper Arena · 🔥🎯 5 badges". §4: percent,
+// counts and badges only (the same public card the API serves — one source
+// of truth via fetchTraderCard). Handle regex-validated then HTML-escaped;
+// stat lookups are best-effort with the static text as fallback.
+app.get('/trader/:handle', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   const raw = String(req.params.handle || '').trim();
-  const safe = /^[A-Za-z0-9_]{3,20}$/.test(raw) ? raw : 'Arena trader';
+  const safe = (/^[A-Za-z0-9_]{3,20}$/.test(raw) ? raw : 'Arena trader').replace(/[&<>"']/g, '');
+  let ogline = 'Percent return, win rate and achievements on the RUNECLAW Paper Arena — same virtual stake for everyone, ranked on skill alone.';
+  let title = `${safe} — RUNECLAW Arena trader`;
+  try {
+    const card = await require('./lib/arena_trader').fetchTraderCard(raw);
+    if (card) {
+      const sign = card.return_pct > 0 ? '+' : '';
+      title = `${safe} — ${sign}${card.return_pct}% on the RUNECLAW Arena`;
+      const icons = (card.badges || []).map((b) => b.icon).join('');
+      ogline = `${sign}${card.return_pct}% all-time · ${card.closed_trades} closed trades`
+        + (card.win_rate_pct != null ? ` · ${card.win_rate_pct}% win rate` : '')
+        + (icons ? ` · ${icons} ${card.badges.length} achievement${card.badges.length === 1 ? '' : 's'}` : '')
+        + ' — same virtual stake for everyone, ranked on skill alone. Think you can beat them?';
+    }
+  } catch (e) { /* stats are decoration on the unfurl — the page still works */ }
   const html = require('fs').readFileSync(path.join(__dirname, 'public', 'trader.html'), 'utf8')
-    .replace(/__HANDLE__/g, safe.replace(/[&<>"']/g, ''));
+    .replace(/__TITLE__/g, title.replace(/[&<>"']/g, ''))
+    .replace(/__OGLINE__/g, ogline.replace(/[&<>"']/g, ''))
+    .replace(/__HANDLE__/g, safe);
   res.type('html').send(html);
 });
 // Digital Asset Links — lets the Android TWA app (Bubblewrap wrapper) open

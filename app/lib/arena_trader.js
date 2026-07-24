@@ -45,4 +45,27 @@ function buildTraderCard(ctx) {
   };
 }
 
-module.exports = { buildTraderCard, HANDLE_RE };
+/**
+ * Fetch + build the card for a handle (or null when unknown / no account).
+ * Used by both the public API and the /trader/:handle SSR unfurl, so the
+ * share text and the page always agree.
+ */
+async function fetchTraderCard(handle) {
+  if (!HANDLE_RE.test(String(handle || ''))) return null;
+  const { pool } = require('../db');
+  const { getTickers } = require('./tickers');
+  const [u] = await pool.execute('SELECT id FROM users WHERE leaderboard_handle = ?', [handle]);
+  if (!u[0]) return null;
+  const userId = u[0].id;
+  const [acct] = await pool.execute('SELECT user_id, balance FROM arena_accounts WHERE user_id = ?', [userId]);
+  if (!acct[0]) return null;
+  const [positions] = await pool.execute(
+    'SELECT id, user_id, symbol, direction, entry, margin, leverage, source, tp, sl, opened_at FROM arena_positions WHERE user_id = ? ORDER BY id DESC', [userId]);
+  const [trades] = await pool.execute(
+    'SELECT id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at FROM arena_trades WHERE user_id = ? ORDER BY id DESC LIMIT 30', [userId]);
+  let marks = {};
+  try { marks = await getTickers(); } catch (e) { /* percent renders from balance */ }
+  return buildTraderCard({ handle, balance: acct[0].balance, positions, marks, trades });
+}
+
+module.exports = { buildTraderCard, fetchTraderCard, HANDLE_RE };
