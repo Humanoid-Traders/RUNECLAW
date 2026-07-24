@@ -245,7 +245,33 @@ app.get('/firewall', (req, res) => { res.setHeader('Cache-Control', 'no-cache');
 app.get('/escape', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'escape.html')); });
 app.get('/intent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'intent.html')); });
 app.get('/leaderboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'leaderboard.html')); });
-app.get('/arena', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'arena.html')); });
+// /arena — SSR unfurl: when a season exists, shared links carry its live
+// status ("RUNECLAW Arena · Genesis is LIVE"). §4: name + status + window
+// only; best-effort with the static pitch as fallback.
+app.get('/arena', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  let title = 'RUNECLAW — Paper Trading Arena';
+  let og = 'Trade live markets with a virtual 10,000 vUSDT stake — no API keys, no risk, real prices. Climb the leaderboard on percent return.';
+  try {
+    const { pool } = require('./db');
+    const seasons = require('./lib/arena_seasons');
+    const [rows] = await pool.execute('SELECT id, name, starts_at, ends_at FROM arena_seasons');
+    const season = rows[0];
+    if (season) {
+      const st = seasons.seasonStatus(season, new Date());
+      const when = st === 'live' ? `is LIVE until ${new Date(season.ends_at).toISOString().slice(0, 10)}`
+        : st === 'upcoming' ? `starts ${new Date(season.starts_at).toISOString().slice(0, 10)}`
+        : 'has ended — see the Hall of Champions';
+      title = `RUNECLAW Arena · ${season.name} ${st === 'live' ? 'is LIVE' : st}`;
+      og = `${season.name} ${when}. Same virtual stake for everyone, ranked on percent return under anonymous handles. ${og}`;
+    }
+  } catch (e) { /* static pitch remains */ }
+  const clean = (t) => t.replace(/[&<>"']/g, '');
+  const html = require('fs').readFileSync(path.join(__dirname, 'public', 'arena.html'), 'utf8')
+    .replace(/__ARENATITLE__/g, clean(title))
+    .replace(/__ARENAOG__/g, clean(og));
+  res.type('html').send(html);
+});
 // Public Arena trader card — SSR unfurl: the handle AND the trader's live
 // stats are injected into the title/og tags, so a pasted link unfurls as
 // "ace — +12.4% on the RUNECLAW Paper Arena · 🔥🎯 5 badges". §4: percent,

@@ -62,3 +62,20 @@ test('the watch boots with the server', () => {
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(srv, /startSeasonWatch\(\)/);
 });
+
+test('Genesis everywhere — landing ribbon + arena SSR unfurl carry the live season', () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const arena = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // landing ribbon: fetches the public season API, count-only extras (§4)
+  assert.match(index, /id="seasonRibbon"/);
+  assert.match(index, /api\/arena\/season/);
+  assert.match(index, /competing/);
+  assert.ok(!/\$\s?\d/.test(index.slice(index.indexOf('seasonRibbon'), index.indexOf('seasonRibbon') + 900)));
+  // arena unfurl: tokenized og tags + SSR injection with honest fallback
+  assert.match(arena, /__ARENATITLE__/);
+  assert.match(arena, /__ARENAOG__/);
+  assert.match(srv, /__ARENAOG__/);
+  assert.match(srv, /is LIVE until/);
+  assert.match(srv, /Hall of Champions/);
+});
