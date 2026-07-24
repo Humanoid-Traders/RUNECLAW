@@ -91,6 +91,16 @@
   .starter .t { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--gold-bright); margin-bottom: 6px; }
   .starter .step { font-size: var(--fs-sm); color: var(--text-2); padding: 3px 0; }
   .starter .step.done { color: var(--text-3); text-decoration: line-through; }
+  /* Live tape — new prints slide in; motion carries "this just happened". */
+  .tape-pulse { text-transform: none; letter-spacing: 0; font-family: var(--font-data); font-size: var(--fs-xs); color: var(--text-3); margin-left: auto; }
+  #tapePanel h2 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .tape-row { display: grid; grid-template-columns: 18px minmax(80px, 1fr) auto auto auto auto; gap: var(--s3); padding: 7px 4px; border-bottom: 1px solid var(--line); align-items: baseline; font-family: var(--font-data); font-size: var(--fs-sm); }
+  .tape-row .how { color: var(--text-3); font-size: var(--fs-xs); }
+  .tape-row .ago { color: var(--text-3); font-size: var(--fs-xs); text-align: right; }
+  .tape-row.tape-new { animation: tapeIn .5s ease-out; }
+  @keyframes tapeIn { from { transform: translateY(-8px); opacity: 0; background: rgba(230,176,60,.10); } to { transform: none; opacity: 1; background: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .tape-row.tape-new { animation: none; } }
+  @media (max-width: 520px) { .tape-row { grid-template-columns: 18px minmax(70px, 1fr) auto auto; } .tape-row .how, .tape-row .ago { display: none; } }
   .optin { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
   .optin input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: var(--fs-sm); }
   .cta { display: inline-block; margin-top: var(--s2); }
@@ -121,6 +131,15 @@
   <section class="panel" id="radarPanel" hidden>
     <h2>The battlefield <span class="muted" style="text-transform:none;letter-spacing:0">· live market · hover a blip</span></h2>
     <canvas id="mktRadar" style="width:100%;height:min(300px,42vw);display:block"></canvas>
+  </section>
+
+  <!-- Live tape — latest closes across the whole Arena (opted-in handles,
+       percent only). New prints slide in; the pulse line is counts only. -->
+  <section class="panel" id="tapePanel">
+    <h2><span data-i18n="arena.p_tape">Live tape</span>
+      <span class="muted" style="text-transform:none;letter-spacing:0">· latest closes · percent only</span>
+      <span class="tape-pulse" id="tapePulse"></span></h2>
+    <div id="tapeRows" aria-live="polite"><div class="empty" data-i18n="arena.tape_empty">Quiet tape — nothing closed yet. Be the first print of the day.</div></div>
   </section>
 
   <!-- Competition season banner + standings (populated when one is authored) -->
@@ -246,7 +265,7 @@
 </div>
 
 <script src="/js/app.js?v=3"></script>
-<script src="/js/i18n.js?v=14"></script>
+<script src="/js/i18n.js?v=15"></script>
 <script src="/js/radar3d.js?v=3" defer></script>
 <script>
 (function () {
@@ -406,6 +425,37 @@
         + '<span class="' + pnlCls(x.return_pct) + '">' + (x.return_pct > 0 ? '+' : '') + fmt2(x.return_pct) + '%</span>'
         + '<span class="tr">' + x.trades + ' trades</span></div>';
     }).join('') : '<div class="empty">Nobody on the board yet — open a paper trade, pick a handle, and take rank #1.</div>';
+  }
+
+  // Live tape — the floor's latest closes. A print seen for the first time
+  // (after the initial paint) slides in; refreshes never re-animate old rows.
+  var tapeSeen = {};
+  var tapeFirst = true;
+  var REASON_LABEL = { tp: '🎯 target', sl: '🛡 stop', liquidated: '💀 liquidated', manual: 'closed' };
+  function ago(iso) {
+    var s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    return s < 60 ? s + 's ago' : s < 3600 ? Math.floor(s / 60) + 'm ago'
+      : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago';
+  }
+  async function loadTape() {
+    var r = await RC.fetchJSON('/api/arena/tape', { auth: false, timeoutMs: 12000 }).catch(function () { return null; });
+    var d = r && r.ok && r.data;
+    if (!d) return;   // keep the last good tape on transient errors
+    $('tapePulse').textContent = d.traders + ' traders · ' + d.trades_24h + ' closes in 24h';
+    if (!d.rows.length) return;   // the i18n empty state stays up
+    $('tapeRows').innerHTML = d.rows.map(function (t) {
+      var key = t.handle + '|' + t.symbol + '|' + t.closed_at;
+      var fresh = !tapeFirst && !tapeSeen[key];
+      tapeSeen[key] = true;
+      return '<div class="tape-row' + (fresh ? ' tape-new' : '') + '">'
+        + '<span class="' + (t.direction === 'LONG' ? 'up-c' : 'down-c') + '">' + (t.direction === 'LONG' ? '▲' : '▼') + '</span>'
+        + '<span><a href="/trader/' + encodeURIComponent(t.handle) + '">' + esc(t.handle) + '</a></span>'
+        + '<span class="sym">' + esc(t.symbol) + '</span>'
+        + '<span class="' + pnlCls(t.pct) + '">' + (t.pct > 0 ? '+' : '') + fmt2(t.pct) + '%</span>'
+        + '<span class="how">' + (REASON_LABEL[t.reason] || esc(t.reason)) + '</span>'
+        + '<span class="ago">' + ago(t.closed_at) + '</span></div>';
+    }).join('');
+    tapeFirst = false;
   }
 
   async function loadSymbols() {
@@ -641,9 +691,11 @@
 
   loadSymbols();
   loadBoard();
+  loadTape();
   loadSeason();
   loadHall();
   setInterval(loadBoard, 45000);
+  setInterval(loadTape, 25000);
   setInterval(loadSeason, 60000);
 })();
 </script>

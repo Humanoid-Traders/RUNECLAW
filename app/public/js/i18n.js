@@ -96,6 +96,8 @@
     'arena.p_history': { en: 'Closed trades', es: 'Operaciones cerradas', zh: '已平倉交易', pt: 'Operações fechadas', fr: 'Trades clôturés', ar: 'الصفقات المغلقة' },
     'arena.p_board': { en: 'Arena leaderboard', es: 'Clasificación de la Arena', zh: '競技場排行榜', pt: 'Ranking da Arena', fr: 'Classement de l\'Arène', ar: 'لوحة صدارة الساحة' },
     'arena.p_season': { en: 'Competition season', es: 'Temporada de competición', zh: '比賽賽季', pt: 'Temporada de competição', fr: 'Saison de compétition', ar: 'موسم المنافسة' },
+    'arena.p_tape': { en: 'Live tape', es: 'Cinta en vivo', zh: '即時成交帶', pt: 'Fita ao vivo', fr: 'Bande en direct', ar: 'الشريط المباشر' },
+    'arena.tape_empty': { en: 'Quiet tape — nothing closed yet. Be the first print of the day.', es: 'Cinta tranquila — nada cerrado aún. Sé la primera operación del día.', zh: '成交帶安靜——尚無平倉。成為今天的第一筆吧。', pt: 'Fita calma — nada fechado ainda. Seja a primeira operação do dia.', fr: 'Bande calme — rien de clôturé pour l\'instant. Soyez le premier trade du jour.', ar: 'الشريط هادئ — لا صفقات مغلقة بعد. كن أول صفقة اليوم.' },
     'arena.p_follow': { en: 'Practice-follow the engine', es: 'Sigue al motor en modo práctica', zh: '跟隨引擎練習', pt: 'Siga o motor em modo prática', fr: 'Suivre le moteur en entraînement', ar: 'تابع المحرك تدريبيًا' },
     'arena.p_hall': { en: 'Hall of Champions', es: 'Salón de Campeones', zh: '冠軍殿堂', pt: 'Salão dos Campeões', fr: 'Panthéon des Champions', ar: 'قاعة الأبطال' },
     'arena.b_open': { en: 'Open paper position', es: 'Abrir posición de papel', zh: '開立模擬倉位', pt: 'Abrir posição simulada', fr: 'Ouvrir la position papier', ar: 'افتح المركز الورقي' },

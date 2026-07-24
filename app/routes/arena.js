@@ -289,6 +289,44 @@ router.get('/leaderboard', async (req, res) => {
   }
 });
 
+// GET /api/arena/tape — PUBLIC. The trading floor's live tape: the latest
+// closed paper trades from opted-in handles, newest first. §4: percent return
+// on margin only — no dollar amounts (not even virtual ones), no balances, no
+// user ids. Traders without a leaderboard handle never appear.
+router.get('/tape', async (req, res) => {
+  try {
+    const [trades] = await pool.execute(
+      'SELECT id, user_id, symbol, direction, margin, pnl, reason, closed_at FROM arena_trades ORDER BY id DESC LIMIT 40');
+    const [handles] = await pool.execute(
+      'SELECT id, leaderboard_handle FROM users WHERE leaderboard_handle IS NOT NULL');
+    const handleOf = new Map(handles.map((h) => [h.id, h.leaderboard_handle]));
+    const rows = trades
+      .filter((t) => handleOf.has(t.user_id))
+      .slice(0, 12)
+      .map((t) => ({
+        handle: handleOf.get(t.user_id),
+        symbol: t.symbol,
+        direction: t.direction,
+        pct: Number(t.margin) > 0 ? round2((Number(t.pnl) / Number(t.margin)) * 100) : 0,
+        reason: t.reason,
+        closed_at: t.closed_at,
+      }));
+    // Pulse line: counts only (§4-safe) — how alive the floor is right now.
+    const [accounts] = await pool.execute('SELECT user_id, balance FROM arena_accounts');
+    let trades24h = 0;
+    try {
+      const [cnt] = await pool.execute(
+        'SELECT COUNT(*) AS n FROM arena_trades WHERE closed_at >= ?',
+        [new Date(Date.now() - 24 * 3600 * 1000)]);
+      trades24h = Number(cnt[0] && cnt[0].n) || 0;
+    } catch (e) { /* pulse line degrades to 0, tape still serves */ }
+    res.json({ rows, traders: accounts.length, trades_24h: trades24h, virtual: true });
+  } catch (err) {
+    console.error('Arena tape error:', err.message);
+    res.status(500).json({ error: 'Tape unavailable' });
+  }
+});
+
 // POST /api/arena/follow { enabled, margin, leverage } — practice-follow the
 // engine's signal stream into this PAPER account. §4: paper only, revocable
 // any time; enabling starts from the CURRENT newest signal (never back-fills
