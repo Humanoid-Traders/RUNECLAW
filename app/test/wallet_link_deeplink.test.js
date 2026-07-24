@@ -50,3 +50,17 @@ test('a universal copy-link fallback covers every other wallet', () => {
   assert.match(html, /navigator\.clipboard/);
   assert.match(html, /window\.prompt\('Copy this link/);    // clipboard-less fallback
 });
+
+test('the wallet picker renders branded, self-contained wallet buttons', () => {
+  // Monogram marks use brand colors inline — recognition without any external
+  // image request (the page stays self-contained).
+  assert.match(html, /wl-logo/);
+  assert.match(html, /wl-grid/);
+  assert.match(html, /color: '#f6851b'/);          // MetaMask brand mark
+  assert.match(html, /className = 'wl-wallet'/);
+  // status area is a live region with a spinner + ok/err moods
+  assert.match(html, /wl-status/);
+  assert.match(html, /aria-live="polite"/);
+  assert.match(html, /wl-spin/);
+  assert.match(html, /prefers-reduced-motion/);
+});
