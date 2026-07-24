@@ -66,6 +66,8 @@
   .season-head .st-chip.upcoming { color: var(--gold-bright); border-color: var(--gold-bright); }
   .season-head .st-chip.ended { color: var(--text-3); }
   .season-head .cd { font-family: var(--font-data); color: var(--text-2); font-size: var(--fs-sm); }
+  .risk-preview { display: flex; gap: var(--s3); flex-wrap: wrap; margin-top: var(--s2); padding: 8px 10px; border: 1px dashed var(--line); border-radius: var(--radius-sm); font-size: var(--fs-xs); font-family: var(--font-data); color: var(--text-2); }
+  .risk-preview .hot { color: #ff9f45; }
   .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--s3); }
   .badge-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--gold-bright); color: var(--text-1); background: var(--surface-2); cursor: default; }
   .badge-chip.locked { border-color: var(--line); color: var(--text-3); opacity: .55; filter: grayscale(1); }
@@ -148,6 +150,7 @@
       <div><button class="btn btn--primary" id="openBtn" type="button">Open paper position</button></div>
     </div>
     <div class="tmsg" id="tMsg" role="status" aria-live="polite"></div>
+    <div class="risk-preview" id="riskPreview" aria-live="polite"></div>
   </section>
 
   <section class="panel" id="followPanel" hidden>
@@ -208,11 +211,13 @@
   var fmt2 = function (n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
   var direction = 'LONG';
   var paintFollow;   // assigned in the logged-in block; read by loadAccount
+  var lastBalance = null;   // feeds the pre-trade risk preview
 
   function pnlCls(n) { return n > 0 ? 'up-c' : n < 0 ? 'down-c' : ''; }
 
   function renderAccount(d) {
     var r = d.return_pct;
+    lastBalance = d.balance;
     $('stats').innerHTML =
       '<div class="stat"><div class="k">Balance</div><div class="v">' + fmt2(d.balance) + ' <span class="muted">vUSDT</span></div></div>'
       + '<div class="stat"><div class="k">Equity</div><div class="v">' + fmt2(d.equity) + ' <span class="muted">vUSDT</span></div></div>'
@@ -310,7 +315,21 @@
       direction = 'SHORT';
       $('dirShort').classList.add('on-short'); $('dirLong').classList.remove('on-long');
     });
-    $('tLev').addEventListener('input', function () { $('levVal').textContent = $('tLev').value + '×'; });
+    // Pre-trade risk preview — same math the server enforces (MMR 0.005):
+    // know your liquidation distance and stake share BEFORE you click.
+    function riskPreview() {
+      var m = Number($('tMargin').value) || 0, lv = Number($('tLev').value) || 1;
+      var liqMove = (1 - 0.005) / lv * 100;
+      var share = lastBalance > 0 ? (m / lastBalance * 100) : null;
+      var hot = liqMove <= 7 ? ' hot' : '';
+      $('riskPreview').innerHTML =
+        '<span>notional ' + fmt2(m * lv) + ' vUSDT</span>'
+        + '<span class="' + hot.trim() + '">a ' + liqMove.toFixed(1) + '% adverse move liquidates</span>'
+        + (share != null ? '<span>' + share.toFixed(1) + '% of your balance at risk</span>' : '');
+    }
+    $('tMargin').addEventListener('input', riskPreview);
+    $('tLev').addEventListener('input', function () { $('levVal').textContent = $('tLev').value + '×'; riskPreview(); });
+    riskPreview();
 
     $('openBtn').addEventListener('click', async function () {
       $('openBtn').disabled = true; tmsg('Opening…');
@@ -354,7 +373,19 @@
       : s.status === 'upcoming' ? ('starts in ' + dDays + 'd ' + dHrs + 'h') : 'final standings';
     $('seasonHead').innerHTML = '<span class="nm">' + esc(s.name) + '</span>'
       + '<span class="st-chip ' + esc(s.status) + '">' + esc(s.status) + '</span>'
-      + '<span class="cd">' + esc(cd) + '</span>';
+      + '<span class="cd">' + esc(cd) + '</span>'
+      + '<button class="chip" id="shareSeason" type="button" style="margin-left:auto;cursor:pointer">🔗 Share the season</button>';
+    var sb = document.getElementById('shareSeason');
+    if (sb) sb.addEventListener('click', function () {
+      // §4: the share text carries the mechanism, never a number.
+      var text = '“' + s.name + '” is ' + (s.status === 'live' ? 'LIVE' : s.status)
+        + ' on the RUNECLAW Paper Arena — same virtual stake for everyone, ranked purely on percent return. Think you can take the crown? '
+        + location.origin + '/arena';
+      var done = function () { sb.textContent = '✅ Copied — paste it anywhere'; };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () { window.prompt('Copy this:', text); });
+      } else { window.prompt('Copy this:', text); }
+    });
     var rows = d.rows || [];
     $('seasonRows').innerHTML = s.status === 'upcoming'
       ? '<div class="empty">Standings open when the season starts — trades closed inside the window count.</div>'

@@ -125,3 +125,13 @@ test('the /arena page mounts the practice-follow panel + signal chips', () => {
   assert.match(html, /never back-fills/i);
   assert.match(html, /⚡ signal/);
 });
+
+test('the ticket shows a pre-trade risk preview + the season panel a §4-safe share', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /id="riskPreview"/);
+  assert.match(html, /adverse move liquidates/);
+  assert.match(html, /of your balance at risk/);
+  assert.match(html, /id="shareSeason"|shareSeason/);
+  // the share text sells the mechanism, never a number (§4)
+  assert.match(html, /same virtual stake for everyone/);
+});
