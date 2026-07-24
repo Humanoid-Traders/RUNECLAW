@@ -66,6 +66,9 @@
   .season-head .st-chip.upcoming { color: var(--gold-bright); border-color: var(--gold-bright); }
   .season-head .st-chip.ended { color: var(--text-3); }
   .season-head .cd { font-family: var(--font-data); color: var(--text-2); font-size: var(--fs-sm); }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--s3); }
+  .badge-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--gold-bright); color: var(--text-1); background: var(--surface-2); cursor: default; }
+  .badge-chip.locked { border-color: var(--line); color: var(--text-3); opacity: .55; filter: grayscale(1); }
   .optin { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
   .optin input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: var(--fs-sm); }
   .cta { display: inline-block; margin-top: var(--s2); }
@@ -124,6 +127,7 @@
   <section class="panel" id="acctPanel" hidden>
     <h2>Your paper account <span class="muted" style="text-transform:none;letter-spacing:0">· virtual funds only</span></h2>
     <div class="stats" id="stats"></div>
+    <div class="badges" id="badges"></div>
   </section>
 
   <section class="panel" id="ticketPanel" hidden>
@@ -218,6 +222,11 @@
         + '<td class="muted">' + esc(t.reason) + '</td></tr>';
     }).join('');
     $('histEmpty').hidden = (d.history || []).length > 0;
+    // Achievements — earned bright, locked dimmed with what's left to earn.
+    $('badges').innerHTML = (d.badges || []).map(function (b) {
+      return '<span class="badge-chip' + (b.earned ? '' : ' locked') + '" title="' + esc(b.desc) + '">'
+        + b.icon + ' ' + esc(b.name) + '</span>';
+    }).join('');
   }
 
   async function loadAccount() {

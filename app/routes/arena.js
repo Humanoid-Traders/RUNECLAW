@@ -99,6 +99,8 @@ router.get('/account', authMiddleware, async (req, res) => {
         };
       }),
       history,
+      badges: require('../lib/arena_badges').computeArenaBadges({
+        trades: history, returnPct: arena.returnPct(eq) }),
       virtual: true,   // §4: this account holds no real funds
     });
   } catch (err) {
