@@ -490,6 +490,52 @@
     loadAlertList();
   }
 
+  /* ══════════ "While you were away" — the app remembers you ══════════ */
+  // Fetched ONCE per page load (reading it advances the server-side window,
+  // so every count is real activity over YOUR absence — never back-filled).
+  // Shown on Home only when the absence was real (6h+) and something actually
+  // happened; dismiss lasts until the next visit. Private surface: the
+  // caller's own vUSDT arena pnl is allowed here.
+  let sinceDigest = null;
+  function fmtAway(s) {
+    const h = Math.floor(s / 3600);
+    return h >= 48 ? Math.floor(h / 24) + ' days' : h >= 1 ? h + 'h' : Math.max(1, Math.floor(s / 60)) + 'm';
+  }
+  function sinceCardHtml() {
+    const d = sinceDigest;
+    const parts = [];
+    if (d.signals_new) parts.push(`<a class="btn btn--ghost btn--sm" href="#signals">📡 ${d.signals_new} new signal${d.signals_new === 1 ? '' : 's'}</a>`);
+    if (d.events_new) parts.push(`<a class="btn btn--ghost btn--sm" href="#feed">🧠 ${d.events_new} engine event${d.events_new === 1 ? '' : 's'}</a>`);
+    if (d.arena && d.arena.closes) parts.push(`<a class="btn btn--ghost btn--sm" href="/arena">🏟️ ${d.arena.closes} paper close${d.arena.closes === 1 ? '' : 's'} <span class="${pnlClass(d.arena.pnl)}">${signed(d.arena.pnl)} vUSDT</span></a>`);
+    return `<section class="panel panel--primary" id="p-since">
+      <h2 class="panel-title">👋 While you were away <span class="right muted small">gone ${fmtAway(d.away_s)}</span></h2>
+      <div class="row" style="gap:var(--s2);flex-wrap:wrap">${parts.join('')}</div>
+      <button class="btn btn--ghost btn--sm mt-3" id="sinceDismiss" type="button">Caught up ✓</button>
+    </section>`;
+  }
+  function wireSinceDismiss() {
+    const b = document.getElementById('sinceDismiss');
+    if (b) b.onclick = () => {
+      sinceDigest = null;
+      const p = document.getElementById('p-since');
+      if (p) p.remove();
+    };
+  }
+  if (LOGGED_IN) {
+    fetchJSON('/api/since', { timeoutMs: 10000 }).then((r) => {
+      if (!r || !r.ok || !r.data || r.data.first_visit) return;
+      const d = r.data;
+      const happened = (d.signals_new || 0) + (d.events_new || 0) + ((d.arena && d.arena.closes) || 0);
+      if (d.away_s < 6 * 3600 || !happened) return;
+      sinceDigest = d;
+      // Home may already be on screen — slot the card in above the stack.
+      if (currentView === 'home' && !document.getElementById('p-since')) {
+        const stack = container.querySelector('.stack');
+        if (stack) { stack.insertAdjacentHTML('beforebegin', sinceCardHtml()); wireSinceDismiss(); }
+      }
+    }).catch(() => { /* digest is a nicety — never block the dashboard */ });
+  }
+
   /* ═══════════════ HOME ═══════════════ */
   async function renderHome() {
     container.innerHTML = viewHead('Home', 'Your account at a glance');
@@ -518,6 +564,7 @@
         if (p) p.remove();
       };
     }
+    if (sinceDigest) { container.insertAdjacentHTML('beforeend', sinceCardHtml()); wireSinceDismiss(); }
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>
