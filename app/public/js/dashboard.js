@@ -2015,7 +2015,51 @@
   async function renderTrade() {
     container.innerHTML = viewHead('Trade', 'Manual trading through the engine\'s risk gate');
     if (!LOGGED_IN) {
-      container.insertAdjacentHTML('beforeend', `<section class="panel">${loginGate('Log in to place paper trades — the same risk engine, zero risk.')}</section>`);
+      // Preview mode — show the REAL product with REAL public data (never
+      // fabricated numbers): the live market feed plus a disabled ticket, so
+      // a visitor sees exactly what they'd get before creating an account.
+      container.insertAdjacentHTML('beforeend', `
+        <div class="stack">
+          <section class="panel">${loginGate('Log in to place paper trades — the same risk engine, zero risk.')}</section>
+          <section class="panel" id="p-prevmkt">
+            <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>The live market — real data, right now
+              <span class="badge" style="margin-left:auto">public feed</span></h2>
+            <div id="c-prevmkt"><div class="skel"></div></div>
+          </section>
+          <section class="panel">
+            <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>The order ticket you'd be using
+              <span class="badge" style="margin-left:auto">preview</span></h2>
+            <p class="small muted" style="margin-bottom:var(--s3)">Every order — paper or live — runs the engine's
+            <b>23-check risk gate</b> before it exists. New accounts trade paper by default: real prices, real
+            liquidation math, zero risk.</p>
+            <div class="row" style="gap:var(--s3);flex-wrap:wrap;opacity:.55;pointer-events:none" aria-hidden="true">
+              <input class="input" value="BTCUSDT" disabled style="max-width:9rem">
+              <input class="input" value="LONG" disabled style="max-width:6rem">
+              <input class="input" value="margin 500" disabled style="max-width:8rem">
+              <input class="input" value="3× leverage" disabled style="max-width:8rem">
+              <button class="btn btn--primary" disabled>Open paper position</button>
+            </div>
+            <p style="margin-top:var(--s3)"><a class="btn btn--primary btn--sm" href="/">Create your free account</a>
+              <a class="btn btn--ghost btn--sm" href="/arena" style="margin-left:8px">Or try the Paper Arena first →</a></p>
+          </section>
+        </div>`);
+      // Real top-volume market rows from the public ticker feed.
+      renderPanel(document.getElementById('c-prevmkt'), async () => {
+        const r = await fetchJSON('/api/market/tickers', { auth: false, timeoutMs: 12000 });
+        const list = r.ok && r.data && Array.isArray(r.data.data) ? r.data.data : [];
+        if (!list.length) return null;
+        const rows = list.filter(t => /USDT$/.test(t.symbol || ''))
+          .sort((a, b) => (parseFloat(b.usdtVolume) || 0) - (parseFloat(a.usdtVolume) || 0))
+          .slice(0, 8)
+          .map(t => {
+            const ch = (parseFloat(t.change24h) || 0) * 100;
+            const cls = ch > 0 ? 'up' : ch < 0 ? 'down' : 'muted';
+            return `<div class="kv-row"><span><b>${esc(t.symbol)}</b></span>
+              <b class="num">${fmtPrice(parseFloat(t.lastPr))}
+              <span class="${cls}" style="margin-left:10px">${ch > 0 ? '+' : ''}${ch.toFixed(2)}%</span></b></div>`;
+          }).join('');
+        return rows + `<p class="small muted" style="margin-top:var(--s2)">Live Bitget USDT-M marks — the same feed the engine trades on.</p>`;
+      }, { empty: { icon: 'icon-radar', text: 'The market feed is unavailable right now.' } });
       return;
     }
     container.insertAdjacentHTML('beforeend', `
@@ -2448,7 +2492,44 @@
   async function renderPortfolio() {
     container.innerHTML = viewHead('Portfolio', 'Your equity, history, and journal');
     if (!LOGGED_IN) {
-      container.insertAdjacentHTML('beforeend', `<section class="panel">${loginGate('Log in to track your trades, equity curve, and journal.')}</section>`);
+      // Preview mode — the ENGINE's real public record (ratio stats only on
+      // this surface; the full record lives at /track) plus what an account
+      // unlocks. No fabricated numbers, ever.
+      container.insertAdjacentHTML('beforeend', `
+        <div class="stack">
+          <section class="panel">${loginGate('Log in to track your trades, equity curve, and journal.')}</section>
+          <section class="panel" id="p-prevtrack">
+            <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>The engine's real public record
+              <span class="badge" style="margin-left:auto">verifiable</span></h2>
+            <div id="c-prevtrack"><div class="skel"></div></div>
+          </section>
+          <section class="panel">
+            <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>What your account unlocks</h2>
+            ${[
+              ['📈', 'Your equity curve, drawdown chart and trade journal — built from your actual fills'],
+              ['🌐', 'Net worth everywhere — connected exchange + on-chain wallet, read-only'],
+              ['🏦', 'DeFi mirror — Aave health factors, Lido, Uniswap, with risk warnings'],
+              ['🏟️', 'A Paper Arena account with the same virtual stake as everyone'],
+              ['🛡️', 'The Guardian suite watching your book — alerts included'],
+            ].map(([i, t]) => `<div class="kv-row"><span>${i} ${t}</span><span class="muted small">🔒 free account</span></div>`).join('')}
+            <p style="margin-top:var(--s3)"><a class="btn btn--primary btn--sm" href="/">Create your free account</a>
+              <a class="btn btn--ghost btn--sm" href="/track" style="margin-left:8px">See the full track record →</a></p>
+          </section>
+        </div>`);
+      renderPanel(document.getElementById('c-prevtrack'), async () => {
+        const r = await fetchJSON('/api/public/track-record', { auth: false, timeoutMs: 14000 });
+        const s = r.ok && r.data && r.data.stats;
+        if (!s) return null;
+        const tile = (k, v, cls) => `<div class="stat"><div class="k">${k}</div><div class="v num ${cls || ''}">${v}</div></div>`;
+        return `<div class="row" style="gap:var(--s3);flex-wrap:wrap">
+            ${tile('Profit factor', s.profit_factor == null ? '—' : s.profit_factor.toFixed(2), (s.profit_factor || 1) >= 1 ? 'up' : 'down')}
+            ${tile('Win rate', s.win_rate_pct == null ? '—' : s.win_rate_pct.toFixed(1) + '%')}
+            ${tile('Closed trades', s.trades ?? '—')}
+            ${tile('Max drawdown', s.max_drawdown_pct == null ? '—' : s.max_drawdown_pct.toFixed(1) + '%', 'down')}
+          </div>
+          <p class="small muted" style="margin-top:var(--s2)">${esc(r.data.mode || '')} · every figure re-derivable from sealed fills —
+          this is the engine's record, and your account gets the same honest cockpit for yours.</p>`;
+      }, { empty: { icon: 'icon-chart', text: 'The public record is unavailable right now — see /track.' } });
       return;
     }
     container.insertAdjacentHTML('beforeend', `

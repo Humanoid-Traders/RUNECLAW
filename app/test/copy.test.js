@@ -191,5 +191,5 @@ test('§4: follow/copy never moves funds and copying is user-initiated paper', (
 
 test('cache-buster bumped so the follow/copy UI ships', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'dashboard.html'), 'utf8');
-  assert.match(html, /dashboard\.js\?v=(7[7-9]|8\d)/);
+  { const v = Number((html.match(/dashboard\.js\?v=(\d+)/) || [])[1]); assert.ok(v >= 77, `dashboard.js v>=77 (got ${v})`); }
 });
