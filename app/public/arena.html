@@ -97,6 +97,21 @@
     <div id="seasonRows"></div>
   </section>
 
+  <!-- Operator-only: author the next season (server re-checks plan=admin) -->
+  <section class="panel" id="seasonAdmin" hidden>
+    <h2>Launch a season <span class="muted" style="text-transform:none;letter-spacing:0">· operator only</span></h2>
+    <div class="ticket">
+      <div><label for="ssName">Season name</label>
+        <input id="ssName" maxlength="60" placeholder="Genesis Season" autocomplete="off"></div>
+      <div><label for="ssStart">Starts</label>
+        <input id="ssStart" type="datetime-local"></div>
+      <div><label for="ssEnd">Ends</label>
+        <input id="ssEnd" type="datetime-local"></div>
+      <div><button class="btn btn--primary" id="ssLaunch" type="button">Launch season</button></div>
+    </div>
+    <div class="tmsg" id="ssMsg" role="status" aria-live="polite"></div>
+  </section>
+
   <!-- Logged-out pitch -->
   <section class="panel" id="loginPitch" hidden>
     <h2>Join the arena</h2>
@@ -303,6 +318,23 @@
             + '<span class="' + pnlCls(x.return_pct) + '">' + (x.return_pct > 0 ? '+' : '') + fmt2(x.return_pct) + '%</span>'
             + '<span class="tr">' + x.trades + ' trades</span></div>';
         }).join('') : '<div class="empty">No closed trades in the window yet — the season crown is up for grabs.</div>';
+  }
+
+  // Operator-only season authoring — what to SHOW; the server re-checks admin.
+  if (RC.LOGGED_IN) {
+    RC.fetchJSON('/api/auth/me', { timeoutMs: 10000 }).then(function (me) {
+      if (!(me && me.ok && me.data && me.data.plan === 'admin')) return;
+      $('seasonAdmin').hidden = false;
+      $('ssLaunch').addEventListener('click', async function () {
+        var body = { name: $('ssName').value.trim(), starts_at: $('ssStart').value, ends_at: $('ssEnd').value };
+        if (!body.name || !body.starts_at || !body.ends_at) { $('ssMsg').textContent = 'Name, start and end are all required.'; return; }
+        $('ssLaunch').disabled = true;
+        var r = await RC.fetchJSON('/api/arena/season', { method: 'POST', body: body, timeoutMs: 12000 }).catch(function () { return null; });
+        $('ssLaunch').disabled = false;
+        $('ssMsg').textContent = r && r.ok ? 'Season launched — the banner is live.' : ((r && r.data && (r.data.detail || r.data.error)) || 'Launch failed.');
+        if (r && r.ok) loadSeason();
+      });
+    }).catch(function () {});
   }
 
   loadSymbols();

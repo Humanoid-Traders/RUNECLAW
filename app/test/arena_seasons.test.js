@@ -122,3 +122,12 @@ test('the /arena page mounts the season banner + standings', () => {
   assert.match(html, /ends in |starts in /);
   assert.match(html, /final standings/);
 });
+
+test('the /arena page mounts an operator-only season launcher', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /id="seasonAdmin"/);
+  assert.match(html, /plan === 'admin'/);        // client gate is display-only…
+  assert.match(html, /operator only/i);
+  // …the POST goes to the server route that re-checks admin (asserted above)
+  assert.match(html, /method: 'POST'/);
+});
