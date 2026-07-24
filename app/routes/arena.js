@@ -42,7 +42,7 @@ async function loadAccount(userId) {
 
 async function loadPositions(userId) {
   const [rows] = await pool.execute(
-    'SELECT id, user_id, symbol, direction, entry, margin, leverage, source, opened_at FROM arena_positions WHERE user_id = ? ORDER BY id DESC', [userId]);
+    'SELECT id, user_id, symbol, direction, entry, margin, leverage, source, tp, sl, opened_at FROM arena_positions WHERE user_id = ? ORDER BY id DESC', [userId]);
   return rows;
 }
 
@@ -55,7 +55,7 @@ async function sweepFollows(userId, positions, marks) {
   const follow = fr[0];
   if (!follow || !Number(follow.enabled)) return { follow: follow || null, positions };
   const [sigs] = await pool.execute(
-    'SELECT id, symbol, direction FROM signals WHERE id > ? ORDER BY id ASC LIMIT ?',
+    'SELECT id, symbol, direction, stop_loss, take_profit FROM signals WHERE id > ? ORDER BY id ASC LIMIT ?',
     [Number(follow.last_signal_id) || 0, 5]);
   if (!sigs.length) return { follow, positions };
   const acct = await loadAccount(userId);
@@ -63,9 +63,17 @@ async function sweepFollows(userId, positions, marks) {
     prefs: { margin: follow.margin, leverage: follow.leverage }, marks });
   let bal = acct.balance;
   for (const o of plan.opens) {
+    // Inherit the SIGNAL's own stop/target when they're valid against the
+    // live fill — practice-follow teaches the engine's real exits. An exit
+    // level the market already passed is dropped (never a fake fill).
+    const sig = sigs.find((s) => Number(s.id) === o.signal_id) || {};
+    const tsTp = arena.validateTpSl(o.direction, o.price, sig.take_profit, null);
+    const tsSl = arena.validateTpSl(o.direction, o.price, null, sig.stop_loss);
+    const tp = tsTp.ok ? tsTp.data.tp : null;
+    const sl = tsSl.ok ? tsSl.data.sl : null;
     await pool.execute(
-      'INSERT INTO arena_positions (user_id, symbol, direction, entry, margin, leverage, source, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [userId, o.symbol, o.direction, o.price, o.margin, o.leverage, 'signal', new Date()]);
+      'INSERT INTO arena_positions (user_id, symbol, direction, entry, margin, leverage, source, tp, sl, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, o.symbol, o.direction, o.price, o.margin, o.leverage, 'signal', tp, sl, new Date()]);
     bal -= o.margin;
   }
   if (plan.opens.length) {
@@ -77,23 +85,29 @@ async function sweepFollows(userId, positions, marks) {
   return { follow, positions: await loadPositions(userId) };
 }
 
-// Settle any liquidated positions at their liq price: the margin is gone
-// (pnl = -margin, the isolated-margin floor), the position closes, a history
-// row records it. Returns the surviving positions.
+// Settle automatic exits: liquidation (the margin is gone, no credit),
+// stop-loss and take-profit (closed at the trigger price, margin + pnl
+// credited back). One pass per account read; returns the survivors.
 async function settleLiquidations(userId, positions, marks) {
   const alive = [];
+  let credit = 0;
   for (const p of positions) {
     const mark = marks[p.symbol] && Number(marks[p.symbol].price);
-    if (mark > 0 && arena.isLiquidated(p, mark)) {
-      await pool.execute(
-        'INSERT INTO arena_trades (user_id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [userId, p.symbol, p.direction, p.entry, round2(arena.liqPrice(p)),
-          p.margin, p.leverage, -p.margin, 'liquidated', p.opened_at, new Date()]);
-      await pool.execute(
-        'DELETE FROM arena_positions WHERE id = ? AND user_id = ?', [p.id, userId]);
-    } else {
-      alive.push(p);
-    }
+    const exit = mark > 0 ? arena.exitCheck(p, mark) : null;
+    if (!exit) { alive.push(p); continue; }
+    const pnl = exit.reason === 'liquidated' ? -p.margin : arena.posPnl(p, exit.price);
+    await pool.execute(
+      'INSERT INTO arena_trades (user_id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, p.symbol, p.direction, p.entry, round2(exit.price),
+        p.margin, p.leverage, round2(pnl), exit.reason, p.opened_at, new Date()]);
+    await pool.execute(
+      'DELETE FROM arena_positions WHERE id = ? AND user_id = ?', [p.id, userId]);
+    if (exit.reason !== 'liquidated') credit += p.margin + pnl;
+  }
+  if (credit !== 0) {
+    const acct = await loadAccount(userId);
+    await pool.execute('UPDATE arena_accounts SET balance = ? WHERE user_id = ?',
+      [round2(acct.balance + credit), userId]);
   }
   return alive;
 }
@@ -132,6 +146,8 @@ router.get('/account', authMiddleware, async (req, res) => {
           pnl_pct: pnl == null ? null : round2(pnl / p.margin * 100),
           liq_price: arena.liqPrice(p),
           source: p.source || 'manual',
+          tp: p.tp == null ? null : p.tp,
+          sl: p.sl == null ? null : p.sl,
           opened_at: p.opened_at,
         };
       }),
@@ -165,12 +181,15 @@ router.post('/open', authMiddleware, tradeLimit, async (req, res) => {
     const t = marks[v.data.symbol];
     const price = t && Number(t.price);
     if (!(price > 0)) return res.status(400).json({ error: 'Unknown symbol — use a listed USDT-M pair like BTCUSDT' });
+    // Optional TP/SL — validated against the actual fill price.
+    const ts = arena.validateTpSl(v.data.direction, price, (req.body || {}).tp, (req.body || {}).sl);
+    if (!ts.ok) return res.status(400).json({ error: ts.error });
     await pool.execute(
-      'INSERT INTO arena_positions (user_id, symbol, direction, entry, margin, leverage, source, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [userId, v.data.symbol, v.data.direction, price, v.data.margin, v.data.leverage, 'manual', new Date()]);
+      'INSERT INTO arena_positions (user_id, symbol, direction, entry, margin, leverage, source, tp, sl, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, v.data.symbol, v.data.direction, price, v.data.margin, v.data.leverage, 'manual', ts.data.tp, ts.data.sl, new Date()]);
     await pool.execute('UPDATE arena_accounts SET balance = ? WHERE user_id = ?',
       [round2(acct.balance - v.data.margin), userId]);
-    res.json({ ok: true, filled: { symbol: v.data.symbol, direction: v.data.direction, entry: price, margin: v.data.margin, leverage: v.data.leverage } });
+    res.json({ ok: true, filled: { symbol: v.data.symbol, direction: v.data.direction, entry: price, margin: v.data.margin, leverage: v.data.leverage, tp: ts.data.tp, sl: ts.data.sl } });
   } catch (err) {
     console.error('Arena open error:', err.message);
     res.status(500).json({ error: 'Arena unavailable' });

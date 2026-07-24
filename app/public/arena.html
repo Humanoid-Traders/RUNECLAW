@@ -175,6 +175,10 @@
         <input id="tMargin" type="number" min="10" step="10" value="500"></div>
       <div><label for="tLev">Leverage<span class="lev-val" id="levVal">3×</span></label>
         <input id="tLev" type="range" min="1" max="20" step="1" value="3"></div>
+      <div><label for="tTp">Take-profit <span class="muted" style="text-transform:none">(optional)</span></label>
+        <input id="tTp" type="number" min="0" step="any" placeholder="auto-close in profit"></div>
+      <div><label for="tSl">Stop-loss <span class="muted" style="text-transform:none">(optional)</span></label>
+        <input id="tSl" type="number" min="0" step="any" placeholder="auto-close the loss"></div>
       <div><button class="btn btn--primary" id="openBtn" type="button">Open paper position</button></div>
     </div>
     <div class="tmsg" id="tMsg" role="status" aria-live="polite"></div>
@@ -199,7 +203,7 @@
   <section class="panel" id="posPanel" hidden>
     <h2>Open positions</h2>
     <div class="tbl-scroll"><table class="tbl"><thead><tr>
-      <th>Symbol</th><th>Side</th><th>Lev</th><th>Entry</th><th>Mark</th><th>PnL (vUSDT)</th><th>Liq. price</th><th></th>
+      <th>Symbol</th><th>Side</th><th>Lev</th><th>Entry</th><th>Mark</th><th>PnL (vUSDT)</th><th>TP / SL</th><th>Liq. price</th><th></th>
     </tr></thead><tbody id="posBody"></tbody></table></div>
     <div class="empty" id="posEmpty" hidden>No open positions — open your first paper trade above.</div>
   </section>
@@ -276,6 +280,7 @@
         + '<td>' + p.leverage + '×</td>'
         + '<td>' + fmtP(p.entry) + '</td><td>' + fmtP(p.mark) + '</td>'
         + '<td class="' + pnlCls(p.pnl) + pulseCls(p) + '">' + (p.pnl == null ? '—' : (p.pnl > 0 ? '+' : '') + fmt2(p.pnl) + ' (' + (p.pnl_pct > 0 ? '+' : '') + fmt2(p.pnl_pct) + '%)') + '</td>'
+        + '<td><span class="up-c">' + (p.tp != null ? fmtP(p.tp) : '—') + '</span> / <span class="down-c">' + (p.sl != null ? fmtP(p.sl) : '—') + '</span></td>'
         + '<td class="muted">' + fmtP(p.liq_price) + '</td>'
         + '<td><button class="closebtn" data-close="' + p.id + '" type="button">Close</button></td></tr>';
     }).join('');
@@ -448,6 +453,7 @@
       var r = await RC.fetchJSON('/api/arena/open', { method: 'POST', body: {
         symbol: $('tSym').value, direction: direction,
         margin: Number($('tMargin').value), leverage: Number($('tLev').value),
+        tp: $('tTp').value || null, sl: $('tSl').value || null,
       }, timeoutMs: 14000 }).catch(function () { return null; });
       $('openBtn').disabled = false;
       if (r && r.ok) { tmsg('Filled ' + r.data.filled.direction + ' ' + r.data.filled.symbol + ' @ ' + fmtP(r.data.filled.entry)); loadAccount(); loadBoard(); }

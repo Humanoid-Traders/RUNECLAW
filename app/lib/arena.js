@@ -92,7 +92,45 @@ function validateOpen(input, balance, openCount) {
   return { ok: true, data: { symbol, direction, margin, leverage } };
 }
 
+/**
+ * Validate optional TP/SL against direction + entry. Both are optional;
+ * when present they must sit on the correct side of the entry, and the SL
+ * must not be past the liquidation price (it could never fill).
+ * @returns { ok:true, data:{tp,sl} } | { ok:false, error }
+ */
+function validateTpSl(direction, entry, tpIn, slIn) {
+  const tp = tpIn == null || tpIn === '' ? null : Number(tpIn);
+  const sl = slIn == null || slIn === '' ? null : Number(slIn);
+  if (tp != null && !(tp > 0)) return { ok: false, error: 'take-profit must be a positive price' };
+  if (sl != null && !(sl > 0)) return { ok: false, error: 'stop-loss must be a positive price' };
+  const long = dirSign(direction) > 0;
+  if (tp != null && (long ? tp <= entry : tp >= entry)) {
+    return { ok: false, error: long ? 'take-profit must sit above the entry' : 'take-profit must sit below the entry' };
+  }
+  if (sl != null && (long ? sl >= entry : sl <= entry)) {
+    return { ok: false, error: long ? 'stop-loss must sit below the entry' : 'stop-loss must sit above the entry' };
+  }
+  return { ok: true, data: { tp, sl } };
+}
+
+/**
+ * The exit decision for one position at `mark` — liquidation first (the
+ * exchange always wins), then stop-loss, then take-profit.
+ * @returns null | { reason:'liquidated'|'sl'|'tp', price }
+ */
+function exitCheck(pos, mark) {
+  if (!(mark > 0)) return null;
+  if (isLiquidated(pos, mark)) return { reason: 'liquidated', price: liqPrice(pos) };
+  const long = dirSign(pos.direction) > 0;
+  const sl = pos.sl == null ? null : Number(pos.sl);
+  const tp = pos.tp == null ? null : Number(pos.tp);
+  if (sl != null && (long ? mark <= sl : mark >= sl)) return { reason: 'sl', price: sl };
+  if (tp != null && (long ? mark >= tp : mark <= tp)) return { reason: 'tp', price: tp };
+  return null;
+}
+
 module.exports = {
   START_BALANCE, MMR, MIN_MARGIN, MAX_LEVERAGE, MAX_OPEN,
   posPnl, liqPrice, isLiquidated, equity, returnPct, validateOpen,
+  validateTpSl, exitCheck,
 };

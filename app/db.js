@@ -275,11 +275,13 @@ class MemoryDB {
       return [Object.values(this.arenaAccounts).map(a => ({ ...a })), []];
     }
     if (cmd.includes('INSERT INTO ARENA_POSITIONS')) {
-      // params: user_id, symbol, direction, entry, margin, leverage, source, opened_at
+      // params: user_id, symbol, direction, entry, margin, leverage, source, tp, sl, opened_at
       this.arenaPositions.push({
         id: this._nextArenaPosId++, user_id: params[0], symbol: params[1],
         direction: params[2], entry: params[3], margin: params[4],
-        leverage: params[5], source: params[6] || 'manual', opened_at: params[7],
+        leverage: params[5], source: params[6] || 'manual',
+        tp: params[7] == null ? null : params[7], sl: params[8] == null ? null : params[8],
+        opened_at: params[9],
       });
       return [{ affectedRows: 1, insertId: this._nextArenaPosId - 1 }, []];
     }
@@ -1474,15 +1476,19 @@ async function migrate() {
         margin DOUBLE NOT NULL,
         leverage INT NOT NULL,
         source VARCHAR(10) NOT NULL DEFAULT 'manual',
+        tp DOUBLE NULL,
+        sl DOUBLE NULL,
         opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_arena_pos_user (user_id)
       )
     `);
-    // Back-fill `source` on pre-existing deployments (CREATE TABLE IF NOT
-    // EXISTS won't add the column).
+    // Back-fill columns on pre-existing deployments (CREATE TABLE IF NOT
+    // EXISTS won't add them).
     try {
       await pool.execute("ALTER TABLE arena_positions ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'manual'");
     } catch (e) { /* already present */ }
+    try { await pool.execute('ALTER TABLE arena_positions ADD COLUMN tp DOUBLE NULL'); } catch (e) { /* present */ }
+    try { await pool.execute('ALTER TABLE arena_positions ADD COLUMN sl DOUBLE NULL'); } catch (e) { /* present */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS arena_trades (
         id INT AUTO_INCREMENT PRIMARY KEY,
