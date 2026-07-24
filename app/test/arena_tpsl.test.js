@@ -127,3 +127,22 @@ test('the ticket + table ship the TP/SL surface', () => {
   assert.match(html, /id="tSl"/);
   assert.match(html, /TP \/ SL/);
 });
+
+test('discipline badges: planner (5 tp/sl closes) and bullseye (3 tp rides)', () => {
+  const { computeArenaBadges } = require('../lib/arena_badges');
+  const T = (reason) => ({ pnl: reason === 'sl' ? -50 : 100, reason, symbol: 'BTCUSDT' });
+  const rows = computeArenaBadges({
+    trades: [T('tp'), T('tp'), T('tp'), T('sl'), T('sl'), T('manual')], returnPct: 2 });
+  const by = (k) => rows.find((b) => b.key === k);
+  assert.ok(by('planner').earned, '5 tp/sl closes earn the planner');
+  assert.ok(by('target_hit').earned, '3 tp rides earn bullseye');
+  const none = computeArenaBadges({ trades: [T('manual')], returnPct: 0 });
+  assert.ok(!none.find((b) => b.key === 'planner').earned);
+});
+
+test('the ticket previews the live mark and reward:risk', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /api\/market\/ticker\//);
+  assert.match(html, /R:R /);
+  assert.match(html, /wrong side of the mark/);
+});

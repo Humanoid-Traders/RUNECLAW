@@ -16,7 +16,7 @@ const earned = (rows, key) => rows.find((b) => b.key === key).earned;
 
 test('a fresh account has everything locked, listed', () => {
   const rows = computeArenaBadges({ trades: [], returnPct: 0 });
-  assert.equal(rows.length, 9);
+  assert.equal(rows.length, 11);
   assert.ok(rows.every((b) => !b.earned));
   assert.ok(rows.every((b) => b.icon && b.name && b.desc));
 });
