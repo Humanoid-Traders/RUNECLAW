@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Universal Escape Agent</title>
+<meta name="description" content="A dependency-aware emergency exit planner for complex crypto portfolios. Add your perps, loans, collateral, LPs, staking, spot and bridged assets and the Escape Agent sequences a safe unwind — close leverage first, repay debt to unlock collateral, exit LPs and staking, convert and bridge home — and flags what's locked. Planning only, no execution.">
+<meta property="og:title" content="RUNECLAW — Universal Escape Agent">
+<meta property="og:description" content="Plan the way out before you need it: a dependency-aware emergency unwind for perps, loans, collateral, LPs, staking and bridged assets. Ordered steps, dependencies and locked-asset flags. Planning only, not advice.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/escape">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Universal Escape Agent">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  .es-wrap { max-width: 940px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); } .topnav a:hover { color: var(--text-1); }
+  .es-hero h1 { font-family: var(--font-display); letter-spacing: .05em; font-size: clamp(26px, 4vw, 40px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 72ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
+  .rowh, .row { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1.2fr 30px; gap: var(--s2); align-items: center; }
+  .rowh { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-bottom: 6px; }
+  .row { margin-bottom: 6px; }
+  .row select, .row input { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 7px 8px; font: inherit; font-size: var(--fs-sm); }
+  .row .rm { background: none; border: 0; color: var(--text-3); cursor: pointer; font-size: 18px; }
+  .row .rm:hover { color: var(--down); }
+  .btn-row { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s3); }
+  .summary { border-left: 3px solid var(--gold-bright); padding: var(--s2) var(--s4); background: var(--surface-2); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; line-height: 1.6; }
+  .summary b { color: var(--text-1); }
+  /* Steps timeline */
+  .step { display: grid; grid-template-columns: 34px 1fr; gap: var(--s3); padding: var(--s3) 0; border-top: 1px solid var(--line); }
+  .step:first-child { border-top: 0; }
+  .step .n { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; font-family: var(--font-data); font-weight: 700; border: 1px solid var(--line-2); color: var(--text-2); }
+  .step.risk-high .n { border-color: #ff5c6c; color: #ff5c6c; } .step.risk-medium .n { border-color: #ff9f45; color: #ff9f45; } .step.risk-low .n { border-color: var(--up); color: var(--up); }
+  .step .act { font-weight: 600; }
+  .step .act .as { color: var(--gold-bright); } .step .act .ch { color: var(--text-3); font-size: var(--fs-xs); margin-left: 6px; }
+  .step .urg { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: #ff5c6c; border: 1px solid #ff5c6c; border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+  .step .rz { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; margin-top: 3px; }
+  .step .dep { color: var(--text-3); font-size: var(--fs-xs); margin-top: 3px; }
+  .blk { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
+  .blk:first-child { border-top: 0; } .blk .l { color: #e6c34b; }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+  .muted { color: var(--text-3); }
+</style>
+</head>
+<body>
+<div class="es-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/guardian">Guardian</a>
+    <a href="/stress">Stress Lab</a>
+    <a href="/dashboard">Open the app</a>
+  </nav>
+  <div class="es-hero"><h1>Universal Escape Agent</h1></div>
+  <p class="lede">The way out you plan <b>before</b> you need it. When things break, a complex book can't just be
+  dumped — you have to unwind it in the right order: close leverage before it liquidates, repay debt to unlock
+  collateral, exit LPs and staking to reclaim the underlying, then convert and bridge home. Add your positions and
+  the Escape Agent sequences a <b>dependency-aware</b> exit and flags what's <b>locked</b>. Planning only — it
+  never executes anything.</p>
+
+  <section class="panel">
+    <h2>Your positions</h2>
+    <div class="rowh"><span>Type</span><span>Asset</span><span>Where</span><span>Status</span><span></span></div>
+    <div id="rows"></div>
+    <div class="btn-row">
+      <button class="btn btn--sm" id="addRow" type="button">＋ Add position</button>
+      <button class="btn btn--ghost btn--sm" id="reset" type="button">Reset sample</button>
+    </div>
+  </section>
+
+  <div class="summary panel" id="summary" style="border-radius:var(--radius)"></div>
+
+  <section class="panel"><h2>Escape plan — in order</h2><div id="steps"></div></section>
+  <section class="panel" id="blkPanel" hidden><h2>Locked — can't exit yet</h2><div id="blockers"></div></section>
+
+  <p class="disc">This is a <b>planner</b>: it sequences an unwind and explains the dependencies, but it does not
+  move funds, place orders or sign anything — you execute each step yourself. Cooldowns, exit fees, slippage,
+  gas and bridge risk are real and not modelled here. A safety aid, not investment advice.</p>
+</div>
+
+<script src="/js/escape-model.js?v=1"></script>
+<script>
+(function () {
+  var E = window.EscapeModel;
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var TYPE_OPTS = [
+    ['perp', 'Perp / derivative'], ['borrow', 'Loan / borrow'], ['collateral', 'Supplied collateral'],
+    ['lp', 'LP position'], ['staked', 'Staked'], ['spot', 'Spot'], ['bridged', 'Bridged asset'],
+  ];
+  var SAMPLE = [
+    { type: 'perp', asset: 'SOL', chain: 'Bitget', status: 'nearLiq' },
+    { type: 'borrow', asset: 'USDT', chain: 'Aave' },
+    { type: 'collateral', asset: 'ETH', chain: 'Aave' },
+    { type: 'lp', asset: 'ETH/USDC', chain: 'Uniswap' },
+    { type: 'staked', asset: 'ETH', chain: 'Lido' },
+    { type: 'spot', asset: 'ARB', chain: 'Arbitrum' },
+    { type: 'bridged', asset: 'USDC', chain: 'Polygon' },
+  ];
+  var positions = SAMPLE.map(function (p) { return Object.assign({}, p); });
+  var $ = function (id) { return document.getElementById(id); };
+
+  function rowHtml(p, i) {
+    var opts = TYPE_OPTS.map(function (o) { return '<option value="' + o[0] + '"' + (p.type === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
+    var st = function (v, l) { return '<option value="' + v + '"' + (p.status === v ? ' selected' : '') + '>' + l + '</option>'; };
+    return '<div class="row" data-i="' + i + '">'
+      + '<select data-k="type">' + opts + '</select>'
+      + '<input data-k="asset" value="' + esc(p.asset || '') + '" maxlength="20" placeholder="ETH" autocomplete="off">'
+      + '<input data-k="chain" value="' + esc(p.chain || '') + '" maxlength="20" placeholder="Aave / chain" autocomplete="off">'
+      + '<select data-k="status">' + st('', 'Normal') + st('nearLiq', '⚡ Near liquidation') + st('locked', '🔒 Locked / vesting') + '</select>'
+      + '<button class="rm" data-rm="' + i + '" type="button" aria-label="Remove">×</button></div>';
+  }
+  function renderRows() { $('rows').innerHTML = positions.map(rowHtml).join(''); }
+
+  function toModel() {
+    return positions.map(function (p) {
+      return { type: p.type, asset: p.asset, chain: p.chain,
+        nearLiq: p.status === 'nearLiq', locked: p.status === 'locked' };
+    });
+  }
+  function render() {
+    var plan = E.buildPlan(toModel());
+    $('summary').innerHTML = '<b>Escape plan:</b> ' + esc(plan.summary)
+      + ' <span class="muted">· ' + plan.counts.steps + ' steps' + (plan.counts.blocked ? ' · ' + plan.counts.blocked + ' locked' : '') + '</span>';
+    $('steps').innerHTML = plan.steps.length ? plan.steps.map(function (s) {
+      return '<div class="step risk-' + esc(s.risk) + '"><div class="n">' + s.n + '</div><div>'
+        + '<div class="act">' + esc(s.action) + ' <span class="as">' + esc(s.asset) + '</span> ' + esc(s.label)
+        + (s.chain ? '<span class="ch">' + esc(s.chain) + '</span>' : '')
+        + (s.urgent ? '<span class="urg">act now</span>' : '') + '</div>'
+        + '<div class="rz">' + esc(s.reason) + '</div>'
+        + (s.depends_on && s.depends_on.length ? '<div class="dep">↳ ' + s.depends_on.map(esc).join('; ') + '</div>' : '')
+        + '</div></div>';
+    }).join('') : '<p class="muted small">Add positions above to generate a plan.</p>';
+    var bp = $('blkPanel');
+    if (plan.blockers.length) {
+      bp.hidden = false;
+      $('blockers').innerHTML = plan.blockers.map(function (b) {
+        return '<div class="blk"><span class="l">🔒</span><span><b>' + esc(b.asset) + '</b> <span class="muted">(' + esc(b.type) + (b.chain ? ' · ' + esc(b.chain) : '') + ')</span> — ' + esc(b.reason) + '</span></div>';
+      }).join('');
+    } else { bp.hidden = true; }
+  }
+
+  $('rows').addEventListener('input', function (e) {
+    var row = e.target.closest('[data-i]'); if (!row) return;
+    var i = Number(row.getAttribute('data-i')), k = e.target.getAttribute('data-k');
+    if (!positions[i] || !k) return;
+    positions[i][k] = e.target.value;
+    render();
+  });
+  $('rows').addEventListener('click', function (e) {
+    var rm = e.target.closest('[data-rm]'); if (!rm) return;
+    positions.splice(Number(rm.getAttribute('data-rm')), 1); renderRows(); render();
+  });
+  $('addRow').addEventListener('click', function () { positions.push({ type: 'spot', asset: '', chain: '', status: '' }); renderRows(); render(); });
+  $('reset').addEventListener('click', function () { positions = SAMPLE.map(function (p) { return Object.assign({}, p); }); renderRows(); render(); });
+
+  if (!E) { $('steps').innerHTML = '<p class="muted">The Escape Agent model failed to load.</p>'; return; }
+  renderRows(); render();
+})();
+</script>
+</body>
+</html>
