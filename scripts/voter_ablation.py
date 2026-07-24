@@ -41,6 +41,13 @@ CURATED = [
     "vwap", "vwap_bands", "fibonacci", "mtf_structure", "mtf_bos",
     "of_cvd_trend", "taker", "volume_spike", "poc_magnet", "sentiment",
     "wyckoff", "harmonic", "elliott",
+    # Tuning audit: the LIVE Elliott electorate votes under the typed labels
+    # below — the legacy "elliott" label above only mutes the fallback voter
+    # that fires when no typed pattern exists, so the 2026-07-03 ablation
+    # never actually attributed Elliott. fib_extension and candles_mtf were
+    # likewise absent and have zero drop-one evidence.
+    "ew_impulse", "ew_corrective", "ew_diagonal", "ew_wxy", "ew_mtf_align",
+    "fib_extension", "candles_mtf",
 ]
 
 _PATS = {

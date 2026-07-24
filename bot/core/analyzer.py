@@ -343,6 +343,68 @@ def _apply_vwap_setup_anchoring(indicators: dict, strategy_type: str) -> None:
 
 # ── Limit entry helper ───────────────────────────────────────────
 
+def _extract_pattern_indicators_impl(indicators: dict, chart_patterns: list) -> None:
+    """Derive every typed pattern key the confluence voters read from a raw
+    scan_all_chart_patterns result — SHARED by analyze() and scan_read so the
+    two paths can never drift (tuning audit: scan_read stored the raw list
+    only, silencing every pattern-family voter in /scan scoring).
+    """
+    indicators["chart_patterns_geo"] = chart_patterns
+    # De-correlation (audit fix #5): Wyckoff / Harmonic / Elliott /
+    # Fib-extension results vote through their own DEDICATED voters —
+    # counting them in the aggregate chart_patterns vote too double-counted
+    # the same evidence. The aggregate covers only the purely-geometric
+    # patterns (H&S, double top, flags, ...).
+    def _has_dedicated_voter(p: dict) -> bool:
+        n = p.get("name", "")
+        return ("Wyckoff" in n or "Harmonic" in n or "Elliott" in n
+                or any(h in n for h in ("Gartley", "Butterfly", "Bat", "Crab"))
+                or "Liquidity Sweep" in n
+                or ("Fibonacci" in n and "ext" in n.lower()))
+    if CONFIG.analyzer.pattern_dedup_enabled:
+        agg_patterns = [p for p in chart_patterns if not _has_dedicated_voter(p)]
+    else:
+        agg_patterns = chart_patterns
+    bullish_geo = [p for p in agg_patterns if p.get("signal") == "bullish"]
+    bearish_geo = [p for p in agg_patterns if p.get("signal") == "bearish"]
+    indicators["chart_patterns_bullish_count"] = len(bullish_geo)
+    indicators["chart_patterns_bearish_count"] = len(bearish_geo)
+    # Weighted score uses pattern confidence values
+    indicators["chart_patterns_bullish_weight"] = round(
+        sum(p.get("confidence", 0.5) for p in bullish_geo), 2
+    )
+    indicators["chart_patterns_bearish_weight"] = round(
+        sum(p.get("confidence", 0.5) for p in bearish_geo), 2
+    )
+    # Extract specific wave patterns for dedicated voters
+    for p in chart_patterns:
+        name = p.get("name", "")
+        if "Wyckoff" in name:
+            indicators["wyckoff_pattern"] = p
+        elif "Harmonic" in name or any(h in name for h in ("Gartley", "Butterfly", "Bat", "Crab")):
+            indicators["harmonic_pattern"] = p
+        elif "Elliott" in name:
+            # Store ALL Elliott patterns (impulse + corrective + diagonal + WXY)
+            # keyed by type to avoid overwrite when multiple are detected.
+            if "Impulse" in name or "Truncated" in name or "Extended" in name:
+                indicators["elliott_impulse"] = p
+            elif "ABC" in name:
+                indicators["elliott_corrective"] = p
+            elif "Diagonal" in name:
+                indicators["elliott_diagonal"] = p
+            elif "WXY" in name or "WXYXZ" in name:
+                indicators["elliott_wxy"] = p
+            # Keep legacy key for backward compatibility
+            indicators["elliott_pattern"] = p
+        elif "Fibonacci" in name and "ext" in name.lower():
+            indicators["fib_extensions"] = p
+        elif "Liquidity Sweep" in name:
+            # Fallback evidence for the sweep voter when the
+            # dedicated module detects nothing (audit: this result
+            # was excluded from the aggregate AND had no consumer).
+            indicators["chart_sweep"] = p
+
+
 def _compute_limit_entry(
     current_price: float, atr: float, direction: Direction,
     indicators: dict, closes: np.ndarray,
@@ -391,12 +453,22 @@ def _compute_limit_entry(
     if poc is not None and poc > 0:
         candidates.append(float(poc))
 
-    # 4. Fibonacci levels from chart patterns
+    # 4. PRICE levels from chart patterns. key_levels also carries metadata —
+    # bar indices (*_idx), fib RATIOS (w3_fib=1.618, *_retrace*, y_ratio) and
+    # booleans (truncated=True; bool is int, so it read as a 1.0 "price") —
+    # which slipped into the candidate list and could actually bind as limit
+    # prices on sub-$2 symbols (tuning audit). Harvest genuine prices only.
     chart_patterns = indicators.get("chart_patterns_geo", [])
     for p in chart_patterns:
         levels = p.get("key_levels", {})
         for key, val in levels.items():
-            if isinstance(val, (int, float)) and val > 0:
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                continue
+            k = str(key).lower()
+            if (k.endswith("_idx") or k.endswith("_fib") or "retrace" in k
+                    or "ratio" in k or k in ("truncated", "extended_w3", "current_wave")):
+                continue
+            if val > 0:
                 candidates.append(float(val))
 
     # 5. Recent swing low (LONG) or swing high (SHORT)
@@ -476,6 +548,9 @@ class Analyzer:
     # When using non-OpenAI providers (Groq, Qwen, etc.), both tiers use the same model
     SCAN_MODEL = "gpt-4o-mini"     # overridden by CONFIG.llm.model if set
     THESIS_MODEL = "gpt-4o"        # overridden by CONFIG.llm.model if set
+
+    # Shared pattern-indicator derivation (analyze() + scan_read parity).
+    _extract_pattern_indicators = staticmethod(_extract_pattern_indicators_impl)
 
     def __init__(self, cost_tracker: Optional["CostTracker"] = None) -> None:  # noqa: F821
         # Build LLM client — supports 10 providers via BYOK system
@@ -876,60 +951,7 @@ class Analyzer:
         # ── Geometric chart pattern detection (H&S, double top/bottom, flags, etc.) ──
         chart_patterns = scan_all_chart_patterns(opens, highs, lows, closes)
         if chart_patterns:
-            indicators["chart_patterns_geo"] = chart_patterns
-            # De-correlation (audit fix #5): Wyckoff / Harmonic / Elliott /
-            # Fib-extension results vote through their own DEDICATED voters
-            # below — counting them in the aggregate chart_patterns vote too
-            # double-counted the same evidence. The aggregate now covers only
-            # the purely-geometric patterns (H&S, double top, flags, ...).
-            def _has_dedicated_voter(p: dict) -> bool:
-                n = p.get("name", "")
-                return ("Wyckoff" in n or "Harmonic" in n or "Elliott" in n
-                        or any(h in n for h in ("Gartley", "Butterfly", "Bat", "Crab"))
-                        or "Liquidity Sweep" in n
-                        or ("Fibonacci" in n and "ext" in n.lower()))
-            if CONFIG.analyzer.pattern_dedup_enabled:
-                agg_patterns = [p for p in chart_patterns if not _has_dedicated_voter(p)]
-            else:
-                agg_patterns = chart_patterns
-            bullish_geo = [p for p in agg_patterns if p.get("signal") == "bullish"]
-            bearish_geo = [p for p in agg_patterns if p.get("signal") == "bearish"]
-            indicators["chart_patterns_bullish_count"] = len(bullish_geo)
-            indicators["chart_patterns_bearish_count"] = len(bearish_geo)
-            # Weighted score uses pattern confidence values
-            indicators["chart_patterns_bullish_weight"] = round(
-                sum(p.get("confidence", 0.5) for p in bullish_geo), 2
-            )
-            indicators["chart_patterns_bearish_weight"] = round(
-                sum(p.get("confidence", 0.5) for p in bearish_geo), 2
-            )
-            # Extract specific wave patterns for dedicated voters
-            for p in chart_patterns:
-                name = p.get("name", "")
-                if "Wyckoff" in name:
-                    indicators["wyckoff_pattern"] = p
-                elif "Harmonic" in name or any(h in name for h in ("Gartley", "Butterfly", "Bat", "Crab")):
-                    indicators["harmonic_pattern"] = p
-                elif "Elliott" in name:
-                    # Store ALL Elliott patterns (impulse + corrective + diagonal + WXY)
-                    # keyed by type to avoid overwrite when multiple are detected.
-                    if "Impulse" in name or "Truncated" in name or "Extended" in name:
-                        indicators["elliott_impulse"] = p
-                    elif "ABC" in name:
-                        indicators["elliott_corrective"] = p
-                    elif "Diagonal" in name:
-                        indicators["elliott_diagonal"] = p
-                    elif "WXY" in name or "WXYXZ" in name:
-                        indicators["elliott_wxy"] = p
-                    # Keep legacy key for backward compatibility
-                    indicators["elliott_pattern"] = p
-                elif "Fibonacci" in name and "ext" in name.lower():
-                    indicators["fib_extensions"] = p
-                elif "Liquidity Sweep" in name:
-                    # Fallback evidence for the sweep voter when the
-                    # dedicated module detects nothing (audit: this result
-                    # was excluded from the aggregate AND had no consumer).
-                    indicators["chart_sweep"] = p
+            Analyzer._extract_pattern_indicators(indicators, chart_patterns)
 
         # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default ON) ──
         # Replaces the fixed 5-bar fractal Elliott read with one built on
@@ -4609,7 +4631,11 @@ class Analyzer:
             try:
                 gp = scan_all_chart_patterns(opens, highs, lows, closes)
                 if gp:
-                    indicators["chart_patterns_geo"] = gp
+                    # Parity (tuning audit): derive the TYPED pattern keys so
+                    # the pattern-family voters fire in /scan scoring exactly
+                    # as in analyze() — storing only the raw list silenced
+                    # every one of them here.
+                    Analyzer._extract_pattern_indicators(indicators, gp)
             except Exception:
                 pass
 
