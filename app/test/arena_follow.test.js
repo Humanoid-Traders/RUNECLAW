@@ -135,3 +135,14 @@ test('the ticket shows a pre-trade risk preview + the season panel a §4-safe sh
   // the share text sells the mechanism, never a number (§4)
   assert.match(html, /same virtual stake for everyone/);
 });
+
+test('the Arena mounts the 3D market radar with real feed data (reduced-motion safe lib)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /id="mktRadar"/);
+  assert.match(html, /js\/radar3d\.js/);
+  assert.match(html, /RC3DRadar\.mount/);
+  assert.match(html, /change24h/);                    // real 24h moves drive elevation
+  assert.match(html, /hover a blip/i);                // interactive affordance
+  const lib = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'radar3d.js'), 'utf8');
+  assert.match(lib, /prefers-reduced-motion/);
+});

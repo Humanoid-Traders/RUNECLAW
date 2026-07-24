@@ -88,6 +88,10 @@
     <h1>Safety for autonomous capital</h1>
     <p class="sub">AI agents that move real money need more than a good strategy — they need control, evidence and
     a way out. Guardian is that layer: the safety, control, evidence and recovery envelope around every decision.</p>
+    <!-- The envelope, drawn literally: six modules orbiting your capital.
+         Hover names a module; click opens it. Reduced-motion → one calm frame. -->
+    <canvas id="gdOrbit" style="width:100%;max-width:560px;height:230px;display:block;margin:var(--s3) auto 0"
+      aria-label="The six Guardian modules orbiting your capital — click a module to open it" role="img"></canvas>
     <div class="principle">
       <div class="p"><div class="a">The AI</div><div class="b">proposes</div></div>
       <div class="p"><div class="a">Controls</div><div class="b">authorize</div></div>
@@ -159,5 +163,19 @@
 <script src="/js/firewall-model.js?v=1"></script>
 <script src="/js/intent-model.js?v=2"></script>
 <script src="/js/guardian-console.js?v=2"></script>
+<script src="/js/guardian-orbit.js?v=1" defer></script>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  if (!window.RCGuardianOrbit) return;
+  RCGuardianOrbit.mount(document.getElementById('gdOrbit'), [
+    { label: 'Flight Recorder', emoji: '🛰️', href: '/flight' },
+    { label: 'Stress Lab', emoji: '🌀', href: '/stress' },
+    { label: 'Risk Sentinel', emoji: '📡', href: '/sentinel' },
+    { label: 'Intent Compiler', emoji: '🧭', href: '/intent' },
+    { label: 'Firewall', emoji: '🛡️', href: '/firewall' },
+    { label: 'Escape Agent', emoji: '🪂', href: '/escape' },
+  ]);
+});
+</script>
 </body>
 </html>

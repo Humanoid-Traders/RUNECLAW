@@ -48,3 +48,17 @@ test('the module pages cross-link back to the hub', () => {
     assert.match(html, /href="\/guardian"/, `${f} links to /guardian`);
   }
 });
+
+test('the hub hero mounts the 3D Guardian orbit — six clickable modules around the core', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'guardian.html'), 'utf8');
+  assert.match(html, /id="gdOrbit"/);
+  assert.match(html, /js\/guardian-orbit\.js/);
+  assert.match(html, /RCGuardianOrbit\.mount/);
+  for (const href of ['/flight', '/stress', '/sentinel', '/intent', '/firewall', '/escape']) {
+    assert.ok(html.includes(`href: '${href}'`), `orbit links ${href}`);
+  }
+  assert.match(html, /aria-label="The six Guardian modules/);
+  const lib = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'guardian-orbit.js'), 'utf8');
+  assert.match(lib, /prefers-reduced-motion/);
+  assert.match(lib, /depth/);                        // it's a depth-sorted 3D scene
+});
