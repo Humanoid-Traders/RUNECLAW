@@ -307,6 +307,16 @@
      same virtual stake; the public board ranks percent return under opt-in
      anonymous handles (§4: no dollar figures on this surface). -->
 <section class="section reveal-on-scroll" id="arenaTease" aria-labelledby="arena-h">
+  <!-- Live season ribbon — filled from the public season API when one exists.
+       §4: name, status, countdown, competitor COUNT only. -->
+  <div id="seasonRibbon" hidden style="margin-bottom:var(--s4)">
+    <a href="/arena" style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;justify-content:center;padding:10px 16px;border:1px solid var(--gold-bright);border-radius:999px;text-decoration:none;color:inherit">
+      <b id="srName" style="font-family:var(--font-display);letter-spacing:.04em"></b>
+      <span id="srStatus" style="font-family:var(--font-data);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--up)"></span>
+      <span id="srMeta" class="muted" style="font-family:var(--font-data);font-size:var(--fs-sm)"></span>
+      <span style="color:var(--gold-bright)" data-i18n="sec.arena_cta">Enter the Arena →</span>
+    </a>
+  </div>
   <div class="section-head">
     <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-target"></use></svg> <span>Paper Trading Arena</span></div>
     <h2 id="arena-h" data-i18n="sec.arena_h">Prove your edge before you risk a cent</h2>
@@ -1231,6 +1241,31 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catc
 })();
 </script>
 <script src="/js/ambient.js?v=1" defer></script>
+<script>
+// Live season ribbon — best-effort; the band reads fine without it.
+(function () {
+  fetch('/api/arena/season', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.season) return;
+      var s = d.season;
+      var esc = function (t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+      var target = s.status === 'upcoming' ? new Date(s.starts_at) : new Date(s.ends_at);
+      var left = Math.max(0, target.getTime() - Date.now());
+      var dd = Math.floor(left / 86400000), hh = Math.floor((left % 86400000) / 3600000);
+      var meta = s.status === 'live' ? ('ends in ' + dd + 'd ' + hh + 'h')
+        : s.status === 'upcoming' ? ('starts in ' + dd + 'd ' + hh + 'h') : 'final standings';
+      var n = (d.rows || []).length;
+      if (n) meta += ' · ' + n + ' competing';
+      document.getElementById('srName').textContent = '🏁 ' + s.name;
+      document.getElementById('srStatus').textContent = s.status;
+      document.getElementById('srMeta').textContent = meta;
+      document.getElementById('seasonRibbon').hidden = false;
+    })
+    .catch(function () { /* ribbon is decoration on the band */ });
+})();
+</script>
 <!-- Perf + a11y: the 3D hero statically imports three.js (~150KB+). Load it via
      a guarded dynamic import so (a) visitors who prefer reduced motion never
      download it at all, and (b) it's deferred to idle so it never competes with
