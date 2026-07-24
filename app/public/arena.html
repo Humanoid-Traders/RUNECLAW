@@ -281,6 +281,32 @@
   anonymous handles only. Practice and competition — not investment advice.</p>
 </div>
 
+<script>
+// Device-visible error trap — REGISTERED BEFORE every other script, in its
+// own tag, so even a parse error in the main bundle (old WebView, partial
+// load) surfaces as a banner with the message instead of silently missing
+// panels ("my trades vanished"). Operators can screenshot it; users can
+// one-tap reload.
+window.addEventListener('error', function (e) {
+  try {
+    if (document.getElementById('jsErr') || !document.body) return;
+    var d = document.createElement('div');
+    d.id = 'jsErr';
+    d.style.cssText = 'position:fixed;left:8px;right:8px;bottom:8px;z-index:99;background:#2a1214;border:1px solid #e05252;border-radius:10px;padding:10px 14px;font:12px monospace;color:#f2b8b8';
+    var btn = document.createElement('button');
+    btn.textContent = 'Reload';
+    btn.style.cssText = 'margin-left:10px;padding:2px 12px;border-radius:999px;border:1px solid #e05252;background:transparent;color:#f2b8b8;cursor:pointer';
+    btn.onclick = function () { location.reload(); };
+    var line = document.createElement('div');
+    line.style.cssText = 'opacity:.75;margin-top:4px;word-break:break-all';
+    line.textContent = String((e && e.message) || 'script error');
+    d.appendChild(document.createTextNode('A script error hit this page on your device — some panels may be missing.'));
+    d.appendChild(btn);
+    d.appendChild(line);
+    document.body.appendChild(d);
+  } catch (err) { /* the reporter itself must never throw */ }
+});
+</script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/i18n.js?v=15"></script>
 <script src="/js/chartread.js?v=1"></script>
@@ -512,7 +538,18 @@
     if (r && r.ok && r.data) {
       renderAccount(r.data);
       if (typeof paintFollow === 'function' && r.data.follow !== undefined) paintFollow(r.data.follow);
+      return;
     }
+    // HONEST failure state — a silently empty panel reads as "my trades
+    // vanished". Say what happened and offer the way back.
+    var msg = r && r.status === 401
+      ? 'Your session expired — <a href="/dashboard">sign in again</a> to see your paper account.'
+      : 'Your paper account can\'t load right now ('
+        + (r && r.data && r.data.error ? esc(r.data.error) : 'network error')
+        + '). <button class="btn btn--sm" id="acctRetry" type="button">Retry</button>';
+    $('stats').innerHTML = '<div class="empty">' + msg + '</div>';
+    var rb = $('acctRetry');
+    if (rb) rb.onclick = loadAccount;
   }
 
   async function loadBoard() {

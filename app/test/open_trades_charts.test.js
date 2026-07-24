@@ -49,6 +49,19 @@ test('arena: honesty — bridge down says so, thin candles say so, never invent'
   assert.match(arena, /not advice/);
 });
 
+test('arena: account failures speak — expired session, retry, no silent voids', () => {
+  // Operator-reported class: "don't see placed trades" with zero explanation.
+  assert.match(arena, /Your session expired/);
+  assert.match(arena, /id="acctRetry"/);
+  assert.match(arena, /r\.status === 401/);
+  // The device-visible error trap registers in its OWN script tag before the
+  // main bundle, so even a parse error surfaces as a banner, not a void.
+  const trapAt = arena.indexOf("window.addEventListener('error'");
+  const mainAt = arena.indexOf('/js/app.js');
+  assert.ok(trapAt > 0 && trapAt < mainAt, 'error trap precedes every other script');
+  assert.match(arena, /d\.id = 'jsErr'/);
+});
+
 test('arena: pattern/candle fetches are cached per symbol (rate-limit friendly)', () => {
   assert.match(arena, /chartData\[sym\]/);
   assert.match(arena, /120000/);
