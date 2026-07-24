@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Systemic Risk Sentinel</title>
+<meta name="description" content="A market-wide crowding radar: is the whole USDT-perp universe leaning one way, is funding running hot, is fresh leverage piling in, are moves correlating? The Systemic Risk Sentinel reads it from public data and flags the conditions behind coordinated unwinds — heuristics, not advice.">
+<meta property="og:title" content="RUNECLAW — Systemic Risk Sentinel">
+<meta property="og:description" content="Market-wide crowding + herding radar over the whole USDT-perp universe: funding heat, one-sided positioning, leverage surges and correlated moves — the conditions behind liquidation cascades. Public data, heuristic, not advice.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/sentinel">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Systemic Risk Sentinel">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  .sn-wrap { max-width: 1000px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); } .topnav a:hover { color: var(--text-1); }
+  .sn-hero h1 { font-family: var(--font-display); letter-spacing: .05em; font-size: clamp(26px, 4vw, 40px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 74ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
+  /* Gauge */
+  .gauge { display: flex; gap: var(--s4); align-items: center; flex-wrap: wrap; }
+  .gauge .score { font-family: var(--font-data); font-size: clamp(44px, 9vw, 68px); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .gauge .of { color: var(--text-3); font-size: var(--fs-md); }
+  .gauge .lvl { display: inline-block; font-family: var(--font-data); text-transform: uppercase; letter-spacing: .08em; font-size: var(--fs-sm); padding: 3px 12px; border-radius: 999px; border: 1px solid; margin-top: 8px; }
+  .gauge .track { flex: 1; min-width: 200px; }
+  .gbar { height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--up) 0%, #e6c34b 45%, #ff9f45 70%, #ff5c6c 100%); position: relative; }
+  .gbar .mk { position: absolute; top: -4px; width: 4px; height: 20px; border-radius: 2px; background: var(--text-1); box-shadow: 0 0 0 2px var(--bg); transition: left .5s cubic-bezier(.2,.8,.2,1); }
+  .gscale { display: flex; justify-content: space-between; color: var(--text-3); font-size: 10px; margin-top: 6px; font-family: var(--font-data); }
+  .lvl-calm { color: var(--up); border-color: var(--up); } .lvl-building { color: #e6c34b; border-color: #e6c34b; }
+  .lvl-elevated { color: #ff9f45; border-color: #ff9f45; } .lvl-high { color: #ff5c6c; border-color: #ff5c6c; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s3); margin-top: var(--s4); }
+  .tile { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--s3); }
+  .tile .k { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
+  .tile .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: var(--fs-lg); font-weight: 600; margin-top: 3px; }
+  /* Flags */
+  .flag { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); line-height: 1.5; }
+  .flag:first-child { border-top: 0; }
+  .flag .dot { flex: none; width: 10px; height: 10px; border-radius: 999px; margin-top: 5px; }
+  .sev-high .dot { background: #ff5c6c; } .sev-medium .dot { background: #ff9f45; } .sev-low .dot { background: var(--up); }
+  .flag .tx { color: var(--text-1); font-size: var(--fs-sm); }
+  /* Coin lists */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+  @media (max-width: 620px) { .cols { grid-template-columns: 1fr; } }
+  .col h3 { font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .05em; }
+  .row-c { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; font-family: var(--font-data); font-size: var(--fs-xs); padding: 5px 0; border-top: 1px solid var(--line); align-items: center; }
+  .row-c b { font-family: var(--font-display); letter-spacing: .02em; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--text-3); }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+  .empty { color: var(--text-3); padding: var(--s6) var(--s4); text-align: center; }
+  .skel { height: 90px; border-radius: var(--radius); background: linear-gradient(90deg, var(--surface), var(--surface-2), var(--surface)); background-size: 200% 100%; animation: sh 1.3s infinite; }
+  @keyframes sh { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .skel, .gbar .mk { animation: none; transition: none; } }
+</style>
+</head>
+<body>
+<div class="sn-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/strengthmap">Strength Map</a>
+    <a href="/stress">Stress Lab</a>
+    <a href="/dashboard">Open the app</a>
+  </nav>
+  <div class="sn-hero"><h1>Systemic Risk Sentinel</h1></div>
+  <p class="lede">A market-wide crowding radar. When the whole USDT-perp universe leans one way, funding runs
+  hot, fresh leverage piles in and moves start correlating, a coordinated unwind — a <b>liquidation cascade</b> —
+  gets more likely. The Sentinel reads those conditions across the market from <b>public data</b> and flags them.
+  Heuristic reads, not a verdict and not investment advice.</p>
+
+  <div id="root"><div class="panel"><div class="skel"></div></div></div>
+
+  <p class="disc">Public Bitget market data (funding, open interest, ΔOI, 24h direction) aggregated across the
+  perp universe. Open interest shown is a <b>market</b> figure — a public fact, never anyone's account or P&amp;L.
+  The gauge and flags are <b>heuristic crowding reads</b>, not predictions or signals; positioning can stay
+  crowded for a long time. Build your own safety envelope in the <a href="/dashboard#agents">app</a>.</p>
+</div>
+
+<script>
+(function () {
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var fmtUsd = function (v) { v = Number(v) || 0; var a = Math.abs(v);
+    if (a >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+    if (a >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    if (a >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'K'; return '$' + v.toFixed(0); };
+  var root = document.getElementById('root');
+
+  function coinRow(c, kind) {
+    var f = Number(c.funding_bps);
+    return '<div class="row-c"><b>' + esc(c.base) + '</b>'
+      + '<span class="' + (kind === 'surge' ? 'up' : (f >= 0 ? 'up' : 'down')) + '">'
+      + (kind === 'surge' ? ('ΔOI +' + Number(c.doi_pct).toFixed(0) + '%') : ((f >= 0 ? '+' : '') + f.toFixed(1) + ' bps'))
+      + '</span><span class="muted">' + fmtUsd(c.oi_usd) + ' OI</span></div>';
+  }
+
+  function render(d) {
+    if (!d || d.error || !d.gauge) { root.innerHTML = '<div class="empty">The market feed is unavailable right now. Try the <a href="/dashboard#markets">app</a>.</div>'; return; }
+    var lvl = d.gauge.level;
+    var mk = Math.max(0, Math.min(100, d.gauge.score));
+    var flags = (d.flags || []).map(function (f) {
+      return '<div class="flag sev-' + esc(f.severity) + '"><span class="dot"></span><span class="tx">' + esc(f.text) + '</span></div>';
+    }).join('');
+    var cl = (d.funding && d.funding.crowded_long) || [];
+    var cs = (d.funding && d.funding.crowded_short) || [];
+    var sg = (d.leverage && d.leverage.surging) || [];
+    function list(items, kind, emptyTxt) {
+      return items.length ? items.map(function (c) { return coinRow(c, kind); }).join('') : '<div class="muted small" style="padding:6px 0">' + emptyTxt + '</div>';
+    }
+    root.innerHTML =
+      '<section class="panel"><h2>Systemic stress</h2>'
+      + '<div class="gauge"><div><div class="score lvl-' + esc(lvl) + '">' + d.gauge.score + '<span class="of">/100</span></div>'
+      + '<div class="lvl lvl-' + esc(lvl) + '">' + esc(lvl) + '</div></div>'
+      + '<div class="track"><div class="gbar"><div class="mk" style="left:calc(' + mk + '% - 2px)"></div></div>'
+      + '<div class="gscale"><span>calm</span><span>building</span><span>elevated</span><span>high</span></div></div></div>'
+      + '<div class="tiles">'
+      + '<div class="tile"><div class="k">Universe</div><div class="v">' + d.universe + ' perps</div></div>'
+      + '<div class="tile"><div class="k">Total open interest</div><div class="v">' + fmtUsd(d.total_oi_usd) + '</div></div>'
+      + '<div class="tile"><div class="k">OI bias</div><div class="v ' + (d.bias.long_share_pct >= 50 ? 'up' : 'down') + '">' + d.bias.long_share_pct + '% ' + (d.bias.long_share_pct >= 50 ? 'long' : 'short') + '</div></div>'
+      + '<div class="tile"><div class="k">Herding</div><div class="v">' + d.herding.same_dir_pct + '% ' + esc(d.herding.direction) + '</div></div>'
+      + '<div class="tile"><div class="k">Avg funding</div><div class="v ' + (d.funding.avg_bps >= 0 ? 'up' : 'down') + '">' + (d.funding.avg_bps >= 0 ? '+' : '') + d.funding.avg_bps + ' bps</div></div>'
+      + '</div></section>'
+      + '<section class="panel"><h2>What the Sentinel sees</h2>' + flags + '</section>'
+      + '<section class="panel"><h2>Crowded books</h2><div class="cols">'
+      + '<div class="col"><h3>▲ Crowded long — funding hot (squeeze-down risk)</h3>' + list(cl, 'long', 'None — no crowded-long funding.') + '</div>'
+      + '<div class="col"><h3>▼ Crowded short — funding hot (squeeze-up risk)</h3>' + list(cs, 'short', 'None — no crowded-short funding.') + '</div>'
+      + '</div></section>'
+      + '<section class="panel"><h2>Leverage piling in — open-interest surges</h2>' + list(sg, 'surge', 'No notable OI surges right now.') + '</section>'
+      + '<p class="muted small">Updated ' + (d.generated_at ? new Date(d.generated_at).toLocaleTimeString() : '') + ' · refreshes live.</p>';
+  }
+
+  function load() {
+    fetch('/api/market/sentinel', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(render)
+      .catch(function () { root.innerHTML = '<div class="empty">The Sentinel is unavailable right now. Try again shortly.</div>'; });
+  }
+  load();
+  setInterval(load, 20000);
+})();
+</script>
+</body>
+</html>
