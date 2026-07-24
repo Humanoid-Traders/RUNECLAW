@@ -160,6 +160,7 @@
   <!-- Explore the flagship experiences straight from the hero, so a first-time
        visitor sees the breadth (not just a signup box). -->
   <div class="hero-explore" style="display:flex;gap:var(--s2);flex-wrap:wrap;justify-content:center;margin-top:var(--s3)">
+    <button class="btn btn--primary btn--sm" id="pwaInstall" type="button" hidden>📲 <span data-i18n="hero.install">Install the app</span></button>
     <a class="btn btn--ghost btn--sm" href="/arena">🏟️ <span data-i18n="hero.explore_arena">Paper Arena</span></a>
     <a class="btn btn--ghost btn--sm" href="/strengthmap">🌐 <span data-i18n="hero.explore_map">3D Strength Map</span></a>
     <a class="btn btn--ghost btn--sm" href="/guardian">🛡️ <span data-i18n="hero.explore_guardian">Guardian safety suite</span></a>
@@ -542,7 +543,7 @@
   </form>
 </section>
 
-<script src="/js/i18n.js?v=12"></script>
+<script src="/js/i18n.js?v=13"></script>
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=24" defer></script>
@@ -1211,6 +1212,23 @@ function renderFooterSocials(links){
   }catch{/* network error: keep the session, do not log out */}
 })();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
+// PWA install CTA — Android/Chrome fires beforeinstallprompt when the site is
+// installable; we stash the event and surface a one-tap Install chip in the
+// hero. Hidden again once installed (or when the browser never offers it).
+(function(){
+  var deferred=null, btn=document.getElementById('pwaInstall');
+  if(!btn) return;
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault(); deferred=e; btn.hidden=false;
+  });
+  btn.addEventListener('click', function(){
+    if(!deferred) return;
+    btn.disabled=true;
+    deferred.prompt();
+    deferred.userChoice.finally(function(){ deferred=null; btn.hidden=true; btn.disabled=false; });
+  });
+  window.addEventListener('appinstalled', function(){ deferred=null; btn.hidden=true; });
+})();
 </script>
 <script src="/js/ambient.js?v=1" defer></script>
 <!-- Perf + a11y: the 3D hero statically imports three.js (~150KB+). Load it via
