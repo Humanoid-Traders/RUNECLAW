@@ -417,4 +417,8 @@ app.use((err, req, res, next) => {
   // matches; a NEW pick pushes to that agent's followers who opted into
   // push_copy. Baseline-on-boot, best-effort, paper-only.
   require('./lib/copy_watch').startCopyWatch();
+
+  // Arena liquidation watch: one push when a paper position drifts within 3%
+  // of its liq price (hysteresis re-arm at 6% — never spams a hovering market).
+  require('./lib/arena_watch').startArenaWatch();
 })();
