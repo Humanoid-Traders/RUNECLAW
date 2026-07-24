@@ -254,7 +254,7 @@
     // Include the position's own levels when they sit near the price action
     // (a far-away liq price must not squash the candles flat).
     var span0 = hi - lo || 1;
-    ['entry', 'sl', 'tp', 'liq'].forEach(function (k) {
+    ['entry', 'exit', 'sl', 'tp', 'liq'].forEach(function (k) {
       var p = Number(opts[k]);
       if (p > 0 && p > lo - span0 * 0.6 && p < hi + span0 * 0.6) {
         if (p < lo) lo = p;
@@ -330,6 +330,7 @@
       s += '<text x="' + (PAD + iw + 3) + '" y="' + (Number(y) + 3.5) + '" font-size="9.5" font-family="monospace" fill="' + color + '">' + label + ' ' + fmt(p) + '</text>';
     }
     level(opts.entry, '#e6b03c', '', 'entry');
+    level(opts.exit, '#3fb6ff', '', 'exit');
     level(opts.tp, '#2fbf71', '6 4', 'tp');
     level(opts.sl, '#e05252', '6 4', 'sl');
     level(opts.liq, '#a33', '2 3', 'liq');

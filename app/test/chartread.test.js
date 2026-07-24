@@ -203,6 +203,14 @@ test('svgChart: engine levels, FVG zones, and wave labels render when supplied',
   assert.match(svg, /text-anchor="middle">3</);
 });
 
+test('svgChart: an exit level draws and extends the price domain (post-mortem)', () => {
+  const candles = path([[0, 100], [7, 90], [14, 110], [21, 100]]);
+  const svg = CR.svgChart(candles, { entry: 95, exit: 108, vwap: false, structure: false });
+  assert.match(svg, /entry 95/);
+  assert.match(svg, /exit 108/);
+  assert.match(svg, /#3fb6ff/);
+});
+
 test('svgChart and analytics degrade to empty/null on thin data — never invent', () => {
   assert.equal(CR.svgChart([], {}), '');
   assert.equal(CR.vwap([]), null);
