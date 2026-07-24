@@ -334,6 +334,13 @@ class RuneClawEngine:
         # Tick-START stamp (monotonic; None = not started) — lets the monitor
         # detect a HUNG tick, which increments no failure counter.
         self._last_tick_started_ts: float | None = None
+        # When the NEXT tick is due (monotonic; None = unknown): stamped
+        # before every inter-tick sleep so the stall watchdog can tell a
+        # PLANNED quiet-market sleep (smart-scan max is 600s — at or beyond
+        # the stall threshold itself) from a genuine hang. Root-caused from a
+        # production false alarm: 15s tick + 600s planned sleep = 615s since
+        # tick start, which tripped the 600s threshold.
+        self._next_tick_due_ts: float | None = None
         # Reciprocal watch on the proactive monitor loop (attached by the
         # Telegram handler at start_monitor; None when Telegram is off).
         self._proactive_monitor = None
@@ -2264,9 +2271,15 @@ class RuneClawEngine:
                 # Exponential backoff (2x per failure, capped) instead of a tight retry loop.
                 base = self._compute_smart_scan_interval()
                 backoff = min(base * (2 ** _consecutive_failures), _BACKOFF_CAP_S)
+                self._next_tick_due_ts = time.monotonic() + backoff
                 await asyncio.sleep(backoff)
                 continue
-            await asyncio.sleep(self._compute_smart_scan_interval())
+            _sleep_s = self._compute_smart_scan_interval()
+            # Stamp the plan BEFORE parking: the stall watchdog treats time
+            # inside a declared sleep as healthy, however long the smart-scan
+            # interval legitimately is.
+            self._next_tick_due_ts = time.monotonic() + _sleep_s
+            await asyncio.sleep(_sleep_s)
 
     async def _tick_guarded(self) -> None:
         """_tick() under a hard liveness cap — the self-HEAL to the monitor's
