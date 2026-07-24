@@ -66,6 +66,9 @@
   .season-head .st-chip.upcoming { color: var(--gold-bright); border-color: var(--gold-bright); }
   .season-head .st-chip.ended { color: var(--text-3); }
   .season-head .cd { font-family: var(--font-data); color: var(--text-2); font-size: var(--fs-sm); }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--s3); }
+  .badge-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--gold-bright); color: var(--text-1); background: var(--surface-2); cursor: default; }
+  .badge-chip.locked { border-color: var(--line); color: var(--text-3); opacity: .55; filter: grayscale(1); }
   .optin { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
   .optin input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: var(--fs-sm); }
   .cta { display: inline-block; margin-top: var(--s2); }
@@ -97,6 +100,21 @@
     <div id="seasonRows"></div>
   </section>
 
+  <!-- Operator-only: author the next season (server re-checks plan=admin) -->
+  <section class="panel" id="seasonAdmin" hidden>
+    <h2>Launch a season <span class="muted" style="text-transform:none;letter-spacing:0">· operator only</span></h2>
+    <div class="ticket">
+      <div><label for="ssName">Season name</label>
+        <input id="ssName" maxlength="60" placeholder="Genesis Season" autocomplete="off"></div>
+      <div><label for="ssStart">Starts</label>
+        <input id="ssStart" type="datetime-local"></div>
+      <div><label for="ssEnd">Ends</label>
+        <input id="ssEnd" type="datetime-local"></div>
+      <div><button class="btn btn--primary" id="ssLaunch" type="button">Launch season</button></div>
+    </div>
+    <div class="tmsg" id="ssMsg" role="status" aria-live="polite"></div>
+  </section>
+
   <!-- Logged-out pitch -->
   <section class="panel" id="loginPitch" hidden>
     <h2>Join the arena</h2>
@@ -109,6 +127,7 @@
   <section class="panel" id="acctPanel" hidden>
     <h2>Your paper account <span class="muted" style="text-transform:none;letter-spacing:0">· virtual funds only</span></h2>
     <div class="stats" id="stats"></div>
+    <div class="badges" id="badges"></div>
   </section>
 
   <section class="panel" id="ticketPanel" hidden>
@@ -203,6 +222,11 @@
         + '<td class="muted">' + esc(t.reason) + '</td></tr>';
     }).join('');
     $('histEmpty').hidden = (d.history || []).length > 0;
+    // Achievements — earned bright, locked dimmed with what's left to earn.
+    $('badges').innerHTML = (d.badges || []).map(function (b) {
+      return '<span class="badge-chip' + (b.earned ? '' : ' locked') + '" title="' + esc(b.desc) + '">'
+        + b.icon + ' ' + esc(b.name) + '</span>';
+    }).join('');
   }
 
   async function loadAccount() {
@@ -303,6 +327,23 @@
             + '<span class="' + pnlCls(x.return_pct) + '">' + (x.return_pct > 0 ? '+' : '') + fmt2(x.return_pct) + '%</span>'
             + '<span class="tr">' + x.trades + ' trades</span></div>';
         }).join('') : '<div class="empty">No closed trades in the window yet — the season crown is up for grabs.</div>';
+  }
+
+  // Operator-only season authoring — what to SHOW; the server re-checks admin.
+  if (RC.LOGGED_IN) {
+    RC.fetchJSON('/api/auth/me', { timeoutMs: 10000 }).then(function (me) {
+      if (!(me && me.ok && me.data && me.data.plan === 'admin')) return;
+      $('seasonAdmin').hidden = false;
+      $('ssLaunch').addEventListener('click', async function () {
+        var body = { name: $('ssName').value.trim(), starts_at: $('ssStart').value, ends_at: $('ssEnd').value };
+        if (!body.name || !body.starts_at || !body.ends_at) { $('ssMsg').textContent = 'Name, start and end are all required.'; return; }
+        $('ssLaunch').disabled = true;
+        var r = await RC.fetchJSON('/api/arena/season', { method: 'POST', body: body, timeoutMs: 12000 }).catch(function () { return null; });
+        $('ssLaunch').disabled = false;
+        $('ssMsg').textContent = r && r.ok ? 'Season launched — the banner is live.' : ((r && r.data && (r.data.detail || r.data.error)) || 'Launch failed.');
+        if (r && r.ok) loadSeason();
+      });
+    }).catch(function () {});
   }
 
   loadSymbols();
