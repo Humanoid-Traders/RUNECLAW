@@ -2179,7 +2179,7 @@ class RuneClawEngine:
         _BACKOFF_CAP_S = 300.0
         while self._running:
             try:
-                await self._tick()
+                await self._tick_guarded()
                 _consecutive_failures = 0
                 self._tick_consecutive_failures = 0
                 # Dead-man's switch: ping an external health endpoint (e.g.
@@ -2187,8 +2187,10 @@ class RuneClawEngine:
                 # process — the one failure mode Telegram alerting can never
                 # report — raises an alarm at the monitor's grace timeout.
                 # Throttled + fail-open; no-op unless HEALTHCHECK_PING_URL set.
-                await self._maybe_ping_healthcheck()
-                await self._maybe_check_monitor_liveness()
+                await self._with_maintenance_cap(
+                    self._maybe_ping_healthcheck(), "healthcheck ping")
+                await self._with_maintenance_cap(
+                    self._maybe_check_monitor_liveness(), "monitor liveness")
                 # Web wallet (2b): pull any pending exchange-credential requests
                 # the website queued and import them into the credential store.
                 # Throttled, fail-open, no-op unless WEB_CREDS_KEY is configured.
@@ -2197,7 +2199,8 @@ class RuneClawEngine:
                 # (close the user's live positions via THEIR own executor). Async,
                 # fail-open, throttled; guarded so it never touches another
                 # account's positions.
-                await self._maybe_flatten_web_requests()
+                await self._with_maintenance_cap(
+                    self._maybe_flatten_web_requests(), "web flatten requests")
                 # Nightly LLM self-audit (advisory-only, human merge gate):
                 # spawns as a background task at the configured quiet hour,
                 # at most once per ~24h; the proactive monitor delivers the
@@ -2215,13 +2218,15 @@ class RuneClawEngine:
                 # store. Cadenced by the publisher, fail-open, DEFAULT-OFF
                 # (PROOFOFPNL_PUBLISH_ENABLED); never touches trading.
                 try:
-                    await self._maybe_publish_proofofpnl()
+                    await self._with_maintenance_cap(
+                        self._maybe_publish_proofofpnl(), "proof-of-pnl publish")
                 except Exception as _pop_exc:
                     system_log.debug("Proof-of-PnL publish tick skipped: %s", _pop_exc)
                 # Per-user opt-in leaderboard publishing (community track).
                 # Triple-gated default-OFF, throttled, fail-open — see method.
                 try:
-                    await self._maybe_publish_user_leaderboards()
+                    await self._with_maintenance_cap(
+                        self._maybe_publish_user_leaderboards(), "user leaderboards")
                 except Exception as _ulb_exc:
                     system_log.debug("User leaderboard tick skipped: %s", _ulb_exc)
                 # Verifiable seasons: freeze in-window sealed statements into
@@ -2259,6 +2264,48 @@ class RuneClawEngine:
                 await asyncio.sleep(backoff)
                 continue
             await asyncio.sleep(self._compute_smart_scan_interval())
+
+    async def _tick_guarded(self) -> None:
+        """_tick() under a hard liveness cap — the self-HEAL to the monitor's
+        TICK_STALL self-diagnosis. A parked await (a network call whose
+        timeout isn't effective) used to hang the loop forever; now it is
+        cancelled and re-raised so the run() failure path COUNTS it (backoff,
+        degraded alerts) and the loop recovers without a human restart. The
+        cap is deliberately far above any legitimate tick (default 900s,
+        1.5x the TICK_STALL threshold, so the stall alert with its stack
+        diagnosis still fires first). 0 disables the guard entirely."""
+        cap = float(getattr(CONFIG.monitoring, "tick_hard_timeout_sec", 0.0) or 0.0)
+        if cap <= 0:
+            await self._tick()
+            return
+        try:
+            await asyncio.wait_for(self._tick(), timeout=cap)
+        except asyncio.TimeoutError:
+            audit(
+                system_log,
+                f"Tick exceeded the {cap:.0f}s hard timeout — cancelled the "
+                f"parked await to recover the loop (see the TICK_STALL stack "
+                f"diagnosis in the log for where it hung)",
+                action="tick", result="HARD_TIMEOUT",
+            )
+            raise
+
+    async def _with_maintenance_cap(self, coro, what: str):
+        """Bound a post-tick maintenance await. Each is throttled and
+        fail-open by design, so a hung one is cancelled QUIETLY (warning log)
+        and the loop simply moves on — unlike the tick itself, whose timeout
+        must count as a failure. 0 disables the cap."""
+        cap = float(getattr(CONFIG.monitoring,
+                            "tick_maintenance_timeout_sec", 0.0) or 0.0)
+        if cap <= 0:
+            return await coro
+        try:
+            return await asyncio.wait_for(coro, timeout=cap)
+        except asyncio.TimeoutError:
+            system_log.warning(
+                "Post-tick maintenance %r exceeded %.0fs — cancelled; "
+                "the loop continues", what, cap)
+            return None
 
     async def stop(self) -> None:
         self._running = False

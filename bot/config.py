@@ -1933,6 +1933,22 @@ class MonitoringConfig:
     # not run for this long — 10x its 30s cadence by default. 0 disables.
     monitor_liveness_timeout_sec: float = _env_float_bounded(
         "MONITOR_LIVENESS_TIMEOUT_SEC", 300.0, 0.0, 86400.0)
+    # Tick hang self-heal (born from a real production stall). A parked await
+    # inside _tick() — a network call whose timeout isn't effective — used to
+    # hang the loop forever until a human restarted the process. With this cap
+    # the tick is cancelled, COUNTED as a tick failure (backoff + alerts), and
+    # the loop recovers by itself. Generous by design: 1.5x the monitor's
+    # 600s TICK_STALL threshold, so the stall alert (with its stack diagnosis)
+    # still fires first and the timeout only ever ends a hang that is already
+    # a critical outage. 0 disables (pre-hardening behavior).
+    tick_hard_timeout_sec: float = _env_float_bounded(
+        "TICK_HARD_TIMEOUT_SEC", 900.0, 0.0, 7200.0)
+    # Same idea for the light post-tick maintenance awaits (healthcheck ping,
+    # web-credential pull, flatten requests, publishing) — each is throttled
+    # and fail-open already, so a hung one is cancelled QUIETLY and the loop
+    # moves on. 0 disables.
+    tick_maintenance_timeout_sec: float = _env_float_bounded(
+        "TICK_MAINTENANCE_TIMEOUT_SEC", 120.0, 0.0, 3600.0)
 
 
 @dataclass(frozen=True)
