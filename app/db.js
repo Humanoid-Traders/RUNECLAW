@@ -88,6 +88,12 @@ class MemoryDB {
       return [{ affectedRows: 1 }, []];
     }
 
+    if (cmd.includes('FROM SIGNALS') && cmd.includes('COUNT(*)') && cmd.includes('CREATED_AT >=')) {
+      // welcome-back digest: signals since a cutoff
+      const lo = new Date(params[0]).getTime();
+      const n = this.signals.filter(s => new Date(s.created_at).getTime() >= lo).length;
+      return [[{ n }], []];
+    }
     if (cmd.includes('FROM SIGNALS') && cmd.includes('COUNT(*)')) {
       const resolved = this.signals.filter(s => s.pnl !== null && s.pnl !== undefined);
       const wins = resolved.filter(s => Number(s.pnl) > 0).length;
@@ -364,6 +370,13 @@ class MemoryDB {
           t => new Date(t.closed_at).getTime() >= lo).length;
         return [[{ n }], []];
       }
+      if (cmd.includes('USER_ID = ?') && cmd.includes('CLOSED_AT >=')) {
+        // welcome-back digest: the caller's own closes since a cutoff
+        const lo = new Date(params[1]).getTime();
+        const rows = this.arenaTrades.filter(t => t.user_id === params[0]
+          && new Date(t.closed_at).getTime() >= lo);
+        return [rows.map(r => ({ ...r })), []];
+      }
       if (cmd.includes('CLOSED_AT >=')) {
         // season window: WHERE closed_at >= ? AND closed_at <= ?
         const lo = new Date(params[0]).getTime(), hi = new Date(params[1]).getTime();
@@ -506,6 +519,13 @@ class MemoryDB {
       };
       this.agentEvents.push(row);
       return [{ insertId: row.id }, []];
+    }
+    if (cmd.includes('FROM AGENT_EVENTS') && cmd.includes('COUNT(*)')) {
+      // welcome-back digest: engine events since a cutoff
+      const lo = new Date(params[0]).getTime();
+      const n = this.agentEvents.filter(
+        e => new Date(e.created_at).getTime() >= lo).length;
+      return [[{ n }], []];
     }
     if (cmd.includes('FROM AGENT_EVENTS') && cmd.includes('OFFSET')) {
       // Prune probe: SELECT id ... ORDER BY id DESC LIMIT 1 OFFSET <keep>
@@ -732,6 +752,11 @@ class MemoryDB {
     }
 
     // -- Leaderboard opt-in (anonymous handle) --
+    if (cmd.startsWith('UPDATE USERS SET LAST_SEEN_AT')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.last_seen_at = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
     if (cmd.startsWith('UPDATE USERS SET LEADERBOARD_HANDLE')) {
       const user = this.users.find(u => u.id === params[1]);
       if (user) user.leaderboard_handle = params[0];  // params[0] may be null (opt-out)
@@ -1186,6 +1211,10 @@ async function migrate() {
     try {
       await pool.execute('CREATE UNIQUE INDEX idx_users_leaderboard_handle ON users (leaderboard_handle)');
     } catch (e) { /* index exists */ }
+    // Welcome-back digest: when the user last read /api/since (NULL = never).
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMP NULL DEFAULT NULL');
+    } catch (e) { /* exists */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS trades (
         id INT AUTO_INCREMENT PRIMARY KEY,
