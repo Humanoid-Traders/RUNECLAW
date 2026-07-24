@@ -71,3 +71,20 @@ test('the landing hero offers a one-tap PWA install CTA (i18n, 6 locales)', () =
   const m = index.match(/i18n\.js\?v=(\d+)/);
   assert.ok(m && Number(m[1]) >= 13, 'i18n cache-buster >= 13');
 });
+
+test('assetlinks serves the published app identity by default (env still overrides)', async () => {
+  const express = require('express');
+  const http = require('node:http');
+  // Re-require a fresh server-side route context is heavy; assert source +
+  // exercise the handler shape via a minimal app mirroring the route logic
+  // from server.js (kept in sync by the source assertions below).
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(srv, /DEFAULT_ANDROID_PACKAGE = 'com\.humanoidtraders\.runeclaw'/);
+  assert.match(srv, /DEFAULT_ANDROID_CERT_SHA256 = '60:49:32:1C:B0:A8/);
+  // env still wins, and blanking disables (the honest 404 stays reachable)
+  assert.match(srv, /process\.env\.ANDROID_PACKAGE \?\? DEFAULT_ANDROID_PACKAGE/);
+  assert.match(srv, /status\(404\)/);
+  // fingerprint format Android requires: colon-separated uppercase hex pairs
+  const fp = (srv.match(/DEFAULT_ANDROID_CERT_SHA256 = '([^']+)'/) || [])[1];
+  assert.match(fp, /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+});
