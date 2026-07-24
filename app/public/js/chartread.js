@@ -119,9 +119,52 @@
     return n >= 1000 ? n.toFixed(1) : n >= 1 ? n.toFixed(3) : n.toPrecision(4);
   }
 
+  // Elliott wave points from the ENGINE'S pattern key_levels (chart_patterns
+  // entries whose name starts with "Elliott"). Only price points the engine
+  // itself emitted — nothing is re-derived here.
+  var WAVE_KEYS = [
+    ['w1_top', '1'], ['w1_low', '1'], ['w2_low', '2'], ['w2_high', '2'],
+    ['w3_top', '3'], ['w3_low', '3'], ['w4_low', '4'], ['w4_high', '4'],
+    ['w5_top', '5'], ['w5_low', '5'],
+    ['a_end', 'A'], ['b_end', 'B'], ['c_end', 'C'],
+    ['w_end', 'W'], ['x_end', 'X'], ['y_end', 'Y'],
+  ];
+  function elliottWavePoints(pattern) {
+    var kl = pattern && pattern.key_levels;
+    if (!kl || !/^Elliott/i.test(String(pattern.name || ''))) return [];
+    var out = [];
+    for (var i = 0; i < WAVE_KEYS.length; i++) {
+      var p = Number(kl[WAVE_KEYS[i][0]]);
+      if (p > 0) out.push({ label: WAVE_KEYS[i][1], price: p });
+    }
+    return out;
+  }
+
+  // Match wave prices to the bars where those extremes actually printed
+  // (within 0.15% of a high/low). A wave outside the visible window gets NO
+  // label — placement is honest or absent, never guessed.
+  function matchWaveBars(candles, points) {
+    var out = [];
+    for (var i = 0; i < (points || []).length; i++) {
+      var pt = points[i], best = -1;
+      for (var j = candles.length - 1; j >= 0; j--) {
+        var b = candles[j];
+        if (Math.abs(b.h - pt.price) / pt.price < 0.0015
+          || Math.abs(b.l - pt.price) / pt.price < 0.0015) { best = j; break; }
+      }
+      if (best >= 0) out.push({ label: pt.label, price: pt.price, i: best });
+    }
+    return out;
+  }
+
   /**
    * SVG candle chart with the position's own geometry drawn on it.
-   * opts: { width, height, entry, sl, tp, liq, direction, vwap: true, structure: true }
+   * opts: { width, height, entry, sl, tp, liq, direction, vwap: true,
+   *   structure: true,
+   *   levels: [{price, kind, score}]     — engine S/R (top 5 by score drawn),
+   *   fvgs: [{kind, top, bottom, filled}]— engine fair-value gaps (zones),
+   *   waves: [{label, price}]            — engine Elliott points (labeled at
+   *                                        the bar where the extreme printed) }
    * Static drawing — no animation, so prefers-reduced-motion needs no branch.
    */
   function svgChart(candles, opts) {
@@ -163,6 +206,26 @@
       }
       s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#e6b03c" stroke-width="1.2" stroke-dasharray="5 3" opacity=".85"/>';
     }
+    // Engine FVG zones — unfilled gaps as tinted bands (filled drawn fainter).
+    (opts.fvgs || []).slice(0, 4).forEach(function (g) {
+      var top = Number(g.top), bot = Number(g.bottom);
+      if (!(top > 0) || !(bot > 0) || top < lo || bot > hi) return;
+      var bull = String(g.kind || '').indexOf('bear') < 0;
+      s += '<rect x="' + PAD + '" y="' + Y(top).toFixed(1) + '" width="' + iw + '" height="'
+        + Math.max(1, Y(bot) - Y(top)).toFixed(1) + '" fill="' + (bull ? 'rgba(47,191,113,' : 'rgba(224,82,82,')
+        + (g.filled ? '.05' : '.10') + ')"/>';
+    });
+    // Engine S/R levels — top 5 by score inside the window, labeled by kind.
+    var lv = (opts.levels || []).filter(function (l) {
+      var p = Number(l.price); return p > lo && p < hi;
+    }).sort(function (a, b) { return (Number(b.score) || 0) - (Number(a.score) || 0); }).slice(0, 5);
+    lv.forEach(function (l) {
+      var y = Y(Number(l.price)).toFixed(1);
+      s += '<line x1="' + PAD + '" y1="' + y + '" x2="' + (PAD + iw) + '" y2="' + y
+        + '" stroke="rgba(120,150,220,.5)" stroke-width="1" stroke-dasharray="8 5"/>';
+      s += '<text x="' + (PAD + 2) + '" y="' + (Number(y) - 2) + '" font-size="8.5" font-family="monospace" fill="rgba(120,150,220,.8)">'
+        + String(l.kind || '').replace(/[^a-z0-9_]/gi, '') + '</text>';
+    });
     // Swing levels (structure context)
     if (st && st.swings) {
       st.swings.highs.slice(-2).forEach(function (sw2) {
@@ -194,6 +257,15 @@
     level(opts.tp, '#2fbf71', '6 4', 'tp');
     level(opts.sl, '#e05252', '6 4', 'sl');
     level(opts.liq, '#a33', '2 3', 'liq');
+    // Elliott wave labels — circled numbers at the bars where the engine's
+    // wave extremes printed (matchWaveBars: honest placement or none).
+    matchWaveBars(candles, opts.waves || []).forEach(function (w) {
+      var wx = X(w.i).toFixed(1), wy = Y(w.price);
+      var above = wy > (H / 2);
+      var ly = above ? wy - 11 : wy + 11;
+      s += '<circle cx="' + wx + '" cy="' + ly.toFixed(1) + '" r="7" fill="rgba(230,176,60,.14)" stroke="#e6b03c" stroke-width="1"/>';
+      s += '<text x="' + wx + '" y="' + (ly + 3.2).toFixed(1) + '" font-size="9" font-family="monospace" fill="#e6b03c" text-anchor="middle">' + w.label + '</text>';
+    });
     // Structure tag (top-left) — text only when there is something to say.
     if (st) {
       var tag = st.structure.toUpperCase();
@@ -205,7 +277,7 @@
     return s;
   }
 
-  var api = { parseCandles: parseCandles, vwap: vwap, structure: structure, findSwings: findSwings, svgChart: svgChart };
+  var api = { parseCandles: parseCandles, vwap: vwap, structure: structure, findSwings: findSwings, svgChart: svgChart, elliottWavePoints: elliottWavePoints, matchWaveBars: matchWaveBars };
   if (typeof window !== 'undefined') window.RCChartRead = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

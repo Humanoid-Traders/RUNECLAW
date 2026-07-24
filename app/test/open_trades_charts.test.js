@@ -109,3 +109,22 @@ test('markets (public): at-a-glance read chips under the big chart', () => {
   const v = dashHtml.match(/styles\.css\?v=(\d+)/);
   assert.ok(v && Number(v[1]) >= 21, `styles.css version floor (got ${v && v[1]})`);
 });
+
+test('full decision picture: engine levels + FVGs + Elliott waves reach the charts', () => {
+  // Arena expander fetches insight (1h, matching its candles) and passes the
+  // engine's levels/fvgs plus the top Elliott wave points into the chart.
+  assert.match(arena, /\/api\/insight\?symbol=/);
+  assert.match(arena, /levels: \(d0\.insight && d0\.insight\.levels\) \|\| \[\]/);
+  assert.match(arena, /fvgs: \(d0\.insight && d0\.insight\.fvgs\) \|\| \[\]/);
+  assert.match(arena, /elliottWavePoints\(ew\)/);
+  // Modal: same picture from its matched-4h insight + patterns fetches.
+  assert.match(dash, /levels: \(ins && ins\.data && ins\.data\.levels\) \|\| \[\]/);
+  assert.match(dash, /waves: ew \? window\.RCChartRead\.elliottWavePoints\(ew\) : \[\]/);
+  // Markets TV chart: top engine levels as price lines.
+  assert.match(dash, /createPriceLine\(\{ price: Number\(l\.price\)/);
+  // Cache-buster floors for the shared library.
+  for (const page of [arena, dashHtml]) {
+    const m = page.match(/chartread\.js\?v=(\d+)/);
+    assert.ok(m && Number(m[1]) >= 2, `chartread version floor (got ${m && m[1]})`);
+  }
+});
