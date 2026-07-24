@@ -65,5 +65,6 @@ test('the marketplace preview shows percent/ratio only — never a dollar figure
 });
 
 test('the i18n cache-buster was bumped so the new labels ship', () => {
-  assert.match(index, /i18n\.js\?v=[3-9]/);
+  const m = index.match(/i18n\.js\?v=(\d+)/);
+  assert.ok(m && Number(m[1]) >= 3, 'i18n cache-buster is bumped past the baseline');
 });
