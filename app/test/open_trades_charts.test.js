@@ -87,6 +87,20 @@ test('review fixes: 📈 lives in the symbol cell with a real touch target, far 
   assert.match(arena, /width: Math\.max\(300, \(cell\.clientWidth \|\| 0\) - 10\)/);
 });
 
+test('arena ticket: the prospective trade draws on the chart before you open', () => {
+  assert.match(arena, /id="ticketChart" hidden/);
+  assert.match(arena, /function drawTicketPreview\(\)/);
+  assert.match(arena, /entry: liveMark,/);
+  assert.match(arena, /liq: liq, direction: direction,/);
+  // Honest: no live mark → no chart (never a guessed entry); a symbol
+  // switch mid-fetch aborts the stale draw.
+  assert.match(arena, /if \(!sym \|\| !\(liveMark > 0\) \|\| markSym !== sym\) \{ box\.hidden = true; return; \}/);
+  assert.match(arena, /normSym\(\$\('tSym'\)\.value\) !== sym\) return;/);
+  // One shared cached bundle feeds both the expander and the ticket.
+  assert.match(arena, /async function getChartData\(sym\)/);
+  assert.match(arena, /var d0 = await getChartData\(sym\);/);
+});
+
 test('review fixes: the modal drops stale fetches from a previous symbol', () => {
   assert.match(dash, /let _symSeq = 0;/);
   assert.match(dash, /const _seq = \+\+_symSeq;/);

@@ -235,6 +235,10 @@
     </div>
     <div class="tmsg" id="tMsg" role="status" aria-live="polite"></div>
     <div class="risk-preview" id="riskPreview" aria-live="polite"></div>
+    <!-- Live ticket preview: the prospective trade drawn on the real chart —
+         entry at the live mark, your TP/SL, and the liq line — BEFORE you
+         click Open. Hidden until a mark is known. -->
+    <div id="ticketChart" hidden style="margin-top:8px"></div>
   </section>
 
   <section class="panel" id="followPanel" hidden>
@@ -388,34 +392,40 @@ window.addEventListener('error', function (e) {
     return '<div class="read-chips">' + chips.join('') + '</div>'
       + '<div class="muted" style="font-size:10px;margin-top:4px">1h candles · VWAP band + structure computed with the engine\'s formulas · patterns read live from the engine (4h) · not advice</div>';
   }
+  // Shared per-symbol bundle (candles + engine patterns + insight), 120s
+  // cache, stale-good-data preservation — used by the position expander AND
+  // the ticket preview.
+  async function getChartData(sym) {
+    var d0 = chartData[sym];
+    if (d0 && Date.now() - d0.at <= 120000) return d0;
+    var base = sym.replace(/USDT$/, '');
+    var results = await Promise.all([
+      RC.fetchJSON('/api/market/candles/' + encodeURIComponent(sym) + '?granularity=1h&limit=120', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
+      RC.fetchJSON('/api/patterns?symbol=' + encodeURIComponent(base + '/USDT') + '&timeframe=4h', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
+      RC.fetchJSON('/api/insight?symbol=' + encodeURIComponent(base + '/USDT') + '&timeframe=1h&limit=120', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
+    ]);
+    var rows = results[0] && results[0].ok && results[0].data && Array.isArray(results[0].data.data) ? results[0].data.data : [];
+    var pat = results[1] && results[1].ok ? results[1].data : null;
+    var insD = results[2] && results[2].ok ? results[2].data : null;
+    // A transient failure must never pin an empty read for 120s: keep the
+    // last GOOD data for whatever failed, and when nothing usable came
+    // back at all, leave the entry stale so the next repaint retries.
+    var prev = d0 || {};
+    d0 = {
+      at: Date.now(),
+      candles: rows.length ? rows : (prev.candles || []),
+      patterns: pat || prev.patterns || null,
+      insight: insD || prev.insight || null,
+    };
+    if (!rows.length && !d0.candles.length) d0.at = 0;
+    chartData[sym] = d0;
+    return d0;
+  }
   async function paintChart(p) {
     var cell = $('chartCell' + p.id);
     if (!cell) return;
     var sym = String(p.symbol || '').toUpperCase();
-    var d0 = chartData[sym];
-    if (!d0 || Date.now() - d0.at > 120000) {
-      var base = sym.replace(/USDT$/, '');
-      var results = await Promise.all([
-        RC.fetchJSON('/api/market/candles/' + encodeURIComponent(sym) + '?granularity=1h&limit=120', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
-        RC.fetchJSON('/api/patterns?symbol=' + encodeURIComponent(base + '/USDT') + '&timeframe=4h', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
-        RC.fetchJSON('/api/insight?symbol=' + encodeURIComponent(base + '/USDT') + '&timeframe=1h&limit=120', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
-      ]);
-      var rows = results[0] && results[0].ok && results[0].data && Array.isArray(results[0].data.data) ? results[0].data.data : [];
-      var pat = results[1] && results[1].ok ? results[1].data : null;
-      var insD = results[2] && results[2].ok ? results[2].data : null;
-      // A transient failure must never pin an empty read for 120s: keep the
-      // last GOOD data for whatever failed, and when nothing usable came
-      // back at all, leave the entry stale so the next repaint retries.
-      var prev = d0 || {};
-      d0 = {
-        at: Date.now(),
-        candles: rows.length ? rows : (prev.candles || []),
-        patterns: pat || prev.patterns || null,
-        insight: insD || prev.insight || null,
-      };
-      if (!rows.length && !d0.candles.length) d0.at = 0;
-      chartData[sym] = d0;
-    }
+    var d0 = await getChartData(sym);
     cell = $('chartCell' + p.id);       // the tbody may have rebuilt mid-fetch
     if (!cell || !chartOpen[p.id]) return;
     var CR = window.RCChartRead;
@@ -739,6 +749,46 @@ window.addEventListener('error', function (e) {
         }
       }
       $('riskPreview').innerHTML = html;
+      drawTicketPreview();
+    }
+    // Live ticket preview — the prospective trade ON the chart before you
+    // open it: entry at the live mark, your typed TP/SL, the computed liq
+    // line (same (1 − MMR)/lev distance the risk preview quotes), plus the
+    // engine's levels/FVGs/waves from the shared cached bundle. Debounced;
+    // honest: no mark → no chart (never a guessed entry).
+    var ticketTimer = null;
+    function drawTicketPreview() {
+      clearTimeout(ticketTimer);
+      ticketTimer = setTimeout(async function () {
+        var box = $('ticketChart');
+        if (!box) return;
+        var sym = normSym($('tSym').value);
+        if (!sym || !(liveMark > 0) || markSym !== sym) { box.hidden = true; return; }
+        var d0 = await getChartData(sym);
+        var CR = window.RCChartRead;
+        var parsed = CR ? CR.parseCandles(d0.candles) : [];
+        if (parsed.length < 5) { box.hidden = true; return; }
+        if (normSym($('tSym').value) !== sym) return;   // symbol changed mid-fetch
+        var lv = Number($('tLev').value) || 1;
+        var liqMove = (1 - 0.005) / lv;
+        var liq = direction === 'LONG' ? liveMark * (1 - liqMove) : liveMark * (1 + liqMove);
+        var ew = null;
+        var cps = (d0.patterns && d0.patterns.chart_patterns) || [];
+        for (var wi = 0; wi < cps.length; wi++) {
+          if (/^Elliott/i.test(cps[wi].name || '')) { ew = cps[wi]; break; }
+        }
+        box.hidden = false;   // unhide first so clientWidth measures real
+        box.innerHTML = CR.svgChart(parsed, {
+          width: Math.max(300, (box.clientWidth || 0) - 4),
+          entry: liveMark,
+          tp: Number($('tTp').value) || null,
+          sl: Number($('tSl').value) || null,
+          liq: liq, direction: direction,
+          levels: (d0.insight && d0.insight.levels) || [],
+          fvgs: (d0.insight && d0.insight.fvgs) || [],
+          waves: ew ? CR.elliottWavePoints(ew) : [],
+        });
+      }, 350);
     }
     $('tMargin').addEventListener('input', riskPreview);
     $('tTp').addEventListener('input', riskPreview);
