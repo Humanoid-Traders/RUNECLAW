@@ -13,7 +13,62 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { buildInfo } = require('../lib/version');
+const os = require('node:os');
+
+const { buildInfo, readGitHead } = require('../lib/version');
+
+// Build a throwaway .git skeleton under a temp dir and return its root.
+function fakeRepo(build) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-git-'));
+  const gitDir = path.join(root, '.git');
+  fs.mkdirSync(gitDir, { recursive: true });
+  build(root, gitDir);
+  return root;
+}
+
+test('readGitHead() resolves a symbolic HEAD via a loose ref', () => {
+  const sha = 'a'.repeat(40);
+  const root = fakeRepo((_r, g) => {
+    fs.writeFileSync(path.join(g, 'HEAD'), 'ref: refs/heads/main\n');
+    fs.mkdirSync(path.join(g, 'refs', 'heads'), { recursive: true });
+    fs.writeFileSync(path.join(g, 'refs', 'heads', 'main'), sha + '\n');
+  });
+  assert.equal(readGitHead(root), sha);
+});
+
+test('readGitHead() falls back to packed-refs when no loose ref exists', () => {
+  const sha = 'b'.repeat(40);
+  const root = fakeRepo((_r, g) => {
+    fs.writeFileSync(path.join(g, 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(path.join(g, 'packed-refs'),
+      '# pack-refs with: peeled fully-peeled sorted\n' +
+      sha + ' refs/heads/main\n' +
+      'c'.repeat(40) + ' refs/remotes/origin/main\n');
+  });
+  assert.equal(readGitHead(root), sha);
+});
+
+test('readGitHead() reads a detached HEAD directly', () => {
+  const sha = 'd'.repeat(40);
+  const root = fakeRepo((_r, g) => fs.writeFileSync(path.join(g, 'HEAD'), sha + '\n'));
+  assert.equal(readGitHead(root), sha);
+});
+
+test('readGitHead() follows a .git *file* gitdir pointer', () => {
+  const sha = 'e'.repeat(40);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-gitf-'));
+  const real = path.join(root, 'realgit');
+  fs.mkdirSync(path.join(real, 'refs', 'heads'), { recursive: true });
+  fs.writeFileSync(path.join(real, 'HEAD'), 'ref: refs/heads/main\n');
+  fs.writeFileSync(path.join(real, 'refs', 'heads', 'main'), sha + '\n');
+  fs.writeFileSync(path.join(root, '.git'), 'gitdir: ' + real + '\n');
+  assert.equal(readGitHead(root), sha);
+});
+
+test('readGitHead() returns null when there is no .git at all', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-nogit-'));
+  assert.equal(readGitHead(root), null);
+});
 
 test('buildInfo() reports a resolved sha, ISO boot time and numeric uptime', () => {
   const b = buildInfo();
