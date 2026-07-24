@@ -940,8 +940,10 @@
     return `<div class="tbl-wrap"><table class="tbl tbl--collapse">
       <thead><tr><th>Pair</th><th>Side</th><th class="r">Entry</th><th class="r">Stop / Target</th><th class="r">Size</th></tr></thead>
       <tbody>${rows.map(p => `
-        <tr>
-          <td data-label="Pair"><b>${esc(String(p.symbol).split('/')[0])}</b></td>
+        <tr data-sym="${esc(String(p.symbol).split('/')[0])}" role="button" tabindex="0"
+            data-geo='${esc(JSON.stringify({ e: p.entry_price, sl: p.stop_loss, tp: p.take_profit, d: p.direction }))}'
+            title="Chart, patterns & structure" style="cursor:pointer">
+          <td data-label="Pair"><b>${esc(String(p.symbol).split('/')[0])}</b> <span class="muted small">📈</span></td>
           <td data-label="Side">${dirChip(p.direction)}</td>
           <td data-label="Entry" class="r num">${fmtPrice(p.entry_price)}</td>
           <td data-label="Stop / Target" class="r num muted">${fmtPrice(p.stop_loss)} / ${fmtPrice(p.take_profit)}</td>
@@ -972,9 +974,12 @@
       else if (p.sl_order === 'exchange') chip = `<span class="chip chip--up">🛡️ on exchange</span>`;
       else chip = `<span class="chip">🤖 bot-managed</span>`;
       const lev = p.leverage ? ` · <span class="muted small">${p.leverage}×</span>` : '';
-      return `<div class="lpos-item">
+      const base = esc(p.pair || String(p.symbol || '').split('/')[0]);
+      return `<div class="lpos-item" data-sym="${base}" role="button" tabindex="0"
+        data-geo='${esc(JSON.stringify({ e: p.entry_price, sl: p.stop_loss, tp: p.take_profit, d: p.direction }))}'
+        title="Chart, patterns & structure" style="cursor:pointer">
         <div class="row" style="justify-content:space-between;gap:var(--s2);flex-wrap:wrap">
-          <div><b>${esc(p.pair || String(p.symbol || '').split('/')[0])}</b> ${dirChip(p.direction)}${lev}</div>
+          <div><b>${base}</b> ${dirChip(p.direction)}${lev} <span class="muted small">📈</span></div>
           ${chip}
         </div>
         <div class="small muted">Entry ${fmtPrice(p.entry_price)} · SL ${fmtPrice(p.stop_loss)}${dist} · TP ${fmtPrice(p.take_profit)} · ${fmtMoney(p.size_usd, 0)}</div>
@@ -1024,6 +1029,7 @@
               </select>
             </span></h2>
           <div id="c-chart"><div class="skel"></div><div class="skel"></div></div>
+          <div id="chartRead" class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px"></div>
         </section>
         <section class="panel" id="p-insight"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>AI decision picture
           <span class="right muted small">the same read the engine trades off</span></h2>
@@ -1362,6 +1368,26 @@
         if (!window.LightweightCharts) return candleSvg(rows);
         return `<div id="tvChart" style="height:340px"></div>`;
       }, { empty: { icon: 'icon-chart', text: 'No candle data for this pair right now.' }, errorText: 'Market data unavailable — retry in a moment.' });
+
+      // At-a-glance read under the chart — VWAP distance + structure/BOS/
+      // CHoCH from the SAME candles, computed with the engine's formulas
+      // (RCChartRead). Works for both the TV chart and the SVG fallback.
+      try {
+        const box = document.getElementById('chartRead');
+        if (box && window.RCChartRead && rows && rows.length) {
+          const parsed = window.RCChartRead.parseCandles(rows);
+          const chips = [];
+          const vw = parsed.length >= 5 ? window.RCChartRead.vwap(parsed) : null;
+          const st = parsed.length >= 15 ? window.RCChartRead.structure(parsed) : null;
+          if (vw) chips.push(`<span class="chip ${vw.dist_pct >= 0 ? 'chip--up' : 'chip--down'}">VWAP ${vw.dist_pct >= 0 ? 'above' : 'below'} ${vw.dist_pct >= 0 ? '+' : ''}${vw.dist_pct.toFixed(2)}%</span>`);
+          if (st) {
+            chips.push(`<span class="chip ${st.structure === 'bullish' ? 'chip--up' : st.structure === 'bearish' ? 'chip--down' : ''}">structure ${st.structure}</span>`);
+            if (st.bos) chips.push(`<span class="chip ${st.bos_dir > 0 ? 'chip--up' : 'chip--down'}">BOS ${st.bos_dir > 0 ? '↑' : '↓'}</span>`);
+            if (st.choch) chips.push(`<span class="chip ${st.choch_dir > 0 ? 'chip--up' : 'chip--down'}">CHoCH ${st.choch_dir > 0 ? '↑' : '↓'}</span>`);
+          }
+          box.innerHTML = chips.length ? chips.join('') + `<span class="muted small" style="align-self:center">${esc(gran)} · engine formulas</span>` : '';
+        }
+      } catch (e) { /* chips are a bonus read */ }
 
       const host = document.getElementById('tvChart');
       if (!host || !window.LightweightCharts || !rows || !rows.length) return;
@@ -1821,7 +1847,10 @@
               ? `<button class="btn btn--sm" data-ptrade='${esc(JSON.stringify({ d: s.direction, sy: s.symbol, e: s.entry_price, sl: s.stop_loss, tp: s.take_profit }))}'>Trade</button>`
               : '';
             return `<tr>
-              <td data-label="Signal">${dirChip(s.direction)} <b>${esc(s.symbol)}</b><div class="muted small">${esc(s.pattern || '')}</div></td>
+              <td data-label="Signal" data-sym="${esc(dsBase(s.symbol))}"
+                  data-geo='${esc(JSON.stringify({ e: s.entry_price, sl: s.stop_loss, tp: s.take_profit, d: s.direction }))}'
+                  role="button" tabindex="0" title="Chart with this signal's levels"
+                  style="cursor:pointer">${dirChip(s.direction)} <b>${esc(s.symbol)}</b> <span class="muted small">📈</span><div class="muted small">${esc(s.pattern || '')}</div></td>
               <td data-label="Conf." class="r num">${Math.round((s.confidence || 0) * 100)}%</td>
               <td data-label="Entry" class="r num">${fmtPrice(s.entry_price)}</td>
               <td data-label="Stop / Target" class="r num muted">${fmtPrice(s.stop_loss)} / ${fmtPrice(s.take_profit)}</td>
@@ -1968,7 +1997,9 @@
     }).join('') : '<div class="muted small">No active voters this bar.</div>';
     return meter + `<div class="mt-3"><div class="stat mb-2"><div class="k">Why — top voters</div></div>${rows}</div>`;
   }
-  async function openSymbol(rawSym) {
+  // geo (optional): { e: entry, sl, tp, d: direction } — a caller with a
+  // position or signal passes its own geometry so the modal chart draws it.
+  async function openSymbol(rawSym, geo) {
     const m = document.getElementById('symModal');
     if (!m) return;
     const base = dsBase(rawSym);
@@ -1996,6 +2027,8 @@
     }
     body.innerHTML = `
       <section class="mt-1">${_insightBlock(ins && ins.data)}</section>
+      <div id="symChart" class="mt-2"></div>
+      <div id="symReadChips" class="row mt-2" style="gap:6px;flex-wrap:wrap"></div>
       <h3 class="mt-4 mb-2" style="font-size:var(--fs-md)">Pattern read</h3>
       ${card || '<p class="muted small">No chart patterns detected on ' + esc(pair) + ' right now.</p>'}
       <div class="row mt-3" style="gap:var(--s2)">
@@ -2004,6 +2037,34 @@
       </div>
       <p class="muted small mt-2">Read-only decision picture · patterns are observations, not signals.</p>`;
     mountDeepScanMinis();
+    // VWAP & structure chips — computed with the ENGINE'S formulas
+    // (RCChartRead mirrors session VWAP + fractal BOS/CHoCH) from the same
+    // cached 4h candles the mini chart uses. Best-effort: no chips on failure.
+    if (window.RCChartRead) {
+      _fetchMiniCandles(base + 'USDT').then((rows) => {
+        const box = document.getElementById('symReadChips');
+        if (!box || m.hidden) return;
+        const parsed = window.RCChartRead.parseCandles(rows);
+        // Full decision-picture chart: VWAP band + structure + (when the
+        // caller has skin in it) the position/signal's own geometry lines.
+        const chartBox = document.getElementById('symChart');
+        if (chartBox && parsed.length >= 5) {
+          chartBox.innerHTML = window.RCChartRead.svgChart(parsed, geo
+            ? { entry: geo.e, sl: geo.sl, tp: geo.tp, direction: geo.d } : {});
+        }
+        if (parsed.length < 15) return;
+        const vw = window.RCChartRead.vwap(parsed);
+        const st = window.RCChartRead.structure(parsed);
+        const chips = [];
+        if (vw) chips.push(`<span class="chip ${vw.dist_pct >= 0 ? 'chip--up' : 'chip--down'}">VWAP ${vw.dist_pct >= 0 ? 'above' : 'below'} ${vw.dist_pct >= 0 ? '+' : ''}${vw.dist_pct.toFixed(2)}%</span>`);
+        if (st) {
+          chips.push(`<span class="chip ${st.structure === 'bullish' ? 'chip--up' : st.structure === 'bearish' ? 'chip--down' : ''}">structure ${st.structure}</span>`);
+          if (st.bos) chips.push(`<span class="chip ${st.bos_dir > 0 ? 'chip--up' : 'chip--down'}">BOS ${st.bos_dir > 0 ? '↑' : '↓'}</span>`);
+          if (st.choch) chips.push(`<span class="chip ${st.choch_dir > 0 ? 'chip--up' : 'chip--down'}">CHoCH ${st.choch_dir > 0 ? '↑' : '↓'}</span>`);
+        }
+        if (chips.length) box.innerHTML = chips.join('') + `<span class="muted small" style="align-self:center">4h · engine formulas</span>`;
+      }).catch(() => { /* chips are a bonus read */ });
+    }
     const ask = document.getElementById('symAsk');
     if (ask) ask.onclick = () => {
       closeSymModal(); location.hash = 'chat';
@@ -7081,12 +7142,17 @@
       return;
     }
     const el = e.target.closest('[data-sym]');
-    if (el && !e.target.closest('a, button')) openSymbol(el.getAttribute('data-sym'));
+    if (el && !e.target.closest('a, button')) openSymbol(el.getAttribute('data-sym'), _geoOf(el));
   });
+  // Optional per-element geometry ({e, sl, tp, d}) riding data-geo — signal
+  // and position rows pass their own levels into the modal chart.
+  function _geoOf(el) {
+    try { return JSON.parse(el.getAttribute('data-geo') || 'null'); } catch (err) { return null; }
+  }
   document.body.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closeSymModal(); return; }
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-sym][role="button"]')) {
-      e.preventDefault(); openSymbol(e.target.getAttribute('data-sym'));
+      e.preventDefault(); openSymbol(e.target.getAttribute('data-sym'), _geoOf(e.target));
     }
   });
   const _symClose = document.getElementById('symModalClose');
