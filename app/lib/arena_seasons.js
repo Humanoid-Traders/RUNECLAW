@@ -25,6 +25,10 @@ function seasonStatus(season, now) {
 }
 
 /** Validate an operator-authored season. */
+// Season rule-variant vocabulary (v1) — what a season may constrain while it
+// is LIVE. Majors are the USDT-M pairs of the large-caps.
+const SEASON_MAJORS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
+
 function validateSeason(input) {
   const b = input || {};
   const name = String(b.name || '').trim();
@@ -34,7 +38,36 @@ function validateSeason(input) {
   if (ends <= starts) return { ok: false, error: 'the season must end after it starts' };
   const days = (ends - starts) / 86400000;
   if (days > 92) return { ok: false, error: 'a season runs at most ~3 months' };
-  return { ok: true, data: { name, starts_at: starts, ends_at: ends } };
+  // Optional rule variants — a season with no rules is an open season.
+  const rIn = b.rules || {};
+  const rules = {};
+  if (rIn.max_leverage != null && rIn.max_leverage !== '') {
+    const lev = Math.round(Number(rIn.max_leverage));
+    if (!(lev >= 1 && lev <= 20)) return { ok: false, error: 'season max leverage must be 1–20' };
+    rules.max_leverage = lev;
+  }
+  if (rIn.majors_only) rules.majors_only = true;
+  return { ok: true, data: { name, starts_at: starts, ends_at: ends,
+    rules: Object.keys(rules).length ? rules : null } };
+}
+
+/**
+ * Enforce a LIVE season's rules on an arena open. Pure: season row (rules as
+ * object or JSON string) + { symbol, leverage } → ok or a named refusal the
+ * ticket can show verbatim. No season / no rules / not live → always ok.
+ */
+function checkSeasonRules(season, order, now = new Date()) {
+  if (!season || seasonStatus(season, now) !== 'live') return { ok: true };
+  let rules = season.rules;
+  if (typeof rules === 'string') { try { rules = JSON.parse(rules); } catch (e) { rules = null; } }
+  if (!rules) return { ok: true };
+  if (rules.max_leverage != null && Number(order.leverage) > rules.max_leverage) {
+    return { ok: false, error: `${season.name} rules: max ${rules.max_leverage}× leverage during the season` };
+  }
+  if (rules.majors_only && SEASON_MAJORS.indexOf(String(order.symbol || '').toUpperCase()) < 0) {
+    return { ok: false, error: `${season.name} rules: majors only (${SEASON_MAJORS.join(', ')}) during the season` };
+  }
+  return { ok: true };
 }
 
 /**
@@ -64,4 +97,4 @@ function seasonRanking(trades, handleOf) {
   return rows.slice(0, 50).map((r, i) => ({ rank: i + 1, ...r }));
 }
 
-module.exports = { seasonStatus, validateSeason, seasonRanking, NAME_RE };
+module.exports = { seasonStatus, validateSeason, seasonRanking, checkSeasonRules, SEASON_MAJORS, NAME_RE };

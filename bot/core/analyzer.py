@@ -1997,6 +1997,12 @@ class Analyzer:
 
         # ── Explainability Report ──
         try:
+            # Feed the named voter breakdown into factor attribution — without
+            # it, report.factors / top_bullish / top_bearish are always empty
+            # and the decision picture can't say WHICH voters drove the call.
+            _ex_labels = [b[0] for b in _confluence_votes]
+            _ex_votes = [float(b[1]) for b in _confluence_votes]
+            _ex_weights = [float(b[2]) for b in _confluence_votes]
             explain_report = self._explainability.explain(
                 trade_id=idea.id,
                 symbol=signal.symbol,
@@ -2005,6 +2011,9 @@ class Analyzer:
                 regime=regime.value,
                 confluence=confluence,
                 confidence=blended_confidence,
+                votes=_ex_votes,
+                weights=_ex_weights,
+                labels=_ex_labels,
                 strategy_mode=mode_tag,
                 mtf_narrative=mtf_result.narrative if mtf_result else "",
                 smart_money_narrative=smart_money_score.narrative if smart_money_score else "",

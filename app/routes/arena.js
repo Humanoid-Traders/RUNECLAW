@@ -62,7 +62,16 @@ async function sweepFollows(userId, positions, marks) {
   const plan = followLib.planFollows({ signals: sigs, positions, balance: acct.balance,
     prefs: { margin: follow.margin, leverage: follow.leverage }, marks });
   let bal = acct.balance;
+  // A LIVE season's rule variants bind followed opens too — the cursor has
+  // already advanced, so a non-compliant signal is skipped, never replayed.
+  let seasonRow = null;
+  try {
+    const [srows] = await pool.execute('SELECT id, name, starts_at, ends_at, rules FROM arena_seasons');
+    seasonRow = srows[0] || null;
+  } catch (e) { /* no season read → no constraint */ }
   for (const o of plan.opens) {
+    const sr = require('../lib/arena_seasons').checkSeasonRules(seasonRow, o);
+    if (!sr.ok) continue;
     // Inherit the SIGNAL's own stop/target when they're valid against the
     // live fill — practice-follow teaches the engine's real exits. An exit
     // level the market already passed is dropped (never a fake fill).
@@ -178,6 +187,13 @@ router.post('/open', authMiddleware, tradeLimit, async (req, res) => {
     positions = await settleLiquidations(userId, positions, marks);
     const v = arena.validateOpen(req.body, acct.balance, positions.length);
     if (!v.ok) return res.status(400).json({ error: v.error });
+    // Season rule variants: a LIVE season may constrain opens (e.g. "max 5×,
+    // majors only"). Enforced server-side; the refusal names the season.
+    try {
+      const [srows] = await pool.execute('SELECT id, name, starts_at, ends_at, rules FROM arena_seasons');
+      const sr = require('../lib/arena_seasons').checkSeasonRules(srows[0], v.data);
+      if (!sr.ok) return res.status(400).json({ error: sr.error });
+    } catch (e) { /* season read failure never blocks an open */ }
     const t = marks[v.data.symbol];
     const price = t && Number(t.price);
     if (!(price > 0)) return res.status(400).json({ error: 'Unknown symbol — use a listed USDT-M pair like BTCUSDT' });
@@ -332,12 +348,15 @@ const seasons = require('../lib/arena_seasons');
 // a time window, never a reset — the all-time board keeps running.
 router.get('/season', async (req, res) => {
   try {
-    const [rows] = await pool.execute('SELECT id, name, starts_at, ends_at FROM arena_seasons');
+    const [rows] = await pool.execute('SELECT id, name, starts_at, ends_at, rules FROM arena_seasons');
     const season = rows[0];
     if (!season) return res.json({ season: null });
     const status = seasons.seasonStatus(season, new Date());
+    let rules = season.rules;
+    if (typeof rules === 'string') { try { rules = JSON.parse(rules); } catch (e) { rules = null; } }
     const out = {
-      season: { name: season.name, starts_at: season.starts_at, ends_at: season.ends_at, status },
+      season: { name: season.name, starts_at: season.starts_at, ends_at: season.ends_at, status,
+        rules: rules || null },
       virtual: true,
     };
     if (status !== 'upcoming') {
@@ -395,8 +414,9 @@ router.post('/season', authMiddleware, async (req, res) => {
     const v = seasons.validateSeason(req.body);
     if (!v.ok) return res.status(400).json({ error: v.error });
     await pool.execute(
-      'INSERT INTO arena_seasons (name, starts_at, ends_at, created_at) VALUES (?, ?, ?, ?)',
-      [v.data.name, v.data.starts_at, v.data.ends_at, new Date()]);
+      'INSERT INTO arena_seasons (name, starts_at, ends_at, rules, created_at) VALUES (?, ?, ?, ?, ?)',
+      [v.data.name, v.data.starts_at, v.data.ends_at,
+        v.data.rules ? JSON.stringify(v.data.rules) : null, new Date()]);
     // Announce the launch — best-effort, never fails the launch itself.
     // §4: name + window + mechanism only; no numbers of any kind.
     const live = v.data.starts_at <= new Date();

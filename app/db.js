@@ -334,9 +334,13 @@ class MemoryDB {
       return [{ affectedRows: 1, insertId: this._nextArenaTradeId - 1 }, []];
     }
     if (cmd.includes('INSERT INTO ARENA_SEASONS')) {
-      // params: name, starts_at, ends_at, created_at
+      // Two shapes: (name, starts, ends, created) legacy, or with RULES at
+      // index 3 — (name, starts, ends, rules, created).
+      const hasRules = cmd.includes('RULES');
       this.arenaSeasons.push({ id: this._nextArenaSeasonId++, name: params[0],
-        starts_at: params[1], ends_at: params[2], created_at: params[3] });
+        starts_at: params[1], ends_at: params[2],
+        rules: hasRules ? params[3] : null,
+        created_at: hasRules ? params[4] : params[3] });
       return [{ affectedRows: 1, insertId: this._nextArenaSeasonId - 1 }, []];
     }
     if (cmd.includes('UPDATE ARENA_SEASONS')) {
@@ -1522,12 +1526,15 @@ async function migrate() {
         ends_at TIMESTAMP NOT NULL,
         announced_live TINYINT NOT NULL DEFAULT 0,
         announced_end TINYINT NOT NULL DEFAULT 0,
+        rules TEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     // Ceremony flags back-fill for pre-existing deployments.
     try { await pool.execute('ALTER TABLE arena_seasons ADD COLUMN announced_live TINYINT NOT NULL DEFAULT 0'); } catch (e) { /* present */ }
     try { await pool.execute('ALTER TABLE arena_seasons ADD COLUMN announced_end TINYINT NOT NULL DEFAULT 0'); } catch (e) { /* present */ }
+    // Season rule variants (JSON, null = open season) back-fill.
+    try { await pool.execute('ALTER TABLE arena_seasons ADD COLUMN rules TEXT NULL'); } catch (e) { /* present */ }
     // Practice-follow: mirror engine signals into the PAPER arena account.
     // §4: paper only — this can never route to a live venue.
     await pool.execute(`

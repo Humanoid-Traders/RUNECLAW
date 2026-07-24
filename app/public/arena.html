@@ -146,6 +146,10 @@
         <input id="ssStart" type="datetime-local"></div>
       <div><label for="ssEnd">Ends</label>
         <input id="ssEnd" type="datetime-local"></div>
+      <div><label for="ssLev">Rule: max leverage <span class="muted" style="text-transform:none">(optional)</span></label>
+        <input id="ssLev" type="number" min="1" max="20" placeholder="open"></div>
+      <div><label for="ssMajors" style="display:flex;gap:6px;align-items:center;cursor:pointer">
+        <input id="ssMajors" type="checkbox" style="width:auto"> Rule: majors only</label></div>
       <div><button class="btn btn--primary" id="ssLaunch" type="button">Launch season</button></div>
     </div>
     <div class="tmsg" id="ssMsg" role="status" aria-live="polite"></div>
@@ -532,8 +536,14 @@
     var dDays = Math.floor(left / 86400000), dHrs = Math.floor((left % 86400000) / 3600000);
     var cd = s.status === 'live' ? ('ends in ' + dDays + 'd ' + dHrs + 'h')
       : s.status === 'upcoming' ? ('starts in ' + dDays + 'd ' + dHrs + 'h') : 'final standings';
+    var ruleChips = '';
+    if (s.rules) {
+      if (s.rules.max_leverage) ruleChips += '<span class="st-chip">max ' + Number(s.rules.max_leverage) + '×</span>';
+      if (s.rules.majors_only) ruleChips += '<span class="st-chip">majors only</span>';
+    }
     $('seasonHead').innerHTML = '<span class="nm">' + esc(s.name) + '</span>'
       + '<span class="st-chip ' + esc(s.status) + '">' + esc(s.status) + '</span>'
+      + ruleChips
       + '<span class="cd">' + esc(cd) + '</span>'
       + '<button class="chip" id="shareSeason" type="button" style="margin-left:auto;cursor:pointer">🔗 Share the season</button>';
     var sb = document.getElementById('shareSeason');
@@ -563,7 +573,8 @@
       if (!(me && me.ok && me.data && me.data.plan === 'admin')) return;
       $('seasonAdmin').hidden = false;
       $('ssLaunch').addEventListener('click', async function () {
-        var body = { name: $('ssName').value.trim(), starts_at: $('ssStart').value, ends_at: $('ssEnd').value };
+        var body = { name: $('ssName').value.trim(), starts_at: $('ssStart').value, ends_at: $('ssEnd').value,
+          rules: { max_leverage: $('ssLev').value || null, majors_only: $('ssMajors').checked } };
         if (!body.name || !body.starts_at || !body.ends_at) { $('ssMsg').textContent = 'Name, start and end are all required.'; return; }
         $('ssLaunch').disabled = true;
         var r = await RC.fetchJSON('/api/arena/season', { method: 'POST', body: body, timeoutMs: 12000 }).catch(function () { return null; });
