@@ -101,6 +101,21 @@ test('arena ticket: the prospective trade draws on the chart before you open', (
   assert.match(arena, /var d0 = await getChartData\(sym\);/);
 });
 
+test('arena history: every closed trade opens its post-mortem chart', () => {
+  assert.match(arena, /data-histchart="' \+ t\.id/);
+  assert.match(arena, /id="histCell' \+ t\.id/);
+  assert.match(arena, /colspan="6"/);
+  // Ranged window from the trade's own life, granularity by time-in-trade.
+  assert.match(arena, /function histGran\(durMs\)/);
+  assert.match(arena, /startTime=' \+ Math\.floor\(t0 - pad\)/);
+  assert.match(arena, /entry: t\.entry, exit: t\.exit_price,/);
+  // Historical window: geometry only — no current-tail VWAP/structure reads.
+  assert.match(arena, /vwap: false, structure: false,/);
+  // State survives rebuilds; immutable windows cache for the session.
+  assert.match(arena, /if \(histOpen\[t\.id\]\) paintHistChart\(t\)/);
+  assert.match(arena, /histData\[t\.id\] = rows/);
+});
+
 test('review fixes: the modal drops stale fetches from a previous symbol', () => {
   assert.match(dash, /let _symSeq = 0;/);
   assert.match(dash, /const _seq = \+\+_symSeq;/);

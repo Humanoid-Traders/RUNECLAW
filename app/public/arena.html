@@ -317,7 +317,7 @@ window.addEventListener('error', function (e) {
 </script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/i18n.js?v=15"></script>
-<script src="/js/chartread.js?v=3"></script>
+<script src="/js/chartread.js?v=4"></script>
 <script src="/js/radar3d.js?v=3" defer></script>
 <script>
 (function () {
@@ -351,6 +351,65 @@ window.addEventListener('error', function (e) {
   var lastAccount = null;    // set in renderAccount — expander toggles re-render from it
   var chartOpen = {};        // position id -> true; survives the 20s tbody rebuild
   var chartData = {};        // symbol -> { at, candles, patterns } (120s cache)
+  var histOpen = {};         // closed-trade id -> true (post-mortem expander)
+  var histData = {};         // trade id -> candle rows (immutable window — cached for the session)
+
+  // "How it played out" — the closed trade's own candle window with entry
+  // and exit drawn. Granularity picked from time-in-trade so ~its whole
+  // life fits in <=200 bars; the window is padded ~18% each side for
+  // context. Immutable history → cached per trade id for the session.
+  function histGran(durMs) {
+    var h = durMs / 3600000;
+    if (h <= 10) return { g: '5min', ms: 300000 };
+    if (h <= 34) return { g: '15min', ms: 900000 };
+    if (h <= 130) return { g: '1h', ms: 3600000 };
+    return { g: '4h', ms: 14400000 };
+  }
+  async function paintHistChart(t) {
+    var cell = $('histCell' + t.id);
+    if (!cell) return;
+    var rows = histData[t.id];
+    if (!rows) {
+      var t0 = new Date(t.opened_at).getTime();
+      var t1 = new Date(t.closed_at).getTime();
+      if (!(t0 > 0) || !(t1 > 0) || t1 < t0) {
+        cell.innerHTML = '<span class="muted">This trade\'s window can\'t be reconstructed.</span>';
+        return;
+      }
+      var pad = Math.max((t1 - t0) * 0.18, 45 * 60000);
+      var gg = histGran(t1 - t0);
+      var url = '/api/market/candles/' + encodeURIComponent(String(t.symbol).toUpperCase())
+        + '?granularity=' + gg.g + '&limit=200'
+        + '&startTime=' + Math.floor(t0 - pad) + '&endTime=' + Math.ceil(t1 + pad);
+      var r = await RC.fetchJSON(url, { auth: false, timeoutMs: 12000 }).catch(function () { return null; });
+      rows = r && r.ok && r.data && Array.isArray(r.data.data) ? r.data.data : null;
+      if (rows && rows.length) histData[t.id] = rows;
+      cell = $('histCell' + t.id);       // tbody may have rebuilt mid-fetch
+      if (!cell || !histOpen[t.id]) return;
+      if (!rows || !rows.length) {
+        cell.innerHTML = '<span class="muted">Candles for this window are unavailable right now — try again shortly.</span>';
+        return;
+      }
+    }
+    var CR = window.RCChartRead;
+    var parsed = CR ? CR.parseCandles(rows) : [];
+    if (parsed.length < 5) {
+      cell.innerHTML = '<span class="muted">Too few candles in this window to draw.</span>';
+      return;
+    }
+    var durMin = Math.round((new Date(t.closed_at).getTime() - new Date(t.opened_at).getTime()) / 60000);
+    var durTxt = durMin >= 1440 ? Math.round(durMin / 144) / 10 + 'd'
+      : durMin >= 60 ? Math.round(durMin / 6) / 10 + 'h' : durMin + 'm';
+    cell.innerHTML = CR.svgChart(parsed, {
+      width: Math.max(300, (cell.clientWidth || 0) - 10),
+      entry: t.entry, exit: t.exit_price,
+      vwap: false, structure: false,   // historical window: geometry only, no current-tail reads
+    }) + '<div class="read-chips"><span class="read-chip ' + (t.direction === 'LONG' ? 'up-c' : 'down-c') + '">'
+      + esc(t.direction) + ' ' + t.leverage + '×</span>'
+      + '<span class="read-chip ' + pnlCls(t.pnl) + '">' + (t.pnl > 0 ? '+' : '') + fmt2(t.pnl) + ' vUSDT</span>'
+      + '<span class="read-chip">' + esc(t.reason) + '</span>'
+      + '<span class="read-chip">' + durTxt + ' in trade</span></div>';
+  }
 
   // Per-position chart & engine read: 1h candles (public market proxy) with
   // the position's OWN entry/TP/SL/liq drawn on them, session VWAP + bands
@@ -489,12 +548,21 @@ window.addEventListener('error', function (e) {
     $('posEmpty').hidden = d.positions.length > 0;
     var hb = $('histBody');
     hb.innerHTML = (d.history || []).map(function (t) {
-      return '<tr><td class="sym">' + esc(t.symbol) + '</td>'
+      var hrow = '<tr><td class="sym">'
+        + '<button class="chartbtn" data-histchart="' + t.id + '" type="button" aria-expanded="'
+        + (histOpen[t.id] ? 'true' : 'false') + '" title="How it played out">📈</button> '
+        + esc(t.symbol) + '</td>'
         + '<td class="' + (t.direction === 'LONG' ? 'up-c' : 'down-c') + '">' + esc(t.direction) + '</td>'
         + '<td>' + fmtP(t.entry) + '</td><td>' + fmtP(t.exit_price) + '</td>'
         + '<td class="' + pnlCls(t.pnl) + '">' + (t.pnl > 0 ? '+' : '') + fmt2(t.pnl) + '</td>'
         + '<td class="muted">' + esc(t.reason) + '</td></tr>';
+      if (histOpen[t.id]) {
+        hrow += '<tr class="chart-row"><td colspan="6"><div class="chart-cell" id="histCell' + t.id
+          + '"><span class="muted">Loading how it played out…</span></div></td></tr>';
+      }
+      return hrow;
     }).join('');
+    (d.history || []).forEach(function (t) { if (histOpen[t.id]) paintHistChart(t); });
     $('histEmpty').hidden = (d.history || []).length > 0;
     // Achievements — earned bright, locked dimmed with what's left to earn.
     $('badges').innerHTML = (d.badges || []).map(function (b) {
@@ -837,6 +905,17 @@ window.addEventListener('error', function (e) {
       var r = await RC.fetchJSON('/api/arena/close', { method: 'POST', body: { position_id: Number(b.getAttribute('data-close')) }, timeoutMs: 14000 }).catch(function () { return null; });
       if (r && r.ok) { haptic([12, 40, 12]); tmsg('Closed ' + r.data.closed.symbol + ' — PnL ' + (r.data.closed.pnl > 0 ? '+' : '') + fmt2(r.data.closed.pnl) + ' vUSDT'); loadAccount(); loadBoard(); }
       else { b.disabled = false; tmsg((r && r.data && r.data.error) || 'Close failed — try again.'); }
+    });
+
+    // Post-mortem expander on closed trades — same delegated pattern as the
+    // positions table; state survives every tbody rebuild.
+    $('histBody').addEventListener('click', function (e) {
+      var hbtn = e.target.closest('[data-histchart]');
+      if (!hbtn) return;
+      var hid = Number(hbtn.getAttribute('data-histchart'));
+      histOpen[hid] = !histOpen[hid];
+      if (!histOpen[hid]) delete histOpen[hid];
+      if (lastAccount) renderAccount(lastAccount);
     });
 
     $('optinBtn').addEventListener('click', async function () {
