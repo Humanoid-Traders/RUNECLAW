@@ -246,6 +246,22 @@ app.get('/escape', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); r
 app.get('/intent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'intent.html')); });
 app.get('/leaderboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'leaderboard.html')); });
 app.get('/arena', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'arena.html')); });
+// Digital Asset Links — lets the Android TWA app (Bubblewrap wrapper) open
+// this site fullscreen without browser chrome. Served ONLY when the operator
+// has configured the app identity; an unconfigured host answers 404 honestly
+// rather than shipping an empty/false statement. §F-15: the cert fingerprint
+// is public by design (it's printed on every APK).
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  const pkg = (process.env.ANDROID_PACKAGE || '').trim();
+  const sha = (process.env.ANDROID_CERT_SHA256 || '').trim();
+  if (!pkg || !sha) return res.status(404).json({ error: 'not_configured' });
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: { namespace: 'android_app', package_name: pkg,
+      sha256_cert_fingerprints: [sha] },
+  }]);
+});
 app.get('/letter/:week?', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'letter.html')); });
 app.get('/wallet-link', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'wallet-link.html')); });
 app.get('/reset', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'reset.html')); });
