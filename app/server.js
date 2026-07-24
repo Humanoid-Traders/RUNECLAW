@@ -477,4 +477,5 @@ app.use((err, req, res, next) => {
   // whistle (→ended, crowning the champion) announce themselves — durable
   // flags mean a restart never replays a ceremony.
   require('./lib/season_watch').startSeasonWatch();
+  require('./lib/pattern_watch').startPatternWatch();
 })();
