@@ -31,6 +31,7 @@
   .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
   /* Builder */
   .pos-head, .pos-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.1fr 32px; gap: var(--s2); align-items: center; }
+  @media (max-width: 520px) { .pos-head { display: none; } .pos-row { grid-template-columns: 1fr 1fr 30px; gap: 6px 8px; } .pos-row select { grid-column: 1 / 3; } }
   .pos-head { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-bottom: 6px; }
   .pos-row { margin-bottom: 6px; }
   .pos-row input, .pos-row select { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 7px 8px; font: inherit; font-size: var(--fs-sm); }
@@ -68,10 +69,12 @@
   .verdict b { color: var(--text-1); }
   .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
   @media (prefers-reduced-motion: reduce) { .sc .bar i, .alloc .meter i { transition: none; } }
+  /* Keyboard focus visibility (a11y) */
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
 </style>
 </head>
 <body>
-<div class="sx-wrap">
+<div class="sx-wrap" role="main">
   <nav class="topnav">
     <a href="/">← RUNECLAW</a>
     <span style="flex:1"></span>

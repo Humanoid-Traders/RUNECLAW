@@ -47,10 +47,12 @@
   .flag .mt { color: var(--text-3); font-family: var(--font-data); font-size: var(--fs-xs); margin-top: 4px; word-break: break-all; }
   .flag .mt code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
   .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+  /* Keyboard focus visibility (a11y) */
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
 </style>
 </head>
 <body>
-<div class="fw-wrap">
+<div class="fw-wrap" role="main">
   <nav class="topnav">
     <a href="/">← RUNECLAW</a>
     <span style="flex:1"></span>
