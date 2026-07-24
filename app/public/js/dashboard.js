@@ -814,12 +814,15 @@
         { done: traded, label: 'Place a paper trade',
           hint: 'Real 23-check risk gate, zero risk — watch the engine execute.',
           cta: { label: 'Open the trade ticket', href: '#trade' } },
-        { done: connected, pending: credsPending, label: 'Connect an exchange',
+        // Telegram BEFORE exchange keys — connecting keys requires a linked
+        // Telegram account, so the ladder must climb in that order (the old
+        // order sent users into a 409 dead-end).
+        { done: linked, label: 'Link Telegram',
+          hint: 'Get trade alerts, chat with the agent — and unlock exchange connections.',
+          cta: { label: 'Link Telegram', href: '#account/atg' } },
+        { done: connected, pending: credsPending, locked: !linked, label: 'Connect an exchange',
           hint: 'Link Bitget, Bybit, BingX or Hyperliquid keys to prepare live trading.',
           cta: { label: credsPending ? 'Finish connecting' : 'Connect exchange', href: '#account/akeys' } },
-        { done: linked, label: 'Link Telegram',
-          hint: 'Get trade alerts and chat with the agent from Telegram too.',
-          cta: { label: 'Link Telegram', href: '#account/atg' } },
         { done: liveReady, locked: !connected, label: 'Go live',
           hint: liveReady ? 'Live trading is enabled for your account.'
             : 'Needs connected keys, your live toggle, and operator approval.',
@@ -2548,6 +2551,11 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel panel--primary" id="p-pstats"><div id="c-pstats"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-venues">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Your venues — at a glance
+            <span class="badge" style="margin-left:auto" title="Connection status + live equity per venue, in one place. Read-only aggregation; manage keys in Account.">status + equity</span></h2>
+          <div id="c-venues"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-curve"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Equity curve</h2><div id="c-curve"><div class="skel"></div></div></section>
         <section class="panel" id="p-underwater" hidden>
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Drawdown — underwater curve
@@ -2796,6 +2804,47 @@
         + `<p class="small muted" style="margin-top:var(--s2)">Over ${d.trades} recorded closes${d.skipped ? ` (${d.skipped} skipped — unusable rows are never guessed at)` : ''}.</p>`;
     }, { empty: { icon: 'icon-sparkle', text: 'Intelligence appears after your first few closed trades.' } });
 
+    // Your venues — the audit's top ask: connection STATUS and live EQUITY
+    // per venue, merged into one glance (they used to live two views apart,
+    // and net worth collapses all CEX into a single line). Both endpoints
+    // already exist; this is a pure join. Unreadable stays unreadable.
+    renderPanel(C('venues'), async () => {
+      const [cs, hd] = await Promise.all([
+        fetchJSON('/api/credentials/status', { timeoutMs: 12000 }).catch(() => null),
+        fetchJSON('/api/holdings', { timeoutMs: 40000 }).catch(() => null),
+      ]);
+      const status = (cs && cs.ok && cs.data && cs.data.venues) || [];
+      const pendingV = cs && cs.ok && cs.data && cs.data.pending ? cs.data.pending_venue : null;
+      const equity = new Map(((hd && hd.ok && hd.data && hd.data.venues) || [])
+        .map(v => [String(v.venue || '').toLowerCase(), v]));
+      const names = new Set([
+        ...status.map(v => String(v.venue || '').toLowerCase()),
+        ...equity.keys(),
+      ]);
+      if (!names.size) {
+        return `<p class="small muted">No venues connected yet — one card here per exchange once you connect keys.</p>
+          <a class="btn btn--primary btn--sm" href="#account/akeys">Connect an exchange →</a>`;
+      }
+      const rows = [...names].map((name) => {
+        const st = status.find(v => String(v.venue || '').toLowerCase() === name);
+        const eq = equity.get(name);
+        const chip = pendingV === name ? '<span class="chip chip--warn">applying…</span>'
+          : (st && st.connected) || eq ? '<span class="chip chip--up">connected</span>'
+          : '<span class="chip">not connected</span>';
+        const val = eq
+          ? (eq.ok && eq.equity_usd != null ? `$${fmt(eq.equity_usd, 2)}`
+            : `<span class="muted small">${esc(eq.detail || 'unreadable')}</span>`)
+          : '<span class="muted small">—</span>';
+        return `<div class="w3-card">
+          <span class="tok" aria-hidden="true">🏦</span>
+          <span class="w3-name"><b>${esc(name.toUpperCase())}</b>${eq && eq.active ? ' <span class="muted small">active</span>' : ''}</span>
+          ${chip}
+          <b class="num w3-val">${val}</b>
+        </div>`;
+      }).join('');
+      return rows + `<p style="margin-top:var(--s2)"><a class="btn btn--ghost btn--sm" href="#account/akeys">Manage keys →</a></p>`;
+    }, { empty: { icon: 'icon-globe', text: 'Venue overview appears once the status endpoints are reachable.' } });
+
     // Net worth — everywhere: connected CEX + wallet (real) with paper
     // shown separately and NEVER counted into the real total.
     renderPanel(C('networth'), async () => {
@@ -2808,7 +2857,7 @@
         rows.push(`<div class="kv-row"><span>🏦 ${esc((c.venue || 'exchange').toUpperCase())} <span class="muted small">connected exchange</span></span>
           <b class="num">${c.ok && c.equity_usd != null ? '$' + fmt(c.equity_usd, 2) : `<span class="muted small">${esc(c.detail || 'unreadable')}</span>`}</b></div>`);
       } else {
-        rows.push('<div class="kv-row"><span>🏦 Exchange</span><span class="muted small">none connected — /connect in Telegram</span></div>');
+        rows.push('<div class="kv-row"><span>🏦 Exchange</span><span class="muted small">none connected — <a href="#account/akeys">connect keys here</a></span></div>');
       }
       const w = d.sections.wallet;
       if (w && w.linked) {
@@ -2893,7 +2942,7 @@
             v.active ? 'active' : ''));
         }
       } else if (d.venues_available) {
-        rows.push('<div class="kv-row"><span>🏦 Exchanges</span><span class="muted small">none connected — /connect in Telegram</span></div>');
+        rows.push('<div class="kv-row"><span>🏦 Exchanges</span><span class="muted small">none connected — <a href="#account/akeys">connect keys here</a></span></div>');
       } else {
         rows.push('<div class="kv-row"><span>🏦 Exchanges</span><span class="muted small">gateway unavailable</span></div>');
       }
@@ -3933,8 +3982,11 @@
       ]);
       venuesCatalog = (cfg.data?.venues) || [];
       if (r.status === 409) {
+        // Not a dead-end: say what's missing AND hand over the next step.
         return `<div class="section-note"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>
-          ${esc(r.data?.detail || 'Exchange keys require a linked Telegram account.')}</div>`;
+          ${esc(r.data?.detail || 'Exchange keys require a linked Telegram account.')}</div>
+          <p style="margin-top:var(--s2)"><a class="btn btn--primary btn--sm" href="#account/atg">Link Telegram first →</a>
+          <span class="small muted" style="margin-left:8px">two minutes — then come straight back here</span></p>`;
       }
       const c = r.data || {};
       if (!venuesCatalog.length) return null;
