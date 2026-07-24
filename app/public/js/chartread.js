@@ -32,27 +32,38 @@
     return out;
   }
 
-  // Session VWAP + bands. Anchor: first bar of the LAST bar's UTC day (falls
-  // back to the whole window when the day has under 3 bars — a fresh UTC day
-  // gives the average nothing to say yet).
+  // Session VWAP + bands — the ENGINE's exact semantics (analyzer
+  // _session_anchor_index/_session_vwap): anchor at the first bar of the
+  // LAST bar's UTC day, however few bars that is; zero-volume bars weigh
+  // NOTHING; a zero-volume session falls back to the full-window VWAP
+  // (what the engine's caller keeps when _session_vwap returns None).
   function vwap(candles) {
     if (!candles || candles.length < 5) return null;
     var last = candles[candles.length - 1];
     var day = Math.floor(last.t / 86400000);
-    var start = 0;
-    for (var i = candles.length - 1; i >= 0; i--) {
-      if (Math.floor(candles[i].t / 86400000) !== day) { start = i + 1; break; }
+    var start = candles.length - 1;
+    while (start > 0 && Math.floor(candles[start - 1].t / 86400000) === day) start--;
+    function accum(from) {
+      var pv = 0, vol = 0, series = [];
+      for (var j = from; j < candles.length; j++) {
+        var b = candles[j];
+        var typical = (b.h + b.l + b.c) / 3;
+        var w = b.v > 0 ? b.v : 0;
+        pv += typical * w; vol += w;
+        series.push({ t: b.t, v: vol > 0 ? pv / vol : null });
+      }
+      return { pv: pv, vol: vol, series: series };
     }
-    if (candles.length - start < 3) start = 0;
-    var pv = 0, vol = 0, series = [];
-    for (var j = start; j < candles.length; j++) {
-      var b = candles[j];
-      var typical = (b.h + b.l + b.c) / 3;
-      pv += typical * (b.v || 1);
-      vol += (b.v || 1);
-      series.push({ t: b.t, v: pv / vol });
+    var seg = accum(start), anchor = start;
+    if (!(seg.vol > 0)) { seg = accum(0); anchor = 0; }
+    if (!(seg.vol > 0)) return null;
+    // Leading null points (bars before the first traded volume) carry no
+    // average yet — drop them and shift the plot anchor accordingly.
+    var series = [];
+    for (var si = 0; si < seg.series.length; si++) {
+      if (seg.series[si].v != null) series.push(seg.series[si]);
     }
-    var center = series[series.length - 1].v;
+    var center = seg.pv / seg.vol;
     // RMS dispersion of the last-20 typical prices about the center.
     var tail = candles.slice(-20);
     var ss = 0;
@@ -62,7 +73,8 @@
     }
     var dev = Math.sqrt(ss / tail.length);
     return {
-      value: center, series: series, anchor_index: start,
+      value: center, series: series,
+      anchor_index: anchor + (seg.series.length - series.length),
       upper1: center + dev, lower1: center - dev,
       upper2: center + 2 * dev, lower2: center - 2 * dev,
       dist_pct: center > 0 ? ((last.c - center) / center) * 100 : 0,
@@ -87,29 +99,88 @@
     return { highs: highs.slice(-4), lows: lows.slice(-4) };
   }
 
-  function classify(hs, ls) {
-    if (hs.length < 2 || ls.length < 2) return 'ranging';
-    var hh = hs[hs.length - 1].p > hs[hs.length - 2].p;
-    var hl = ls[ls.length - 1].p > ls[ls.length - 2].p;
-    if (hh && hl) return 'bullish';
-    if (!hh && !hl) return 'bearish';
-    return 'ranging';
+  // Wilder-style ATR (engine elliott._atr): simple mean of the true range
+  // over the last `period` bars.
+  function atrOf(candles, period) {
+    var n = candles.length;
+    if (n < 2) return 0;
+    var p = Math.max(1, Math.min(period || 14, n - 1));
+    var sum = 0;
+    for (var k = 0; k < p; k++) {
+      var i = n - p + k;
+      var prevC = candles[i - 1].c;
+      sum += Math.max(candles[i].h - candles[i].l,
+        Math.abs(candles[i].h - prevC), Math.abs(candles[i].l - prevC));
+    }
+    return sum / p;
   }
 
-  // Engine multi_timeframe rules: BOS on a close beyond the last swing ±0.1%;
-  // CHoCH when the structure classification flips vs the previous swings.
+  // ATR-ZigZag pivots (engine elliott.atr_zigzag_pivots, atr_mult 1.5): a
+  // pivot registers only once price reverses by >= 1.5×ATR14 from the
+  // running extreme. This is the swing source the engine's structure read
+  // uses BY DEFAULT (structure_zigzag_enabled ships ON); the 5-bar fractal
+  // is only its starved-window fallback — mirrored below the same way.
+  function zigzagSwings(candles, atrMult) {
+    var n = candles.length;
+    if (n < 3) return { highs: [], lows: [] };
+    var threshold = (atrMult || 1.5) * atrOf(candles, 14);
+    if (!(threshold > 0)) return { highs: [], lows: [] };
+    var pivots = [];
+    var lastIdx = 0, lastHigh = candles[0].h, lastLow = candles[0].l, dir = 0;
+    for (var i = 1; i < n; i++) {
+      var hi = candles[i].h, lo = candles[i].l;
+      if (dir >= 0) {
+        if (hi > lastHigh) { lastHigh = hi; lastIdx = i; }
+        if (lastHigh - lo >= threshold) {
+          pivots.push({ i: lastIdx, p: lastHigh, k: 'H' });
+          dir = -1; lastLow = lo; lastIdx = i;
+        }
+      }
+      if (dir <= 0) {
+        if (lo < lastLow) { lastLow = lo; lastIdx = i; }
+        if (hi - lastLow >= threshold) {
+          pivots.push({ i: lastIdx, p: lastLow, k: 'L' });
+          dir = 1; lastHigh = hi; lastIdx = i;
+        }
+      }
+    }
+    var highs = [], lows = [];
+    for (var pi = 0; pi < pivots.length; pi++) {
+      (pivots[pi].k === 'H' ? highs : lows).push({ i: pivots[pi].i, p: pivots[pi].p });
+    }
+    return { highs: highs.slice(-8), lows: lows.slice(-8) };
+  }
+
+  // Market structure — the ENGINE's _analyze_structure, rule for rule:
+  // ZigZag swings first (fractal fallback when <2 per side); <2 per side →
+  // ranging with NO BOS/CHoCH; STRICT HH+HL / LH+LL (equal swings rank as
+  // ranging, never bearish); BOS beyond the last swing ±0.1%; CHoCH via the
+  // 3-swing flip, or the 2-swing branch (current swings opposing bos_dir).
   function structure(candles) {
     if (!candles || candles.length < 15) return null;
-    var sw = findSwings(candles, 5);
+    var sw = zigzagSwings(candles, 1.5);
+    if (sw.highs.length < 2 || sw.lows.length < 2) sw = findSwings(candles, 5);
     var hs = sw.highs, ls = sw.lows;
-    var out = { structure: classify(hs, ls), bos: false, bos_dir: 0, choch: false, choch_dir: 0, swings: sw };
+    var out = { structure: 'ranging', bos: false, bos_dir: 0, choch: false, choch_dir: 0, swings: { highs: hs, lows: ls } };
+    if (hs.length < 2 || ls.length < 2) return out;
+    var hh = hs[hs.length - 1].p > hs[hs.length - 2].p;
+    var hl = ls[ls.length - 1].p > ls[ls.length - 2].p;
+    var lh = hs[hs.length - 1].p < hs[hs.length - 2].p;
+    var ll = ls[ls.length - 1].p < ls[ls.length - 2].p;
+    if (hh && hl) out.structure = 'bullish';
+    else if (lh && ll) out.structure = 'bearish';
     var close = candles[candles.length - 1].c;
-    if (hs.length && close > hs[hs.length - 1].p * 1.001) { out.bos = true; out.bos_dir = 1; }
-    else if (ls.length && close < ls[ls.length - 1].p * 0.999) { out.bos = true; out.bos_dir = -1; }
+    if (close > hs[hs.length - 1].p * 1.001) { out.bos = true; out.bos_dir = 1; }
+    else if (close < ls[ls.length - 1].p * 0.999) { out.bos = true; out.bos_dir = -1; }
     if (hs.length >= 3 && ls.length >= 3) {
-      var prev = classify(hs.slice(0, -1), ls.slice(0, -1));
-      if (prev === 'bullish' && out.structure === 'bearish') { out.choch = true; out.choch_dir = -1; }
-      if (prev === 'bearish' && out.structure === 'bullish') { out.choch = true; out.choch_dir = 1; }
+      var prevBull = hs[hs.length - 3].p < hs[hs.length - 2].p && ls[ls.length - 3].p < ls[ls.length - 2].p;
+      var prevBear = hs[hs.length - 3].p > hs[hs.length - 2].p && ls[ls.length - 3].p > ls[ls.length - 2].p;
+      if (prevBull && lh && ll) { out.choch = true; out.choch_dir = -1; }
+      else if (prevBear && hh && hl) { out.choch = true; out.choch_dir = 1; }
+    } else if (out.bos && out.bos_dir > 0 && lh && ll) {
+      out.choch = true; out.choch_dir = -1;
+    } else if (out.bos && out.bos_dir < 0 && hh && hl) {
+      out.choch = true; out.choch_dir = 1;
     }
     return out;
   }
@@ -170,7 +241,9 @@
   function svgChart(candles, opts) {
     opts = opts || {};
     if (!candles || candles.length < 5) return '';
-    var W = opts.width || 640, H = opts.height || 220, PAD = 6, AXIS = 54;
+    // Callers pass the mount's real clientWidth so 1 SVG unit ≈ 1 CSS px and
+    // the label text renders at true, legible size on every screen.
+    var W = Math.max(300, opts.width || 640), H = opts.height || 220, PAD = 6;
     var vw = opts.vwap === false ? null : vwap(candles);
     var st = opts.structure === false ? null : structure(candles);
     var lo = Infinity, hi = -Infinity;
@@ -190,12 +263,15 @@
     });
     var span = (hi - lo) || 1;
     lo -= span * 0.04; hi += span * 0.04; span = hi - lo;
+    // Right axis sized to the longest label ("entry 63939.7") so 4+ digit
+    // prices are never clipped: ~5.8px/char at font 9.5 monospace + margin.
+    var AXIS = Math.max(58, (6 + fmt(hi).length) * 5.8 + 8);
     var iw = W - AXIS - PAD;
     var step = iw / candles.length;
     var cw = Math.max(1.5, step * 0.62);
     function X(i) { return PAD + i * step + step / 2; }
     function Y(p) { return PAD + (1 - (p - lo) / span) * (H - PAD * 2); }
-    var s = '<svg class="rc-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Price chart with position levels" preserveAspectRatio="none">';
+    var s = '<svg class="rc-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Price chart with position levels">';
     // VWAP ±1σ band first (underneath everything)
     if (vw) {
       s += '<rect x="' + PAD + '" y="' + Y(vw.upper1).toFixed(1) + '" width="' + iw + '" height="'
@@ -277,7 +353,7 @@
     return s;
   }
 
-  var api = { parseCandles: parseCandles, vwap: vwap, structure: structure, findSwings: findSwings, svgChart: svgChart, elliottWavePoints: elliottWavePoints, matchWaveBars: matchWaveBars };
+  var api = { parseCandles: parseCandles, vwap: vwap, structure: structure, findSwings: findSwings, zigzagSwings: zigzagSwings, atrOf: atrOf, svgChart: svgChart, elliottWavePoints: elliottWavePoints, matchWaveBars: matchWaveBars };
   if (typeof window !== 'undefined') window.RCChartRead = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

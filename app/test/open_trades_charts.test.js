@@ -67,6 +67,34 @@ test('arena: pattern/candle fetches are cached per symbol (rate-limit friendly)'
   assert.match(arena, /120000/);
 });
 
+test('review fixes: failures never pin an empty read; stale good data survives', () => {
+  // A transient fetch error keeps the previous good candles/patterns and,
+  // on a total miss, leaves the entry stale so the next repaint retries.
+  assert.match(arena, /candles: rows\.length \? rows : \(prev\.candles \|\| \[\]\)/);
+  assert.match(arena, /if \(!rows\.length && !d0\.candles\.length\) d0\.at = 0;/);
+});
+
+test('review fixes: 📈 lives in the symbol cell with a real touch target, far from Close', () => {
+  // The expander button was a ~25px target one space from the
+  // no-confirmation Close button — a mis-tap market-closed the position.
+  const btnAt = arena.indexOf('class="chartbtn" data-chart');
+  const closeAt = arena.indexOf('data-close="');
+  assert.ok(btnAt > 0 && btnAt < closeAt, 'chart button renders in the symbol cell, before Close');
+  assert.match(arena, /\.chartbtn \{ [^}]*min-width: 40px; min-height: 34px/);
+  // Sticky viewport-width chart cell — never renders off-screen inside .tbl-scroll.
+  assert.match(arena, /\.chart-cell \{ position: sticky; left: 0; max-width: calc\(100vw - 56px\)/);
+  // Width-aware SVG so labels render at true pixel size.
+  assert.match(arena, /width: Math\.max\(300, \(cell\.clientWidth \|\| 0\) - 10\)/);
+});
+
+test('review fixes: the modal drops stale fetches from a previous symbol', () => {
+  assert.match(dash, /let _symSeq = 0;/);
+  assert.match(dash, /const _seq = \+\+_symSeq;/);
+  assert.match(dash, /_seq !== _symSeq/);
+  // Modal chart also renders width-aware.
+  assert.match(dash, /width: Math\.max\(300, \(chartBox\.clientWidth \|\| 0\) - 4\)/);
+});
+
 test('dashboard: position rows open the symbol drill-down', () => {
   // Trade view table rows and the Portfolio/Home stop-loss items both carry
   // data-sym + role=button, which the existing body delegation turns into

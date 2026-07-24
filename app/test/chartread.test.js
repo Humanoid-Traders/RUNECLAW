@@ -45,18 +45,18 @@ test('parseCandles: Bitget string rows → sorted numeric candles, junk dropped'
   assert.equal(c[1].v, 3);
 });
 
-test('vwap: exact Σ(typical·vol)/Σvol with symmetric RMS bands', () => {
+test('vwap: exact Σ(typical·vol)/Σvol — zero-volume bars weigh NOTHING (engine rule)', () => {
   // Same UTC day, hand-computable: typicals 100, 110, 120 with vols 1, 2, 1.
   const candles = [
     { t: DAY0 + 1 * H, o: 100, h: 101, l: 99, c: 100, v: 1 },   // typical 100
     { t: DAY0 + 2 * H, o: 110, h: 111, l: 109, c: 110, v: 2 },  // typical 110
     { t: DAY0 + 3 * H, o: 120, h: 121, l: 119, c: 120, v: 1 },  // typical 120
-    { t: DAY0 + 4 * H, o: 120, h: 121, l: 119, c: 120, v: 0 },  // vol 0 → weight 1
+    { t: DAY0 + 4 * H, o: 120, h: 121, l: 119, c: 120, v: 0 },  // vol 0 → weight 0
     { t: DAY0 + 5 * H, o: 120, h: 121, l: 119, c: 120, v: 1 },
   ];
   const vw = CR.vwap(candles);
-  // Σ tp·v = 100 + 220 + 120 + 120 + 120 = 680 ; Σ v = 6
-  near(vw.value, 680 / 6);
+  // Σ tp·v = 100 + 220 + 120 + 0 + 120 = 560 ; Σ v = 5   (engine semantics)
+  near(vw.value, 560 / 5);
   near(vw.upper1 - vw.value, vw.value - vw.lower1);            // symmetric
   near(vw.upper2 - vw.value, 2 * (vw.upper1 - vw.value));      // 2σ = 2×1σ
   assert.ok(vw.dist_pct > 0, 'last close above vwap → positive distance');
@@ -69,6 +69,28 @@ test('vwap: anchors at the current UTC day, ignoring yesterday', () => {
   const vw = CR.vwap([yesterday, ...today]);
   assert.equal(vw.anchor_index, 1, 'anchor at the first bar of the last UTC day');
   near(vw.value, 100, 1e-6);   // yesterday's 500-print never pollutes the session
+});
+
+test('vwap: a fresh UTC day anchors immediately — no minimum-bars fallback (engine rule)', () => {
+  // Four yesterday bars at a wild price, only TWO bars in the new day: the
+  // engine still anchors at the day open (there is no "<3 bars" escape).
+  const candles = [];
+  for (let i = 0; i < 4; i++) candles.push({ t: DAY0 - (4 - i) * H, o: 500, h: 501, l: 499, c: 500, v: 100 });
+  candles.push({ t: DAY0, o: 100, h: 101, l: 99, c: 100, v: 1 });
+  candles.push({ t: DAY0 + H, o: 100, h: 101, l: 99, c: 100, v: 1 });
+  const vw = CR.vwap(candles);
+  assert.equal(vw.anchor_index, 4);
+  near(vw.value, 100, 1e-6);
+});
+
+test('vwap: a zero-volume session falls back to the full-window VWAP (engine rule)', () => {
+  const candles = [];
+  for (let i = 0; i < 4; i++) candles.push({ t: DAY0 - (4 - i) * H, o: 200, h: 201, l: 199, c: 200, v: 5 });
+  candles.push({ t: DAY0, o: 100, h: 101, l: 99, c: 100, v: 0 });
+  candles.push({ t: DAY0 + H, o: 100, h: 101, l: 99, c: 100, v: 0 });
+  const vw = CR.vwap(candles);
+  assert.equal(vw.anchor_index, 0, 'dead session → whole window, like the engine caller');
+  near(vw.value, 200, 1e-6);   // only the traded bars carry weight
 });
 
 test('findSwings: 5-bar strict fractal finds the pyramid peak and trough', () => {
@@ -101,6 +123,26 @@ test('structure: LH+LL classifies bearish', () => {
   const candles = path([[0, 100], [5, 110], [12, 90], [19, 105], [26, 85], [33, 95]]);
   const st = CR.structure(candles);
   assert.equal(st.structure, 'bearish');
+});
+
+test('structure: EQUAL swing highs read ranging, never bearish (engine strict <)', () => {
+  // Double top at 110/110: hh false AND lh false → ranging (the old !hh
+  // shortcut mislabeled this bearish; the engine requires strict LH+LL).
+  const candles = path([[0, 100], [6, 90], [13, 110], [20, 95], [27, 110], [34, 100]]);
+  const st = CR.structure(candles);
+  assert.equal(st.structure, 'ranging');
+});
+
+test('structure: swings come from the engine-default ATR-ZigZag, fractal only as fallback', () => {
+  // A plateau of near-equal highs starves the strict fractal but the ZigZag
+  // (reversal-threshold) still registers the structural turns — mirroring
+  // engine _analyze_structure with structure_zigzag_enabled default ON.
+  const candles = path([[0, 100], [6, 90], [13, 110], [20, 95], [27, 110], [34, 100]]);
+  const zz = CR.zigzagSwings(candles, 1.5);
+  assert.ok(zz.highs.length >= 2 && zz.lows.length >= 2, 'zigzag yields usable swings');
+  // And the wired structure() output carries those zigzag swings.
+  const st = CR.structure(candles);
+  assert.ok(st.swings.highs.length >= 2);
 });
 
 test('structure: a bullish→bearish flip with 3 swings per side is a CHoCH↓', () => {

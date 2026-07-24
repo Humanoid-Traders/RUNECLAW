@@ -2014,9 +2014,14 @@
   }
   // geo (optional): { e: entry, sl, tp, d: direction } — a caller with a
   // position or signal passes its own geometry so the modal chart draws it.
+  // _symSeq: monotonically increasing open token — a slow fetch from a
+  // PREVIOUS symbol must never paint into the current modal (the container
+  // ids are recreated identically on every open, so ids alone can't guard).
+  let _symSeq = 0;
   async function openSymbol(rawSym, geo) {
     const m = document.getElementById('symModal');
     if (!m) return;
+    const _seq = ++_symSeq;
     const base = dsBase(rawSym);
     if (!base) return;
     const pair = base + '/USDT';
@@ -2058,7 +2063,7 @@
     if (window.RCChartRead) {
       _fetchMiniCandles(base + 'USDT').then((rows) => {
         const box = document.getElementById('symReadChips');
-        if (!box || m.hidden) return;
+        if (!box || m.hidden || _seq !== _symSeq) return;   // stale open — drop
         const parsed = window.RCChartRead.parseCandles(rows);
         // Full decision-picture chart: VWAP band + structure + (when the
         // caller has skin in it) the position/signal's own geometry lines.
@@ -2072,7 +2077,8 @@
           }
           chartBox.innerHTML = window.RCChartRead.svgChart(parsed, Object.assign(
             geo ? { entry: geo.e, sl: geo.sl, tp: geo.tp, direction: geo.d } : {},
-            { levels: (ins && ins.data && ins.data.levels) || [],
+            { width: Math.max(300, (chartBox.clientWidth || 0) - 4),
+              levels: (ins && ins.data && ins.data.levels) || [],
               fvgs: (ins && ins.data && ins.data.fvgs) || [],
               waves: ew ? window.RCChartRead.elliottWavePoints(ew) : [] }));
         }
