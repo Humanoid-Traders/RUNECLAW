@@ -57,6 +57,10 @@
   .gc-head { font-weight: 600; margin-bottom: 5px; } .gc-sum { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; }
   .gc-flag { font-size: var(--fs-xs); color: var(--text-2); margin-top: 8px; line-height: 1.5; padding-left: 10px; border-left: 2px solid var(--line-2); }
   .gc-flag.gc-high { border-left-color: #ff5c6c; } .gc-flag.gc-medium { border-left-color: #ff9f45; } .gc-flag.gc-low { border-left-color: #e6c34b; }
+  .gc-flag.gc-warn { border-left-color: #e6c34b; color: #e6c34b; }
+  .gc-tier { display: inline-block; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line-2); margin-left: 4px; vertical-align: middle; }
+  .gc-tier.gc-t-wallet { color: var(--up); border-color: var(--up); } .gc-tier.gc-t-gate { color: var(--gold-bright); border-color: var(--gold-bright); }
+  .gc-tier.gc-t-approval { color: #ff9f45; border-color: #ff9f45; } .gc-tier.gc-t-monitor { color: #7aa2ff; border-color: #7aa2ff; }
   .gc-flag code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-family: var(--font-data); word-break: break-all; }
   .gc-more { display: inline-block; margin-top: 10px; color: var(--gold-bright); font-size: var(--fs-sm); }
   .gc-eg { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
@@ -150,6 +154,7 @@
   inside a revocable authority envelope you set and can switch off at any time.</p>
 </div>
 <script src="/js/firewall-model.js?v=1"></script>
-<script src="/js/guardian-console.js?v=1"></script>
+<script src="/js/intent-model.js?v=1"></script>
+<script src="/js/guardian-console.js?v=2"></script>
 </body>
 </html>
