@@ -101,6 +101,15 @@
   @keyframes tapeIn { from { transform: translateY(-8px); opacity: 0; background: rgba(230,176,60,.10); } to { transform: none; opacity: 1; background: transparent; } }
   @media (prefers-reduced-motion: reduce) { .tape-row.tape-new { animation: none; } }
   @media (max-width: 520px) { .tape-row { grid-template-columns: 18px minmax(70px, 1fr) auto auto; } .tape-row .how, .tape-row .ago { display: none; } }
+  /* Per-position chart expander */
+  .nowrap { white-space: nowrap; }
+  .chart-row td { padding: 0 2px 10px; }
+  .chart-cell { min-width: 320px; }
+  .rc-chart { width: 100%; height: auto; max-height: 260px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+  .read-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .read-chip { font-size: var(--fs-xs); font-family: var(--font-data); padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text-2); }
+  .read-chip.up-c { border-color: rgba(47,191,113,.5); }
+  .read-chip.down-c { border-color: rgba(224,82,82,.5); }
   /* Symbol chips — the mobile-proof picker (datalist is flaky on Android) */
   .sym-chips { display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 6px 0 2px; scrollbar-width: none; }
   .sym-chips::-webkit-scrollbar { display: none; }
@@ -274,6 +283,7 @@
 
 <script src="/js/app.js?v=3"></script>
 <script src="/js/i18n.js?v=15"></script>
+<script src="/js/chartread.js?v=1"></script>
 <script src="/js/radar3d.js?v=3" defer></script>
 <script>
 (function () {
@@ -304,7 +314,80 @@
 
   var prevStats = null;      // last rendered numbers — refreshes animate the delta
   var prevPnl = {};          // position id -> last pnl, for the change pulse
+  var lastAccount = null;    // set in renderAccount — expander toggles re-render from it
+  var chartOpen = {};        // position id -> true; survives the 20s tbody rebuild
+  var chartData = {};        // symbol -> { at, candles, patterns } (120s cache)
+
+  // Per-position chart & engine read: 1h candles (public market proxy) with
+  // the position's OWN entry/TP/SL/liq drawn on them, session VWAP + bands
+  // and BOS/CHoCH structure computed client-side with the ENGINE'S formulas
+  // (RCChartRead mirrors them), and the engine's live pattern read — chart
+  // patterns incl. Elliott waves, Wyckoff, harmonics, plus the doji/candle
+  // map — from the public /api/patterns proxy. When that bridge is down we
+  // say so instead of inventing a read.
+  function readChips(p, parsed, pat) {
+    var chips = [];
+    var CR = window.RCChartRead;
+    var vw = CR && parsed.length >= 5 ? CR.vwap(parsed) : null;
+    if (vw) {
+      chips.push('<span class="read-chip ' + (vw.dist_pct >= 0 ? 'up-c' : 'down-c') + '">VWAP '
+        + (vw.dist_pct >= 0 ? 'above' : 'below') + ' ' + (vw.dist_pct >= 0 ? '+' : '') + vw.dist_pct.toFixed(2) + '%</span>');
+    }
+    var st = CR && parsed.length >= 15 ? CR.structure(parsed) : null;
+    if (st) {
+      var stCls = st.structure === 'bullish' ? 'up-c' : st.structure === 'bearish' ? 'down-c' : '';
+      chips.push('<span class="read-chip ' + stCls + '">structure ' + st.structure + '</span>');
+      if (st.bos) chips.push('<span class="read-chip ' + (st.bos_dir > 0 ? 'up-c' : 'down-c') + '">BOS ' + (st.bos_dir > 0 ? '↑' : '↓') + '</span>');
+      if (st.choch) chips.push('<span class="read-chip ' + (st.choch_dir > 0 ? 'up-c' : 'down-c') + '">CHoCH ' + (st.choch_dir > 0 ? '↑' : '↓') + '</span>');
+    }
+    if (pat && Array.isArray(pat.chart_patterns) && pat.chart_patterns.length) {
+      pat.chart_patterns.slice(0, 3).forEach(function (cp) {
+        var cls = cp.signal === 'bullish' ? 'up-c' : cp.signal === 'bearish' ? 'down-c' : '';
+        chips.push('<span class="read-chip ' + cls + '" title="' + esc(cp.description || '') + '">'
+          + esc(cp.name) + ' ' + Math.round((Number(cp.confidence) || 0) * 100) + '%</span>');
+      });
+    }
+    var cmap = pat && (pat.candlestick_patterns || pat.candle_patterns);
+    if (cmap) {
+      Object.keys(cmap).slice(0, 4).forEach(function (k) {
+        var cls = cmap[k] === 'bullish' ? 'up-c' : cmap[k] === 'bearish' ? 'down-c' : '';
+        chips.push('<span class="read-chip ' + cls + '">🕯 ' + esc(k.replace(/_/g, ' ')) + '</span>');
+      });
+    }
+    if (!pat) chips.push('<span class="read-chip">engine pattern read unavailable right now</span>');
+    return '<div class="read-chips">' + chips.join('') + '</div>'
+      + '<div class="muted" style="font-size:10px;margin-top:4px">1h candles · VWAP band + structure computed with the engine\'s formulas · patterns read live from the engine (4h) · not advice</div>';
+  }
+  async function paintChart(p) {
+    var cell = $('chartCell' + p.id);
+    if (!cell) return;
+    var sym = String(p.symbol || '').toUpperCase();
+    var d0 = chartData[sym];
+    if (!d0 || Date.now() - d0.at > 120000) {
+      var base = sym.replace(/USDT$/, '');
+      var results = await Promise.all([
+        RC.fetchJSON('/api/market/candles/' + encodeURIComponent(sym) + '?granularity=1h&limit=120', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
+        RC.fetchJSON('/api/patterns?symbol=' + encodeURIComponent(base + '/USDT') + '&timeframe=4h', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
+      ]);
+      var rows = results[0] && results[0].ok && results[0].data && Array.isArray(results[0].data.data) ? results[0].data.data : [];
+      var pat = results[1] && results[1].ok ? results[1].data : null;
+      d0 = { at: Date.now(), candles: rows, patterns: pat };
+      chartData[sym] = d0;
+    }
+    cell = $('chartCell' + p.id);       // the tbody may have rebuilt mid-fetch
+    if (!cell || !chartOpen[p.id]) return;
+    var CR = window.RCChartRead;
+    var parsed = CR ? CR.parseCandles(d0.candles) : [];
+    if (!parsed.length) {
+      cell.innerHTML = '<span class="muted">Market candles unavailable right now — try again shortly.</span>';
+      return;
+    }
+    cell.innerHTML = CR.svgChart(parsed, {
+      entry: p.entry, sl: p.sl, tp: p.tp, liq: p.liq_price, direction: p.direction,
+    }) + readChips(p, parsed, d0.patterns);
+  }
   function renderAccount(d) {
+    lastAccount = d;
     var r = d.return_pct;
     lastBalance = d.balance;
     $('stats').innerHTML =
@@ -321,7 +404,7 @@
     prevStats = { balance: d.balance, equity: d.equity, ret: r };
     var pb = $('posBody');
     pb.innerHTML = d.positions.map(function (p) {
-      return '<tr><td class="sym">' + esc(p.symbol)
+      var row = '<tr><td class="sym">' + esc(p.symbol)
         + (p.source === 'signal' ? ' <span class="chip chip--info" title="Opened by practice-follow">⚡ signal</span>' : '') + '</td>'
         + '<td class="' + (p.direction === 'LONG' ? 'up-c' : 'down-c') + '">' + esc(p.direction) + '</td>'
         + '<td>' + p.leverage + '×</td>'
@@ -329,8 +412,17 @@
         + '<td class="' + pnlCls(p.pnl) + pulseCls(p) + '">' + (p.pnl == null ? '—' : (p.pnl > 0 ? '+' : '') + fmt2(p.pnl) + ' (' + (p.pnl_pct > 0 ? '+' : '') + fmt2(p.pnl_pct) + '%)') + '</td>'
         + '<td><span class="up-c">' + (p.tp != null ? fmtP(p.tp) : '—') + '</span> / <span class="down-c">' + (p.sl != null ? fmtP(p.sl) : '—') + '</span></td>'
         + '<td class="muted">' + fmtP(p.liq_price) + '</td>'
-        + '<td><button class="closebtn" data-close="' + p.id + '" type="button">Close</button></td></tr>';
+        + '<td class="nowrap"><button class="closebtn" data-chart="' + p.id + '" type="button" aria-expanded="'
+        + (chartOpen[p.id] ? 'true' : 'false') + '" title="Chart & engine read">📈</button> '
+        + '<button class="closebtn" data-close="' + p.id + '" type="button">Close</button></td></tr>';
+      if (chartOpen[p.id]) {
+        row += '<tr class="chart-row"><td colspan="9"><div class="chart-cell" id="chartCell' + p.id
+          + '"><span class="muted">Loading chart & engine read…</span></div></td></tr>';
+      }
+      return row;
     }).join('');
+    // Re-paint any open chart cells (the tbody was just rebuilt).
+    d.positions.forEach(function (p) { if (chartOpen[p.id]) paintChart(p); });
     $('posEmpty').hidden = d.positions.length > 0;
     var hb = $('histBody');
     hb.innerHTML = (d.history || []).map(function (t) {
@@ -618,6 +710,14 @@
     });
 
     $('posBody').addEventListener('click', async function (e) {
+      var cbtn = e.target.closest('[data-chart]');
+      if (cbtn) {
+        var pid = Number(cbtn.getAttribute('data-chart'));
+        chartOpen[pid] = !chartOpen[pid];
+        if (!chartOpen[pid]) delete chartOpen[pid];
+        if (lastAccount) renderAccount(lastAccount);
+        return;
+      }
       var b = e.target.closest('[data-close]'); if (!b) return;
       b.disabled = true;
       var r = await RC.fetchJSON('/api/arena/close', { method: 'POST', body: { position_id: Number(b.getAttribute('data-close')) }, timeoutMs: 14000 }).catch(function () { return null; });

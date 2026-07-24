@@ -940,8 +940,9 @@
     return `<div class="tbl-wrap"><table class="tbl tbl--collapse">
       <thead><tr><th>Pair</th><th>Side</th><th class="r">Entry</th><th class="r">Stop / Target</th><th class="r">Size</th></tr></thead>
       <tbody>${rows.map(p => `
-        <tr>
-          <td data-label="Pair"><b>${esc(String(p.symbol).split('/')[0])}</b></td>
+        <tr data-sym="${esc(String(p.symbol).split('/')[0])}" role="button" tabindex="0"
+            title="Chart, patterns & structure" style="cursor:pointer">
+          <td data-label="Pair"><b>${esc(String(p.symbol).split('/')[0])}</b> <span class="muted small">📈</span></td>
           <td data-label="Side">${dirChip(p.direction)}</td>
           <td data-label="Entry" class="r num">${fmtPrice(p.entry_price)}</td>
           <td data-label="Stop / Target" class="r num muted">${fmtPrice(p.stop_loss)} / ${fmtPrice(p.take_profit)}</td>
@@ -972,9 +973,11 @@
       else if (p.sl_order === 'exchange') chip = `<span class="chip chip--up">🛡️ on exchange</span>`;
       else chip = `<span class="chip">🤖 bot-managed</span>`;
       const lev = p.leverage ? ` · <span class="muted small">${p.leverage}×</span>` : '';
-      return `<div class="lpos-item">
+      const base = esc(p.pair || String(p.symbol || '').split('/')[0]);
+      return `<div class="lpos-item" data-sym="${base}" role="button" tabindex="0"
+        title="Chart, patterns & structure" style="cursor:pointer">
         <div class="row" style="justify-content:space-between;gap:var(--s2);flex-wrap:wrap">
-          <div><b>${esc(p.pair || String(p.symbol || '').split('/')[0])}</b> ${dirChip(p.direction)}${lev}</div>
+          <div><b>${base}</b> ${dirChip(p.direction)}${lev} <span class="muted small">📈</span></div>
           ${chip}
         </div>
         <div class="small muted">Entry ${fmtPrice(p.entry_price)} · SL ${fmtPrice(p.stop_loss)}${dist} · TP ${fmtPrice(p.take_profit)} · ${fmtMoney(p.size_usd, 0)}</div>
@@ -1996,6 +1999,7 @@
     }
     body.innerHTML = `
       <section class="mt-1">${_insightBlock(ins && ins.data)}</section>
+      <div id="symReadChips" class="row mt-2" style="gap:6px;flex-wrap:wrap"></div>
       <h3 class="mt-4 mb-2" style="font-size:var(--fs-md)">Pattern read</h3>
       ${card || '<p class="muted small">No chart patterns detected on ' + esc(pair) + ' right now.</p>'}
       <div class="row mt-3" style="gap:var(--s2)">
@@ -2004,6 +2008,27 @@
       </div>
       <p class="muted small mt-2">Read-only decision picture · patterns are observations, not signals.</p>`;
     mountDeepScanMinis();
+    // VWAP & structure chips — computed with the ENGINE'S formulas
+    // (RCChartRead mirrors session VWAP + fractal BOS/CHoCH) from the same
+    // cached 4h candles the mini chart uses. Best-effort: no chips on failure.
+    if (window.RCChartRead) {
+      _fetchMiniCandles(base + 'USDT').then((rows) => {
+        const box = document.getElementById('symReadChips');
+        if (!box || m.hidden) return;
+        const parsed = window.RCChartRead.parseCandles(rows);
+        if (parsed.length < 15) return;
+        const vw = window.RCChartRead.vwap(parsed);
+        const st = window.RCChartRead.structure(parsed);
+        const chips = [];
+        if (vw) chips.push(`<span class="chip ${vw.dist_pct >= 0 ? 'chip--up' : 'chip--down'}">VWAP ${vw.dist_pct >= 0 ? 'above' : 'below'} ${vw.dist_pct >= 0 ? '+' : ''}${vw.dist_pct.toFixed(2)}%</span>`);
+        if (st) {
+          chips.push(`<span class="chip ${st.structure === 'bullish' ? 'chip--up' : st.structure === 'bearish' ? 'chip--down' : ''}">structure ${st.structure}</span>`);
+          if (st.bos) chips.push(`<span class="chip ${st.bos_dir > 0 ? 'chip--up' : 'chip--down'}">BOS ${st.bos_dir > 0 ? '↑' : '↓'}</span>`);
+          if (st.choch) chips.push(`<span class="chip ${st.choch_dir > 0 ? 'chip--up' : 'chip--down'}">CHoCH ${st.choch_dir > 0 ? '↑' : '↓'}</span>`);
+        }
+        if (chips.length) box.innerHTML = chips.join('') + `<span class="muted small" style="align-self:center">4h · engine formulas</span>`;
+      }).catch(() => { /* chips are a bonus read */ });
+    }
     const ask = document.getElementById('symAsk');
     if (ask) ask.onclick = () => {
       closeSymModal(); location.hash = 'chat';
