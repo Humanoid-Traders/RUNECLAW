@@ -53,3 +53,15 @@ test('the logged-out overview routes visitors into everything already open', () 
   assert.match(cur, /href="\/arena"/);
   assert.match(cur, /href="\/guardian"/);
 });
+
+test('Reputation + Worlds get honest previews — explainers and public directory, no fake numbers', () => {
+  const cur = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
+  assert.match(cur, /How the score is earned/);
+  assert.match(cur, /Tail risk/);
+  assert.match(cur, /The worlds we mirror/);
+  assert.match(cur, /decentraland\.org/);
+  assert.match(cur, /read-only, always/);
+  // §4/honesty: preview sections carry no fabricated example values
+  const rep = cur.slice(cur.indexOf('How the score is earned'), cur.indexOf('How the score is earned') + 1600);
+  assert.ok(!/\d+%|\$\s?\d/.test(rep), 'reputation preview shows axes, not numbers');
+});
