@@ -63,10 +63,12 @@
   .gc-chip { font-size: var(--fs-xs); padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text-2); cursor: pointer; }
   .gc-chip:hover { color: var(--text-1); border-color: var(--gold-bright); }
   .gc-loading { color: var(--text-3); }
+  /* Keyboard focus visibility (a11y) */
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
 </style>
 </head>
 <body>
-<div class="gd-wrap">
+<div class="gd-wrap" role="main">
   <nav class="topnav">
     <a href="/">← RUNECLAW</a>
     <span style="flex:1"></span>

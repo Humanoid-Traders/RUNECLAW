@@ -65,10 +65,12 @@
   .skel { height: 92px; border-radius: var(--radius); background: linear-gradient(90deg, var(--surface), var(--surface-2), var(--surface)); background-size: 200% 100%; animation: sh 1.3s infinite; margin-bottom: var(--s3); }
   @keyframes sh { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
   @media (prefers-reduced-motion: reduce) { .skel, .vote .bar i { animation: none; transition: none; } }
+  /* Keyboard focus visibility (a11y) */
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
 </style>
 </head>
 <body>
-<div class="fr-wrap">
+<div class="fr-wrap" role="main">
   <nav class="topnav">
     <a href="/">← RUNECLAW</a>
     <span style="flex:1"></span>
