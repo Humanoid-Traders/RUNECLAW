@@ -94,6 +94,14 @@
   </div>
   <p class="muted" style="font-size:var(--fs-xs)">Metrics are derived from raw fills only (FIFO), sealed and hash-committed.
   Appearing is opt-in and revocable. <span id="meta"></span></p>
+
+  <!-- Paper Arena season — cross-board visibility (§4: handles + percent only) -->
+  <div class="panel" id="arenaSeasonPanel" hidden style="margin-top:var(--s4)">
+    <p style="font-size:var(--fs-sm);margin-bottom:var(--s2)"><b>🏟️ Paper Arena</b>
+      <span class="muted" id="arenaSeasonMeta"></span>
+      <a href="/arena" style="float:right">Enter the Arena →</a></p>
+    <div id="arenaSeasonRows" style="font-family:var(--font-data);font-size:var(--fs-sm)"></div>
+  </div>
 </div>
 
 <script>
@@ -192,6 +200,31 @@
 
   load('');
   setInterval(renderCountdown, 60000);
+
+  // Paper Arena season teaser — §4: opt-in handles + percent only.
+  fetch('/api/arena/season', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.season) return;
+      var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+      document.getElementById('arenaSeasonPanel').hidden = false;
+      document.getElementById('arenaSeasonMeta').textContent =
+        '· “' + d.season.name + '” · ' + d.season.status;
+      var rows = (d.rows || []).slice(0, 5);
+      document.getElementById('arenaSeasonRows').innerHTML = rows.length
+        ? rows.map(function (x) {
+            var cls = x.return_pct > 0 ? 'up' : x.return_pct < 0 ? 'down' : '';
+            return '<div style="display:flex;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)">'
+              + '<span style="color:var(--gold-bright)">#' + x.rank + '</span>'
+              + '<span style="flex:1">' + esc(x.handle) + '</span>'
+              + '<span class="' + cls + '">' + (x.return_pct > 0 ? '+' : '') + x.return_pct + '%</span></div>';
+          }).join('')
+        : '<p class="muted" style="font-size:var(--fs-xs)">' +
+          (d.season.status === 'upcoming' ? 'Starts soon — same virtual stake for everyone, ranked on percent return.'
+            : 'The season crown is up for grabs — no closed trades in the window yet.') + '</p>';
+    })
+    .catch(function () { /* teaser is best-effort */ });
 })();
 </script>
 </body>
