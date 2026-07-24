@@ -108,8 +108,8 @@
     <a href="/guardian">Guardian</a>
     <a href="/dashboard">Open the app</a>
   </nav>
-  <div class="ar-hero"><h1>Paper Trading Arena</h1></div>
-  <p class="lede">Every account starts with the same <b>10,000 vUSDT virtual stake</b> — no exchange API keys,
+  <div class="ar-hero"><h1 data-i18n="arena.h1">Paper Trading Arena</h1></div>
+  <p class="lede" data-i18n-html="arena.lede">Every account starts with the same <b>10,000 vUSDT virtual stake</b> — no exchange API keys,
   no setup, no risk. Fills and marks use <b>real live Bitget prices</b>, liquidations are enforced exactly like
   the Stress Lab models them, and the public board ranks <b>percent return</b> under anonymous handles.
   Prove your edge before you ever connect a real account — and when paper competitions run, this is where
@@ -125,14 +125,14 @@
 
   <!-- Competition season banner + standings (populated when one is authored) -->
   <section class="panel" id="seasonPanel" hidden>
-    <h2>Competition season</h2>
+    <h2 data-i18n="arena.p_season">Competition season</h2>
     <div class="season-head" id="seasonHead"></div>
     <div id="seasonRows"></div>
   </section>
 
   <!-- Hall of Champions — permanent podiums of ended seasons -->
   <section class="panel" id="hallPanel" hidden>
-    <h2>Hall of Champions <span class="muted" style="text-transform:none;letter-spacing:0">· ended seasons · immutable</span></h2>
+    <h2><span data-i18n="arena.p_hall">Hall of Champions</span> <span class="muted" style="text-transform:none;letter-spacing:0">· ended seasons · immutable</span></h2>
     <div id="hallRows"></div>
   </section>
 
@@ -161,7 +161,7 @@
 
   <!-- Account (logged in) -->
   <section class="panel" id="acctPanel" hidden>
-    <h2>Your paper account <span class="muted" style="text-transform:none;letter-spacing:0">· virtual funds only</span></h2>
+    <h2><span data-i18n="arena.p_account">Your paper account</span> <span class="muted" style="text-transform:none;letter-spacing:0">· virtual funds only</span></h2>
     <div class="stats" id="stats"></div>
     <div class="badges" id="badges"></div>
     <div id="starter" hidden></div>
@@ -169,7 +169,7 @@
   </section>
 
   <section class="panel" id="ticketPanel" hidden>
-    <h2>Open a paper position</h2>
+    <h2 data-i18n="arena.p_ticket">Open a paper position</h2>
     <div class="ticket">
       <div><label for="tSym">Symbol</label>
         <input id="tSym" list="symList" value="BTCUSDT" maxlength="20" autocomplete="off" spellcheck="false">
@@ -187,14 +187,14 @@
         <input id="tTp" type="number" min="0" step="any" placeholder="auto-close in profit"></div>
       <div><label for="tSl">Stop-loss <span class="muted" style="text-transform:none">(optional)</span></label>
         <input id="tSl" type="number" min="0" step="any" placeholder="auto-close the loss"></div>
-      <div><button class="btn btn--primary" id="openBtn" type="button">Open paper position</button></div>
+      <div><button class="btn btn--primary" id="openBtn" type="button" data-i18n="arena.b_open">Open paper position</button></div>
     </div>
     <div class="tmsg" id="tMsg" role="status" aria-live="polite"></div>
     <div class="risk-preview" id="riskPreview" aria-live="polite"></div>
   </section>
 
   <section class="panel" id="followPanel" hidden>
-    <h2>Practice-follow the engine <span class="muted" style="text-transform:none;letter-spacing:0">· paper only · revocable any time</span></h2>
+    <h2><span data-i18n="arena.p_follow">Practice-follow the engine</span> <span class="muted" style="text-transform:none;letter-spacing:0">· paper only · revocable any time</span></h2>
     <p class="lede" style="margin-bottom:var(--s2);font-size:var(--fs-sm)">Mirror the engine's live signal stream into
     your paper account: each new signal opens a position at your chosen size, filled at the <b>live mark</b>. It starts
     from the next signal — never back-fills old calls — and can never touch real funds.</p>
@@ -209,7 +209,7 @@
   </section>
 
   <section class="panel" id="posPanel" hidden>
-    <h2>Open positions</h2>
+    <h2 data-i18n="arena.p_positions">Open positions</h2>
     <div class="tbl-scroll"><table class="tbl"><thead><tr>
       <th>Symbol</th><th>Side</th><th>Lev</th><th>Entry</th><th>Mark</th><th>PnL (vUSDT)</th><th>TP / SL</th><th>Liq. price</th><th></th>
     </tr></thead><tbody id="posBody"></tbody></table></div>
@@ -217,7 +217,7 @@
   </section>
 
   <section class="panel" id="histPanel" hidden>
-    <h2>Closed trades</h2>
+    <h2 data-i18n="arena.p_history">Closed trades</h2>
     <div class="tbl-scroll"><table class="tbl"><thead><tr>
       <th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL (vUSDT)</th><th>How</th>
     </tr></thead><tbody id="histBody"></tbody></table></div>
@@ -226,11 +226,11 @@
 
   <!-- Leaderboard (public) -->
   <section class="panel">
-    <h2>Arena leaderboard <span class="muted" style="text-transform:none;letter-spacing:0">· percent return · anonymous handles</span></h2>
+    <h2><span data-i18n="arena.p_board">Arena leaderboard</span> <span class="muted" style="text-transform:none;letter-spacing:0">· percent return · anonymous handles</span></h2>
     <div id="lbRows"><div class="empty">Loading the board…</div></div>
     <div class="optin" id="optin" hidden>
       <input id="handleInput" maxlength="24" placeholder="Pick an anonymous handle to appear on the board">
-      <button class="btn btn--sm" id="optinBtn" type="button">Join the board</button>
+      <button class="btn btn--sm" id="optinBtn" type="button" data-i18n="arena.b_join">Join the board</button>
     </div>
     <div class="tmsg" id="lbMsg" role="status" aria-live="polite"></div>
   </section>
@@ -242,6 +242,7 @@
 </div>
 
 <script src="/js/app.js?v=3"></script>
+<script src="/js/i18n.js?v=14"></script>
 <script src="/js/radar3d.js?v=3" defer></script>
 <script>
 (function () {

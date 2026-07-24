@@ -193,3 +193,20 @@ test('launching a season announces it — push broadcast + agent-feed event (§4
   assert.ok(!/\$\s?\d|\d+%/.test(ev.title + ' ' + ev.body), 'announcement carries no numbers (§4)');
   push.setSender(null);
 });
+
+test('the Arena speaks six languages — localizer wired, keys complete', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  const i18n = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'i18n.js'), 'utf8');
+  assert.match(html, /js\/i18n\.js\?v=\d+/);
+  assert.match(html, /data-i18n="arena\.h1"/);
+  assert.match(html, /data-i18n-html="arena\.lede"/);
+  for (const key of ['arena.h1', 'arena.lede', 'arena.p_account', 'arena.p_ticket', 'arena.p_positions',
+    'arena.p_history', 'arena.p_board', 'arena.p_season', 'arena.p_follow', 'arena.p_hall',
+    'arena.b_open', 'arena.b_join']) {
+    assert.ok(i18n.includes(`'${key}'`), `i18n has ${key}`);
+  }
+  // the long lede carries all six locales
+  const ledeIdx = i18n.indexOf("'arena.lede'");
+  const ledeBlock = i18n.slice(ledeIdx, ledeIdx + 4000);
+  for (const loc of ['en:', 'es:', 'zh:', 'pt:', 'fr:', 'ar:']) assert.ok(ledeBlock.includes(loc), `lede has ${loc}`);
+});
