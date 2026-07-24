@@ -281,6 +281,30 @@ router.post('/follow', authMiddleware, tradeLimit, async (req, res) => {
   }
 });
 
+// GET /api/arena/trader/:handle — PUBLIC trader card for an opted-in handle.
+// §4: percent / count / badges only — never an amount, not even virtual.
+const traderLib = require('../lib/arena_trader');
+router.get('/trader/:handle', async (req, res) => {
+  try {
+    const handle = String(req.params.handle || '').trim();
+    if (!traderLib.HANDLE_RE.test(handle)) return res.status(400).json({ error: 'Invalid handle' });
+    const [u] = await pool.execute('SELECT id FROM users WHERE leaderboard_handle = ?', [handle]);
+    if (!u[0]) return res.status(404).json({ error: 'No such trader' });
+    const userId = u[0].id;
+    const [acct] = await pool.execute('SELECT user_id, balance FROM arena_accounts WHERE user_id = ?', [userId]);
+    if (!acct[0]) return res.status(404).json({ error: 'No arena account' });
+    const positions = await loadPositions(userId);
+    const [trades] = await pool.execute(
+      'SELECT id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at FROM arena_trades WHERE user_id = ? ORDER BY id DESC LIMIT 30', [userId]);
+    let marks = {};
+    try { marks = await getTickers(); } catch (e) { /* percent renders from balance */ }
+    res.json(traderLib.buildTraderCard({ handle, balance: acct[0].balance, positions, marks, trades }));
+  } catch (err) {
+    console.error('Arena trader error:', err.message);
+    res.status(500).json({ error: 'Trader card unavailable' });
+  }
+});
+
 // ---- Competition seasons ------------------------------------------------
 const seasons = require('../lib/arena_seasons');
 

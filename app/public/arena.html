@@ -266,7 +266,8 @@
     var d = r && r.ok && r.data;
     if (!d) { $('lbRows').innerHTML = '<div class="empty">The board is unavailable right now.</div>'; return; }
     $('lbRows').innerHTML = d.rows.length ? d.rows.map(function (x) {
-      return '<div class="lb-row"><span class="rk">#' + x.rank + '</span><span>' + esc(x.handle) + '</span>'
+      return '<div class="lb-row"><span class="rk">#' + x.rank + '</span>'
+        + '<span><a href="/trader/' + encodeURIComponent(x.handle) + '">' + esc(x.handle) + '</a></span>'
         + '<span class="' + pnlCls(x.return_pct) + '">' + (x.return_pct > 0 ? '+' : '') + fmt2(x.return_pct) + '%</span>'
         + '<span class="tr">' + x.trades + ' trades</span></div>';
     }).join('') : '<div class="empty">Nobody on the board yet — open a paper trade, pick a handle, and take rank #1.</div>';

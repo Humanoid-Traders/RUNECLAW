@@ -246,6 +246,17 @@ app.get('/escape', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); r
 app.get('/intent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'intent.html')); });
 app.get('/leaderboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'leaderboard.html')); });
 app.get('/arena', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'arena.html')); });
+// Public Arena trader card — SSR-lite: the handle is injected into the title
+// and og tags so shared links unfurl personally. The handle is regex-validated
+// then HTML-escaped; all data stays client-fetched from the §4-safe API.
+app.get('/trader/:handle', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  const raw = String(req.params.handle || '').trim();
+  const safe = /^[A-Za-z0-9_]{3,20}$/.test(raw) ? raw : 'Arena trader';
+  const html = require('fs').readFileSync(path.join(__dirname, 'public', 'trader.html'), 'utf8')
+    .replace(/__HANDLE__/g, safe.replace(/[&<>"']/g, ''));
+  res.type('html').send(html);
+});
 // Digital Asset Links — lets the Android TWA app (Bubblewrap wrapper) open
 // this site fullscreen without browser chrome. Served ONLY when the operator
 // has configured the app identity; an unconfigured host answers 404 honestly

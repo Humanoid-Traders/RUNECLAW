@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>__HANDLE__ — RUNECLAW Arena trader</title>
+<meta name="description" content="The public Arena trader card for __HANDLE__ — percent return, win rate, achievements and recent paper trades. Virtual stake, real prices, no dollar figures — pure skill on display.">
+<meta property="og:title" content="__HANDLE__ — RUNECLAW Arena trader">
+<meta property="og:description" content="Percent return, win rate and achievements on the RUNECLAW Paper Arena — same virtual stake for everyone, ranked on skill alone.">
+<meta property="og:type" content="profile">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="__HANDLE__ — RUNECLAW Arena trader">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/app_icon_512.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=19">
+<style>
+  .tc-wrap { max-width: 720px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); } .topnav a:hover { color: var(--text-1); }
+  .card { background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius-lg); padding: var(--s5); box-shadow: var(--shadow); }
+  .hd { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+  .hd h1 { font-family: var(--font-display); letter-spacing: .05em; font-size: clamp(24px, 5vw, 36px); }
+  .hd .ret { font-family: var(--font-data); font-size: clamp(20px, 4vw, 30px); margin-left: auto; }
+  .up-c { color: var(--up); } .down-c { color: var(--down); }
+  .meta { display: flex; gap: var(--s4); flex-wrap: wrap; margin: var(--s3) 0; color: var(--text-2); font-size: var(--fs-sm); font-family: var(--font-data); }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: var(--s3) 0; }
+  .badge-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--gold-bright); background: var(--surface-2); }
+  .tr-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: var(--s3); padding: 7px 0; border-bottom: 1px solid var(--line); font-family: var(--font-data); font-size: var(--fs-sm); }
+  .tr-row .rz { color: var(--text-3); font-size: var(--fs-xs); }
+  .empty { color: var(--text-3); padding: var(--s4) 0; }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); }
+  .cta-row { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s4); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
+</style>
+</head>
+<body>
+<div class="tc-wrap" role="main">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/arena">Paper Arena</a>
+    <a href="/leaderboard">Leaderboard</a>
+  </nav>
+  <div class="card">
+    <div id="root"><div class="empty">Loading the trader card…</div></div>
+    <div class="cta-row">
+      <a class="btn btn--primary btn--sm" href="/arena">⚔️ Challenge them in the Arena</a>
+      <button class="btn btn--sm" id="copyLink" type="button">🔗 Copy card link</button>
+    </div>
+  </div>
+  <p class="disc">Paper Arena trader card — <b>virtual stake, real live prices</b>. Everything shown is percent,
+  count or achievement; no dollar figures, and no real funds are involved anywhere in the Arena. Handles are
+  anonymous and opt-in. Not investment advice.</p>
+</div>
+<script>
+(function () {
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var handle = decodeURIComponent((location.pathname.split('/')[2] || '').trim());
+  var root = document.getElementById('root');
+  var cls = function (n) { return n > 0 ? 'up-c' : n < 0 ? 'down-c' : ''; };
+  var f2 = function (n) { return Number(n || 0).toFixed(2); };
+
+  document.getElementById('copyLink').addEventListener('click', function () {
+    var b = this;
+    var done = function () { b.textContent = '✅ Copied'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(location.href).then(done).catch(function () { window.prompt('Copy:', location.href); });
+    } else { window.prompt('Copy:', location.href); }
+  });
+
+  if (!/^[A-Za-z0-9_]{3,20}$/.test(handle)) {
+    root.innerHTML = '<div class="empty">That doesn\'t look like a trader handle. <a href="/arena">Visit the Arena →</a></div>';
+    return;
+  }
+  fetch('/api/arena/trader/' + encodeURIComponent(handle), { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) { root.innerHTML = '<div class="empty">No trader by that handle — the board awaits. <a href="/arena">Enter the Arena →</a></div>'; return; }
+      var html = '<div class="hd"><h1>' + esc(d.handle) + '</h1>'
+        + '<span class="ret ' + cls(d.return_pct) + '">' + (d.return_pct > 0 ? '+' : '') + f2(d.return_pct) + '%</span></div>'
+        + '<div class="meta">'
+        + '<span>' + d.closed_trades + ' closed</span>'
+        + '<span>' + d.open_positions + ' open</span>'
+        + (d.win_rate_pct != null ? '<span>' + f2(d.win_rate_pct) + '% win rate</span>' : '')
+        + '</div>';
+      if ((d.badges || []).length) {
+        html += '<div class="badges">' + d.badges.map(function (b) {
+          return '<span class="badge-chip" title="' + esc(b.name) + '">' + b.icon + ' ' + esc(b.name) + '</span>'; }).join('') + '</div>';
+      }
+      html += (d.recent || []).length
+        ? d.recent.map(function (t) {
+            return '<div class="tr-row"><span>' + esc(t.symbol) + ' <span class="rz">' + esc(t.direction) + ' ' + t.leverage + '×</span></span>'
+              + '<span class="' + cls(t.ret_pct) + '">' + (t.ret_pct > 0 ? '+' : '') + f2(t.ret_pct) + '%</span>'
+              + '<span class="rz">' + esc(t.reason) + '</span>'
+              + '<span class="rz">' + (t.closed_at ? new Date(t.closed_at).toLocaleDateString() : '') + '</span></div>';
+          }).join('')
+        : '<div class="empty">No closed trades yet — the record starts with the first close.</div>';
+      root.innerHTML = html;
+      document.title = d.handle + ' — RUNECLAW Arena trader';
+    })
+    .catch(function () { root.innerHTML = '<div class="empty">The card is unavailable right now — try again shortly.</div>'; });
+})();
+</script>
+</body>
+</html>
