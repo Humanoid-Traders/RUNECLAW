@@ -969,18 +969,33 @@ class ProactiveMonitor:
     # counter and is invisible to _check_tick_failures above. This watches the
     # tick loop's START stamp instead. Threshold must clear the worst
     # LEGITIMATE gap — the tick loop backs off up to 300s between failed
-    # ticks — so anything under ~2x the backoff cap would false-alarm on a
-    # degraded-but-alive engine.
+    # ticks. The other legitimate gap — the smart-scan quiet-market sleep,
+    # whose max (600s default, env-tunable higher) can meet or EXCEED this
+    # threshold — is handled precisely instead of by inflating the constant:
+    # the engine stamps _next_tick_due_ts before every inter-tick sleep, and
+    # time inside a declared sleep (+ grace) never counts as a stall.
+    # Root-caused from a production false alarm (15s tick + 600s planned
+    # sleep = 615s "stall").
     TICK_STALL_THRESHOLD_S = 600.0
+    TICK_DUE_GRACE_S = 120.0
 
     @staticmethod
     def _is_tick_stalled(last_started: "float | None", now: float,
-                         threshold: float) -> bool:
-        """Pure staleness predicate. None = engine not started yet — never
-        stale (the documented monotonic None-sentinel rule)."""
+                         threshold: float,
+                         next_due: "float | None" = None,
+                         grace: float = TICK_DUE_GRACE_S) -> bool:
+        """Pure staleness predicate. None last_started = engine not started
+        yet — never stale (the documented monotonic None-sentinel rule).
+        next_due = the engine's declared wake-up time: being inside a planned
+        sleep (+ grace) is healthy, not a stall; None falls back to the
+        threshold-only rule."""
         if last_started is None or threshold <= 0:
             return False
-        return (now - last_started) > threshold
+        if (now - last_started) <= threshold:
+            return False
+        if next_due is not None and now <= next_due + grace:
+            return False
+        return True
 
     @staticmethod
     def _frame_summaries(frames: "list[Any]") -> "list[str]":
@@ -1028,8 +1043,9 @@ class ProactiveMonitor:
         per stall, re-arms when the loop moves again."""
         alerts: list[Alert] = []
         last = getattr(self.engine, "_last_tick_started_ts", None)
-        stalled = self._is_tick_stalled(last, time.monotonic(),
-                                        self.TICK_STALL_THRESHOLD_S)
+        stalled = self._is_tick_stalled(
+            last, time.monotonic(), self.TICK_STALL_THRESHOLD_S,
+            next_due=getattr(self.engine, "_next_tick_due_ts", None))
         if stalled and not self._tick_stale_alerted:
             self._tick_stale_alerted = True
             age = time.monotonic() - last
