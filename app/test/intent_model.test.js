@@ -8,7 +8,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
-const { compile, TIER, AXES } = require('../public/js/intent-model');
+const { compile, encodeShare, decodeShare, TIER, AXES } = require('../public/js/intent-model');
 
 const ruleFor = (out, axis) => out.rules.find((r) => r.axis === axis);
 
@@ -110,6 +110,28 @@ test('the compiler is deterministic — same input, same output', () => {
   const a = JSON.stringify(compile('only majors, max 5% per trade, stop if down 8%'));
   const b = JSON.stringify(compile('only majors, max 5% per trade, stop if down 8%'));
   assert.equal(a, b);
+});
+
+test('a share link round-trips the policy text', () => {
+  const text = 'only majors, max 5% per trade, no shorts, stop if down 8%';
+  const round = decodeShare('#' + encodeShare(text));
+  assert.equal(round, text);
+  // and the decoded text compiles to the same envelope
+  assert.deepEqual(compile(round).rules, compile(text).rules);
+});
+
+test('decodeShare tolerates a bare fragment, extra params and garbage', () => {
+  assert.equal(decodeShare('#p=' + encodeURIComponent('long only')), 'long only');
+  assert.equal(decodeShare('p=' + encodeURIComponent('no leverage')), 'no leverage');   // no leading '#'
+  assert.equal(decodeShare('#a=1&p=' + encodeURIComponent('max 5% per trade')), 'max 5% per trade');
+  assert.equal(decodeShare('#nothing-here'), '');
+  assert.equal(decodeShare(''), '');
+  assert.equal(decodeShare(null), '');
+});
+
+test('a share link special-chars survive the round-trip', () => {
+  const text = 'keep 40% in stables & max 3x leverage';
+  assert.equal(decodeShare('#' + encodeShare(text)), text);
 });
 
 test('each rule carries no secrets (§F-15)', () => {

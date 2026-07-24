@@ -52,6 +52,8 @@
   .cov .ax.on { color: var(--up); border-color: rgba(47,191,113,.4); background: rgba(47,191,113,.08); }
   .warns { margin-top: var(--s2); }
   .warn { color: #e6c34b; font-size: var(--fs-sm); padding: 4px 0; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: var(--s3); padding-top: var(--s3); border-top: 1px solid var(--line); }
+  .act-msg { font-size: var(--fs-xs); }
   .muted { color: var(--text-3); }
   .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
   a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
@@ -89,7 +91,15 @@
     <div class="warns" id="warnings"></div>
   </section>
 
-  <section class="panel"><h2>Authority Envelope — compiled rules</h2><div id="rules"></div></section>
+  <section class="panel">
+    <h2>Authority Envelope — compiled rules</h2>
+    <div id="rules"></div>
+    <div class="actions" id="actions">
+      <button class="chip" type="button" id="shareBtn">🔗 Copy share link</button>
+      <button class="chip" type="button" id="jsonBtn">⧉ Copy as JSON</button>
+      <span class="act-msg muted" id="actMsg" role="status" aria-live="polite"></span>
+    </div>
+  </section>
 
   <p class="disc">This is a <b>compiler preview</b>: it turns language into a policy so you can read exactly what
   would be enforced. It binds nothing, signs nothing and moves no funds — in the app, a compiled envelope is
@@ -98,7 +108,7 @@
   approval rule whose exact number you set privately in the app. A safety aid, not investment advice.</p>
 </div>
 
-<script src="/js/intent-model.js?v=1"></script>
+<script src="/js/intent-model.js?v=2"></script>
 <script>
 (function () {
   var M = window.IntentModel;
@@ -116,8 +126,10 @@
   var AXIS_LABEL = { size: 'size', exposure: 'exposure', leverage: 'leverage', direction: 'direction',
     loss: 'loss stop', scope: 'scope', approval: 'approval', emergency: 'emergency' };
 
+  var lastOut = null;
   function render() {
     var out = M.compile($('intent').value);
+    lastOut = out;
     $('summary').innerHTML = '<b>Compiled:</b> ' + esc(out.summary);
 
     // Coverage chips
@@ -149,7 +161,41 @@
   });
   $('intent').addEventListener('input', render);
 
-  $('intent').value = EXAMPLES[0];
+  // ---- Share link + JSON export ----------------------------------------
+  function flash(msg) {
+    var el = $('actMsg'); el.textContent = msg;
+    setTimeout(function () { if (el.textContent === msg) el.textContent = ''; }, 2200);
+  }
+  function copy(text, okMsg) {
+    var done = function () { flash(okMsg); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { flash('Copy failed — select and copy manually.'); });
+    } else {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'absolute'; ta.style.left = '-9999px';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done();
+      } catch (e) { flash('Copy failed — select and copy manually.'); }
+    }
+  }
+  $('shareBtn').addEventListener('click', function () {
+    var text = $('intent').value.trim();
+    if (!text) { flash('Type a policy first.'); return; }
+    var base = location.origin + location.pathname;
+    copy(base + '#' + M.encodeShare(text), 'Share link copied.');
+  });
+  $('jsonBtn').addEventListener('click', function () {
+    if (!lastOut || !lastOut.recognized) { flash('Nothing compiled to export yet.'); return; }
+    // Export the compiled rules only — no $-figures ever (the model guarantees it).
+    var payload = { source: $('intent').value.trim(),
+      rules: lastOut.rules.map(function (r) { return { axis: r.axis, label: r.label, tier: r.tier, value: r.value, human: r.human }; }),
+      coverage: { covered: lastOut.coverage.covered, total: lastOut.coverage.total } };
+    copy(JSON.stringify(payload, null, 2), 'Policy JSON copied.');
+  });
+
+  // Prefill from a shared #p= link if present, else the flagship example.
+  var shared = M.decodeShare(location.hash);
+  $('intent').value = shared || EXAMPLES[0];
   render();
 })();
 </script>

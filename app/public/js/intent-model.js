@@ -205,5 +205,22 @@
       missing: AXES.filter((a) => !axes[a]) };
   }
 
-  return { compile, TIER, AXES, MAJORS };
+  // ---- Shareable policy links -------------------------------------------
+  // A compiled policy is just its source sentence, so a share link only needs
+  // to round-trip that text. encodeShare() produces the value for a `#p=` URL
+  // fragment; decodeShare() reads it back, tolerant of a leading '#', a 'p='
+  // prefix, and malformed input (returns '' rather than throwing).
+  function encodeShare(text) {
+    return 'p=' + encodeURIComponent(String(text == null ? '' : text).slice(0, 2000).trim());
+  }
+  function decodeShare(hash) {
+    var s = String(hash == null ? '' : hash);
+    if (s.charAt(0) === '#') s = s.slice(1);
+    var m = s.match(/(?:^|&)p=([^&]*)/);
+    if (!m) return '';
+    try { return decodeURIComponent(m[1]).slice(0, 2000); }
+    catch (e) { return ''; }
+  }
+
+  return { compile, encodeShare, decodeShare, TIER, AXES, MAJORS };
 }));
