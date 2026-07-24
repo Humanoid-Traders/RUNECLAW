@@ -49,6 +49,9 @@ _KIND_BASE_SCORE = {
     # strategy itself reasons about now also shape where its stops hide and
     # its targets land.
     "fib": 1.1, "ew_target": 1.2,
+    # Pattern price objectives (fib extensions, harmonic D PRZ, Wyckoff phase
+    # extremes, necklines) — fed only under PATTERN_TARGET_LEVELS_ENABLED.
+    "pattern_target": 1.1,
 }
 
 

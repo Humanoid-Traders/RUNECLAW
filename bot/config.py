@@ -477,9 +477,11 @@ class RiskLimits:
     # Split rates for accurate PnL when order type is known.
     taker_fee_pct: float = _env_float("TAKER_FEE_PCT", 0.06)
     maker_fee_pct: float = _env_float("MAKER_FEE_PCT", 0.02)
-    # Liquidity guard: minimum order-book depth (per side) in USD.
-    # Scaled dynamically by position size; this is the absolute floor.
-    # Default $2K allows micro-test trades ($10-$50) to pass on smaller pairs.
+    # DEAD KNOB (tuning audit) — kept only for backward env compatibility:
+    # the liquidity guard actually reads OrderFlowConfig.min_top_depth_usd
+    # (env OF_MIN_DEPTH_USD, bot/core/order_flow.py). Nothing reads this
+    # field; setting MIN_BOOK_DEPTH_USD changes NOTHING. risk_manifest.yaml
+    # documenting it as check #17's threshold is likewise stale.
     min_book_depth_usd: float = _env_float("MIN_BOOK_DEPTH_USD", 2_000.0)
     # Leverage-aware margin risk cap: max % of margin (cost) that can be lost
     # on a single trade.  SL distance × leverage must not exceed this.
@@ -1313,6 +1315,18 @@ class AnalyzerConfig:
     # check is +0.03 — 1 of the required 2 horizons. Stays dark; re-run on a
     # longer window before flipping.
     cross_asset_voter_enabled: bool = _env_bool("CROSS_ASSET_VOTER_ENABLED", False)
+    # Volume-profile two-pass direction (default OFF — tuning audit): the VP
+    # voter's momentum-vs-contrarian split read the RUNNING vote sum, which
+    # depends on voter ORDER and flips arbitrarily near net-zero. ON defers
+    # the VP vote until the full electorate has registered. Direct A/B on the
+    # frozen benchmarks (--honest + --walk-forward 6) before any default flip.
+    vp_twopass_direction_enabled: bool = _env_bool("VP_TWOPASS_DIRECTION_ENABLED", False)
+    # Pattern price objectives as SL/TP snap levels (default OFF — tuning
+    # audit): fib-extension ladder, harmonic D PRZ, Wyckoff phase extremes and
+    # necklines were computed then DISCARDED. ON feeds these already-computed
+    # prices into the level-aware snap map tagged 'pattern_target'
+    # (tighten/clip-only, same as 'ew_target'). Direct A/B before any flip.
+    pattern_target_levels_enabled: bool = _env_bool("PATTERN_TARGET_LEVELS_ENABLED", False)
 
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
     # each is env-overridable. These activate VWAP math that used to be computed
