@@ -156,6 +156,13 @@
     <li class="trust-badge">🔑 <span>Withdrawal-disabled API keys</span></li>
     <li class="trust-badge">🧾 <span>Source-available</span></li>
   </ul>
+  <!-- Explore the flagship experiences straight from the hero, so a first-time
+       visitor sees the breadth (not just a signup box). -->
+  <div class="hero-explore" style="display:flex;gap:var(--s2);flex-wrap:wrap;justify-content:center;margin-top:var(--s3)">
+    <a class="btn btn--ghost btn--sm" href="/strengthmap">🌐 <span data-i18n="hero.explore_map">3D Strength Map</span></a>
+    <a class="btn btn--ghost btn--sm" href="/guardian">🛡️ <span data-i18n="hero.explore_guardian">Guardian safety suite</span></a>
+    <a class="btn btn--ghost btn--sm" href="/agents">⚔️ <span data-i18n="hero.explore_market">Marketplace</span></a>
+  </div>
 </header>
 
 <!-- Sticky mobile CTA: the primary action stays one tap away through the whole
@@ -237,6 +244,27 @@
   </div>
   <p style="margin-top:var(--s4)">
     <a class="btn btn--primary btn--sm" href="/agents" data-i18n="sec.mkt_cta">Browse the full marketplace →</a>
+  </p>
+</section>
+
+<!-- Guardian: the differentiated safety layer, showcased on the front door.
+     Each card links to a live tool. Design/heuristic only, §4-safe. -->
+<section class="section reveal-on-scroll" id="guardianTease" aria-labelledby="guardian-h">
+  <div class="section-head">
+    <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-shield"></use></svg> <span>RUNECLAW Guardian</span></div>
+    <h2 id="guardian-h" data-i18n="sec.guardian_h">The safety layer AI trading forgot</h2>
+    <p data-i18n="sec.guardian_p">Most bots only chase returns. Guardian makes an autonomous agent <b>trustworthy</b> — it proves every decision, simulates what breaks you, watches the market for systemic risk, blocks malicious signing, and plans your way out. The AI proposes · deterministic controls authorize · the wallet enforces · the recorder proves · the escape agent recovers.</p>
+  </div>
+  <div class="feature-grid rc-stagger">
+    <a class="feature" href="/flight"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">🛰️</span><h3>Flight Recorder</h3><p>The verifiable black box behind every trade — inputs, reasoning, risk verdict and outcome, sealed into a hash-chained ledger you can re-inspect.</p></a>
+    <a class="feature" href="/stress"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">🌀</span><h3>Stress Lab</h3><p>A digital twin of your book: your drawdown and which leveraged legs get liquidated in a −30% drop, an alt crash or a black swan.</p></a>
+    <a class="feature" href="/sentinel"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">📡</span><h3>Systemic Risk Sentinel</h3><p>A market-wide crowding radar — funding heat, one-sided positioning and leverage surges that precede a cascade, from public data.</p></a>
+    <a class="feature" href="/firewall"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">🛡️</span><h3>Transaction Firewall</h3><p>Paste what an agent is about to sign; it flags prompt-injection, drain and unlimited-approval language, phishing URLs and address poisoning — locally.</p></a>
+    <a class="feature" href="/escape"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">🪂</span><h3>Universal Escape Agent</h3><p>A dependency-aware emergency exit: the safe order to unwind perps, loans, collateral, LPs and staking — the way out you plan before you need it.</p></a>
+    <a class="feature" href="/dashboard#trade"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">🧭</span><h3>Intent Compiler</h3><p>Say your limits in plain words; they compile to a revocable Authority Envelope that caps and authorizes every live order.</p></a>
+  </div>
+  <p style="margin-top:var(--s4)">
+    <a class="btn btn--primary btn--sm" href="/guardian" data-i18n="sec.guardian_cta">Explore Guardian →</a>
   </p>
 </section>
 
@@ -461,7 +489,7 @@
   </form>
 </section>
 
-<script src="/js/i18n.js?v=7"></script>
+<script src="/js/i18n.js?v=8"></script>
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=24" defer></script>
