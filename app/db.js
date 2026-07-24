@@ -59,6 +59,7 @@ class MemoryDB {
     this._nextArenaTradeId = 1;
     this.arenaSeasons = [];   // named competition windows (no resets)
     this._nextArenaSeasonId = 1;
+    this.arenaFollows = {};   // user_id -> practice-follow prefs (paper only)
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -92,6 +93,15 @@ class MemoryDB {
       const wins = resolved.filter(s => Number(s.pnl) > 0).length;
       const net_pnl = resolved.reduce((a, s) => a + (Number(s.pnl) || 0), 0);
       return [[{ resolved: resolved.length, wins, net_pnl }], []];
+    }
+
+    if (cmd.includes('FROM SIGNALS') && cmd.includes('ID >')) {
+      // Practice-follow sweep: WHERE id > ? ORDER BY id ASC LIMIT ?
+      const after = Number(params[0]) || 0;
+      const lim = parseInt(params[params.length - 1]) || 5;
+      const rows = this.signals.filter(s => Number(s.id) > after)
+        .sort((a, b) => Number(a.id) - Number(b.id)).slice(0, lim);
+      return [rows.map(r => ({ ...r })), []];
     }
 
     if (cmd.includes('FROM SIGNALS')) {
@@ -265,13 +275,30 @@ class MemoryDB {
       return [Object.values(this.arenaAccounts).map(a => ({ ...a })), []];
     }
     if (cmd.includes('INSERT INTO ARENA_POSITIONS')) {
-      // params: user_id, symbol, direction, entry, margin, leverage, opened_at
+      // params: user_id, symbol, direction, entry, margin, leverage, source, opened_at
       this.arenaPositions.push({
         id: this._nextArenaPosId++, user_id: params[0], symbol: params[1],
         direction: params[2], entry: params[3], margin: params[4],
-        leverage: params[5], opened_at: params[6],
+        leverage: params[5], source: params[6] || 'manual', opened_at: params[7],
       });
       return [{ affectedRows: 1, insertId: this._nextArenaPosId - 1 }, []];
+    }
+    if (cmd.includes('INSERT INTO ARENA_FOLLOWS')) {
+      // upsert — params: user_id, enabled, margin, leverage, last_signal_id, created_at
+      this.arenaFollows[params[0]] = { user_id: params[0], enabled: params[1],
+        margin: params[2], leverage: params[3], last_signal_id: params[4], created_at: params[5] };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('UPDATE ARENA_FOLLOWS')) {
+      // params: last_signal_id, user_id
+      const f = this.arenaFollows[params[1]];
+      if (!f) return [{ affectedRows: 0 }, []];
+      f.last_signal_id = params[0];
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM ARENA_FOLLOWS')) {
+      const f = this.arenaFollows[params[0]];
+      return [f ? [{ ...f }] : [], []];
     }
     if (cmd.includes('DELETE FROM ARENA_POSITIONS')) {
       // params: id, user_id (own rows only)
@@ -1446,10 +1473,16 @@ async function migrate() {
         entry DOUBLE NOT NULL,
         margin DOUBLE NOT NULL,
         leverage INT NOT NULL,
+        source VARCHAR(10) NOT NULL DEFAULT 'manual',
         opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_arena_pos_user (user_id)
       )
     `);
+    // Back-fill `source` on pre-existing deployments (CREATE TABLE IF NOT
+    // EXISTS won't add the column).
+    try {
+      await pool.execute("ALTER TABLE arena_positions ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'manual'");
+    } catch (e) { /* already present */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS arena_trades (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1473,6 +1506,18 @@ async function migrate() {
         name VARCHAR(60) NOT NULL,
         starts_at TIMESTAMP NOT NULL,
         ends_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Practice-follow: mirror engine signals into the PAPER arena account.
+    // §4: paper only — this can never route to a live venue.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS arena_follows (
+        user_id INT PRIMARY KEY,
+        enabled TINYINT NOT NULL DEFAULT 0,
+        margin DOUBLE NOT NULL,
+        leverage INT NOT NULL,
+        last_signal_id BIGINT NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);

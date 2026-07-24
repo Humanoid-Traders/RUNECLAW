@@ -42,8 +42,39 @@ async function loadAccount(userId) {
 
 async function loadPositions(userId) {
   const [rows] = await pool.execute(
-    'SELECT id, user_id, symbol, direction, entry, margin, leverage, opened_at FROM arena_positions WHERE user_id = ? ORDER BY id DESC', [userId]);
+    'SELECT id, user_id, symbol, direction, entry, margin, leverage, source, opened_at FROM arena_positions WHERE user_id = ? ORDER BY id DESC', [userId]);
   return rows;
+}
+
+// Practice-follow sweep: mirror unprocessed engine signals into this PAPER
+// account at the live mark (lazy — runs on account reads, no background job).
+// Returns the refreshed { positions, balance } after any opens.
+const followLib = require('../lib/arena_follow');
+async function sweepFollows(userId, positions, marks) {
+  const [fr] = await pool.execute('SELECT user_id, enabled, margin, leverage, last_signal_id FROM arena_follows WHERE user_id = ?', [userId]);
+  const follow = fr[0];
+  if (!follow || !Number(follow.enabled)) return { follow: follow || null, positions };
+  const [sigs] = await pool.execute(
+    'SELECT id, symbol, direction FROM signals WHERE id > ? ORDER BY id ASC LIMIT ?',
+    [Number(follow.last_signal_id) || 0, 5]);
+  if (!sigs.length) return { follow, positions };
+  const acct = await loadAccount(userId);
+  const plan = followLib.planFollows({ signals: sigs, positions, balance: acct.balance,
+    prefs: { margin: follow.margin, leverage: follow.leverage }, marks });
+  let bal = acct.balance;
+  for (const o of plan.opens) {
+    await pool.execute(
+      'INSERT INTO arena_positions (user_id, symbol, direction, entry, margin, leverage, source, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, o.symbol, o.direction, o.price, o.margin, o.leverage, 'signal', new Date()]);
+    bal -= o.margin;
+  }
+  if (plan.opens.length) {
+    await pool.execute('UPDATE arena_accounts SET balance = ? WHERE user_id = ?', [Math.round(bal * 100) / 100, userId]);
+  }
+  if (plan.last_id > (Number(follow.last_signal_id) || 0)) {
+    await pool.execute('UPDATE arena_follows SET last_signal_id = ? WHERE user_id = ?', [plan.last_id, userId]);
+  }
+  return { follow, positions: await loadPositions(userId) };
 }
 
 // Settle any liquidated positions at their liq price: the margin is gone
@@ -76,6 +107,11 @@ router.get('/account', authMiddleware, async (req, res) => {
     try { marks = await getTickers(); } catch (e) { /* stale-mark view below */ }
     let positions = await loadPositions(userId);
     positions = await settleLiquidations(userId, positions, marks);
+    const swept = await sweepFollows(userId, positions, marks);
+    positions = swept.positions;
+    // Re-read the balance — the sweep may have opened signal positions.
+    const fresh = await loadAccount(userId);
+    acct.balance = fresh.balance;
     const [history] = await pool.execute(
       'SELECT id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at FROM arena_trades WHERE user_id = ? ORDER BY id DESC LIMIT 30', [userId]);
     const eq = arena.equity(acct.balance, positions, marks);
@@ -95,9 +131,12 @@ router.get('/account', authMiddleware, async (req, res) => {
           pnl: pnl == null ? null : round2(pnl),
           pnl_pct: pnl == null ? null : round2(pnl / p.margin * 100),
           liq_price: arena.liqPrice(p),
+          source: p.source || 'manual',
           opened_at: p.opened_at,
         };
       }),
+      follow: swept.follow ? { enabled: !!Number(swept.follow.enabled),
+        margin: swept.follow.margin, leverage: swept.follow.leverage } : null,
       history,
       badges: require('../lib/arena_badges').computeArenaBadges({
         trades: history, returnPct: arena.returnPct(eq) }),
@@ -127,8 +166,8 @@ router.post('/open', authMiddleware, tradeLimit, async (req, res) => {
     const price = t && Number(t.price);
     if (!(price > 0)) return res.status(400).json({ error: 'Unknown symbol — use a listed USDT-M pair like BTCUSDT' });
     await pool.execute(
-      'INSERT INTO arena_positions (user_id, symbol, direction, entry, margin, leverage, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [userId, v.data.symbol, v.data.direction, price, v.data.margin, v.data.leverage, new Date()]);
+      'INSERT INTO arena_positions (user_id, symbol, direction, entry, margin, leverage, source, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, v.data.symbol, v.data.direction, price, v.data.margin, v.data.leverage, 'manual', new Date()]);
     await pool.execute('UPDATE arena_accounts SET balance = ? WHERE user_id = ?',
       [round2(acct.balance - v.data.margin), userId]);
     res.json({ ok: true, filled: { symbol: v.data.symbol, direction: v.data.direction, entry: price, margin: v.data.margin, leverage: v.data.leverage } });
@@ -212,6 +251,33 @@ router.get('/leaderboard', async (req, res) => {
   } catch (err) {
     console.error('Arena leaderboard error:', err.message);
     res.status(500).json({ error: 'Leaderboard unavailable' });
+  }
+});
+
+// POST /api/arena/follow { enabled, margin, leverage } — practice-follow the
+// engine's signal stream into this PAPER account. §4: paper only, revocable
+// any time; enabling starts from the CURRENT newest signal (never back-fills
+// old calls, which would fake a history).
+router.post('/follow', authMiddleware, tradeLimit, async (req, res) => {
+  try {
+    const userId = req.user.user_id;
+    const v = followLib.validateFollow(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    await loadAccount(userId);   // ensure the paper account exists
+    // Start strictly from now: the newest existing signal id.
+    let lastId = 0;
+    try {
+      const [latest] = await pool.execute(
+        'SELECT id, symbol, direction FROM signals ORDER BY created_at DESC LIMIT ?', [1]);
+      lastId = latest[0] ? Number(latest[0].id) || 0 : 0;
+    } catch (e) { /* empty stream — start at 0 */ }
+    await pool.execute(
+      'INSERT INTO arena_follows (user_id, enabled, margin, leverage, last_signal_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, v.data.enabled ? 1 : 0, v.data.margin, v.data.leverage, lastId, new Date()]);
+    res.json({ ok: true, follow: v.data, virtual: true });
+  } catch (err) {
+    console.error('Arena follow error:', err.message);
+    res.status(500).json({ error: 'Follow update failed' });
   }
 });
 
