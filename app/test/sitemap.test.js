@@ -28,6 +28,17 @@ test('buildSitemap lists every static public page', () => {
   assert.match(xml, /<loc>https:\/\/example\.test\/<\/loc><changefreq>daily<\/changefreq><priority>1\.0<\/priority>/);
 });
 
+test('the public Guardian suite + strength map are indexable', () => {
+  const xml = buildSitemap(ORIGIN, []);
+  for (const p of ['/guardian', '/intent', '/firewall', '/escape', '/sentinel', '/stress', '/flight', '/strengthmap']) {
+    assert.ok(xml.includes('<loc>' + ORIGIN + p + '</loc>'), 'sitemap should list ' + p);
+  }
+  // and none of them are on the crawler disallow list
+  for (const p of ['/guardian', '/intent', '/firewall']) {
+    assert.ok(!DISALLOW.includes(p), p + ' must stay crawlable');
+  }
+});
+
 test('buildSitemap adds one URL per valid catalogue agent, deduped', () => {
   const agents = [
     { id: 'dip-sniper' }, { id: 'Trend-Rider' }, { id: 'dip-sniper' }, // dup

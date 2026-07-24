@@ -3,7 +3,9 @@
  * Pure builders for robots.txt + sitemap.xml so the PUBLIC marketplace is
  * discoverable by search engines: the landing page, the Strategy-Agent
  * directory (/agents), every per-agent page (/agents/:slug), the leaderboard,
- * Proof of PnL, the track record, and the agent letters.
+ * Proof of PnL, the track record, the agent letters, the Guardian safety suite
+ * (hub + the standalone Intent / Firewall / Escape / Sentinel / Stress / Flight
+ * tools) and the 3D Strength Map — all public, indexable content pages.
  *
  * §4-safe: these are link maps only — no dollar figures, no per-user or private
  * surfaces (dashboard / account / reset / verify / api are disallowed), and the
@@ -25,6 +27,15 @@ const STATIC_PATHS = [
   { path: '/letter', changefreq: 'weekly', priority: '0.6' },
   { path: '/developers', changefreq: 'monthly', priority: '0.5' },
   { path: '/status', changefreq: 'daily', priority: '0.4' },
+  // Guardian — the differentiated safety suite (hub + standalone tools).
+  { path: '/guardian', changefreq: 'weekly', priority: '0.9' },
+  { path: '/intent', changefreq: 'monthly', priority: '0.7' },
+  { path: '/firewall', changefreq: 'monthly', priority: '0.7' },
+  { path: '/escape', changefreq: 'monthly', priority: '0.7' },
+  { path: '/sentinel', changefreq: 'weekly', priority: '0.7' },
+  { path: '/stress', changefreq: 'monthly', priority: '0.7' },
+  { path: '/flight', changefreq: 'weekly', priority: '0.7' },
+  { path: '/strengthmap', changefreq: 'daily', priority: '0.7' },
 ];
 
 // Private / account / API surfaces crawlers should never index.
