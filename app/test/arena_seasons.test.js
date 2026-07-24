@@ -141,3 +141,33 @@ test('the main leaderboard page teases the Arena season (§4-safe)', () => {
   const cut = html.slice(html.indexOf('arenaSeasonPanel'));
   assert.ok(!/\$\s?\d/.test(cut), 'no $-amount in the arena teaser');
 });
+
+test('the Hall of Champions serves ended seasons with immutable podiums (§4)', async () => {
+  // The live season from the earlier test hasn't ended → empty hall.
+  let h = await req('GET', '/api/arena/seasons');
+  assert.equal(h.status, 200);
+  assert.deepEqual(h.data.seasons, []);
+  // Author an already-ended season via the admin from the earlier test.
+  const [admins] = [[pool.users.find((u) => u.email === 'season1@example.com')]];
+  assert.ok(admins[0] && admins[0].plan === 'admin');
+  await pool.execute(
+    'INSERT INTO arena_seasons (name, starts_at, ends_at, created_at) VALUES (?, ?, ?, ?)',
+    ['Closed Cup', new Date(Date.now() - 7 * 86400000), new Date(Date.now() - 3600000), new Date()]);
+  h = await req('GET', '/api/arena/seasons');
+  const cup = (h.data.seasons || []).find((s) => s.name === 'Closed Cup');
+  assert.ok(cup, 'ended season appears in the hall');
+  // The earlier in-window trade (closed "now"… outside this window) must NOT rank here;
+  // podium may be empty — but the shape stays §4-clean either way.
+  const blob = JSON.stringify(h.data).toLowerCase();
+  for (const needle of ['balance', 'equity', 'email', 'user_id']) {
+    assert.ok(!blob.includes(needle), `hall must not contain "${needle}"`);
+  }
+});
+
+test('the /arena page mounts the Hall of Champions', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /id="hallPanel"/);
+  assert.match(html, /api\/arena\/seasons/);
+  assert.match(html, /🥇/);
+  assert.match(html, /\/trader\//);          // podium links to trader cards
+});

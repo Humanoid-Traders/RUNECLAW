@@ -336,6 +336,36 @@ router.get('/season', async (req, res) => {
   }
 });
 
+// GET /api/arena/seasons — PUBLIC Hall of Champions: every ENDED season with
+// its final podium (top 3). §4: opt-in handles + percent only, same as every
+// arena board. Ended standings are immutable (the window is closed), so this
+// is the permanent record.
+router.get('/seasons', async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT id, name, starts_at, ends_at FROM arena_seasons');
+    const now = new Date();
+    const ended = rows.filter((s) => seasons.seasonStatus(s, now) === 'ended').slice(0, 12);
+    if (!ended.length) return res.json({ seasons: [] });
+    const [handles] = await pool.execute(
+      'SELECT id, leaderboard_handle FROM users WHERE leaderboard_handle IS NOT NULL');
+    const handleOf = new Map(handles.map((h) => [h.id, h.leaderboard_handle]));
+    const out = [];
+    for (const s of ended) {
+      const [trades] = await pool.execute(
+        'SELECT user_id, pnl FROM arena_trades WHERE closed_at >= ? AND closed_at <= ?',
+        [s.starts_at, s.ends_at]);
+      out.push({
+        name: s.name, starts_at: s.starts_at, ends_at: s.ends_at,
+        podium: seasons.seasonRanking(trades, handleOf).slice(0, 3),
+      });
+    }
+    res.json({ seasons: out, virtual: true });
+  } catch (err) {
+    console.error('Arena seasons history error:', err.message);
+    res.status(500).json({ error: 'Hall unavailable' });
+  }
+});
+
 // POST /api/arena/season { name, starts_at, ends_at } — operator only.
 router.post('/season', authMiddleware, async (req, res) => {
   try {
