@@ -3689,15 +3689,26 @@
         return `<p class="small" style="color:var(--text-2)">Link a browser wallet (MetaMask or compatible) to see your
             on-chain balances inside RUNECLAW — strictly read-only: the wallet signs one login message, never a transaction.</p>
           <div class="row" style="gap:var(--s2);flex-wrap:wrap">
-            <button class="btn btn--primary btn--sm" id="walletLink" type="button">🔗 Link wallet</button>
-            <button class="btn btn--sm" id="walletQr" type="button">📱 Link with phone</button>
+            ${/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '') && !window.ethereum
+              ? `<button class="btn btn--primary btn--sm" id="walletQr" type="button">🔗 Open in your wallet app</button>
+                 <button class="btn btn--sm" id="walletLink" type="button">🔗 Link wallet</button>`
+              : `<button class="btn btn--primary btn--sm" id="walletLink" type="button">🔗 Link wallet</button>
+                 <button class="btn btn--sm" id="walletQr" type="button">📱 Link with phone</button>`}
           </div>
           <div id="walletQrBox" class="mt-3" hidden></div>
-          ${!window.ethereum ? '<p class="small muted mt-2">No browser wallet here? Use <b>Link with phone</b> — scan the QR with your phone and sign in your wallet app.</p>' : ''}
+          ${!window.ethereum ? (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')
+            ? '<p class="small muted mt-2">One tap — the wallet picker opens this page inside your wallet app, where one signature links it.</p>'
+            : '<p class="small muted mt-2">No browser wallet here? Use <b>Link with phone</b> — scan the QR with your phone and sign in your wallet app.</p>') : ''}
           ${solBlock}`;
       }, { empty: { text: 'Wallet status unavailable.' } });
     }
     // Phone linking: show the single-use QR and poll until the phone signs.
+    // ON A PHONE with no injected wallet, a QR is absurd (scan the screen
+    // you're holding?) — so the same single-use code hands off DIRECTLY to
+    // /wallet-link on this device, where the branded picker opens the wallet
+    // app. One tap instead of a desktop détour.
+    const onMobileNoWallet = () =>
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '') && !window.ethereum;
     let qrPollTimer = null;
     async function showWalletQr() {
       const box = document.getElementById('walletQrBox');
@@ -3707,6 +3718,7 @@
         toast(r?.data?.error || 'Could not create a phone-link code.');
         return;
       }
+      if (onMobileNoWallet()) { location.href = r.data.url; return; }
       box.hidden = false;
       box.innerHTML = `${r.data.svg || ''}
         <p class="small muted mt-2" style="max-width:46ch">Scan with your phone and open the link

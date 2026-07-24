@@ -45,3 +45,13 @@ test('cache-buster bumped so the fixes ship', () => {
   const v = Number((shell.match(/dashboard\.js\?v=(\d+)/) || [])[1]);
   assert.ok(v >= 93, `dashboard.js v>=93 (got ${v})`);
 });
+
+test('mobile wallet linking hands off directly — no scan-your-own-screen QR', () => {
+  const cur = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
+  assert.match(cur, /onMobileNoWallet/);
+  assert.match(cur, /location\.href = r\.data\.url/);   // direct handoff on phones
+  assert.match(cur, /Open in your wallet app/);          // context-aware primary button
+  const cur2 = fs.readFileSync(path.join(__dirname, '..', 'public', 'dashboard.html'), 'utf8');
+  const v = Number((cur2.match(/dashboard\.js\?v=(\d+)/) || [])[1]);
+  assert.ok(v >= 94, `dashboard.js v>=94 (got ${v})`);
+});
