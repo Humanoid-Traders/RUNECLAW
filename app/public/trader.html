@@ -85,6 +85,7 @@
       var html = '<div class="hd"><h1>' + esc(d.handle) + '</h1>'
         + '<span class="ret ' + cls(d.return_pct) + '">' + (d.return_pct > 0 ? '+' : '') + f2(d.return_pct) + '%</span></div>'
         + '<div class="meta">'
+        + (d.streak_days > 0 ? '<span>🔥 ' + d.streak_days + '-day streak</span>' : '')
         + '<span>' + d.closed_trades + ' closed</span>'
         + '<span>' + d.open_positions + ' open</span>'
         + (d.win_rate_pct != null ? '<span>' + f2(d.win_rate_pct) + '% win rate</span>' : '')

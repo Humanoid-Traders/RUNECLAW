@@ -50,6 +50,7 @@ async function loadPositions(userId) {
 // account at the live mark (lazy — runs on account reads, no background job).
 // Returns the refreshed { positions, balance } after any opens.
 const followLib = require('../lib/arena_follow');
+const streaks = require('../lib/arena_streaks');
 async function sweepFollows(userId, positions, marks) {
   const [fr] = await pool.execute('SELECT user_id, enabled, margin, leverage, last_signal_id FROM arena_follows WHERE user_id = ?', [userId]);
   const follow = fr[0];
@@ -137,6 +138,10 @@ router.get('/account', authMiddleware, async (req, res) => {
     acct.balance = fresh.balance;
     const [history] = await pool.execute(
       'SELECT id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at FROM arena_trades WHERE user_id = ? ORDER BY id DESC LIMIT 30', [userId]);
+    // Full close history (uncapped) — streaks and weekly quests recompute
+    // from ALL facts so they can never drift from the truth.
+    const [allTrades] = await pool.execute(
+      'SELECT symbol, pnl, reason, closed_at FROM arena_trades WHERE user_id = ?', [userId]);
     const eq = arena.equity(acct.balance, positions, marks);
     res.json({
       start_balance: arena.START_BALANCE,
@@ -165,6 +170,8 @@ router.get('/account', authMiddleware, async (req, res) => {
       history,
       badges: require('../lib/arena_badges').computeArenaBadges({
         trades: history, returnPct: arena.returnPct(eq) }),
+      streak: streaks.computeStreak(allTrades),
+      quests: streaks.weeklyQuests(allTrades),
       virtual: true,   // §4: this account holds no real funds
     });
   } catch (err) {

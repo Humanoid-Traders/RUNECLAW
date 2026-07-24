@@ -29,6 +29,8 @@ function buildTraderCard(ctx) {
   return {
     handle: ctx.handle,
     return_pct: Math.round(returnPct * 100) / 100,
+    // §4-safe count: consecutive close-days (recent window) — a public fact.
+    streak_days: require('./arena_streaks').computeStreak(trades).current,
     closed_trades: trades.length,
     open_positions: (ctx.positions || []).length,
     win_rate_pct: trades.length ? Math.round(wins / trades.length * 1000) / 10 : null,

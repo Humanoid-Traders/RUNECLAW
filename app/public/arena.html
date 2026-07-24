@@ -208,6 +208,7 @@
     <h2><span data-i18n="arena.p_account">Your paper account</span> <span class="muted" style="text-transform:none;letter-spacing:0">· virtual funds only</span></h2>
     <div class="stats" id="stats"></div>
     <div class="badges" id="badges"></div>
+    <div id="quests" hidden></div>
     <div id="starter" hidden></div>
     <div id="cheer" class="cheer" hidden role="status" aria-live="polite"></div>
   </section>
@@ -568,12 +569,55 @@ window.addEventListener('error', function (e) {
     (d.history || []).forEach(function (t) { if (histOpen[t.id]) paintHistChart(t); });
     $('histEmpty').hidden = (d.history || []).length > 0;
     // Achievements — earned bright, locked dimmed with what's left to earn.
-    $('badges').innerHTML = (d.badges || []).map(function (b) {
+    var streakChip = (d.streak && d.streak.current > 0)
+      ? '<span class="badge-chip" title="Consecutive days with a closed trade (UTC). Best: '
+        + d.streak.best + '">🔥 ' + d.streak.current + '-day streak'
+        + (d.streak.best > d.streak.current ? ' <span style="opacity:.6">· best ' + d.streak.best + '</span>' : '')
+        + (d.streak.active_today ? '' : ' <span style="opacity:.6">· close today to keep it</span>') + '</span>'
+      : '';
+    $('badges').innerHTML = streakChip + (d.badges || []).map(function (b) {
       return '<span class="badge-chip' + (b.earned ? '' : ' locked') + '" title="' + esc(b.desc) + '">'
         + b.icon + ' ' + esc(b.name) + '</span>';
     }).join('');
+    // Weekly quests — three per ISO week, same for the whole arena, progress
+    // recomputed from THIS week's real closes. Done quests celebrate once.
+    var qs = d.quests || [];
+    if (qs.length) {
+      $('quests').hidden = false;
+      $('quests').innerHTML = '<div class="starter"><div class="t">Weekly quests · reset Monday 00:00 UTC</div>'
+        + qs.map(function (q) {
+          var pct = Math.round(q.have / q.target * 100);
+          return '<div class="step' + (q.done ? ' done' : '') + '">' + q.icon + ' ' + esc(q.name)
+            + ' <span class="muted">' + q.have + '/' + q.target + '</span>'
+            + (q.done ? ' ✅' : '<div style="height:4px;background:var(--line);border-radius:99px;margin-top:3px"><div style="height:4px;width:'
+              + pct + '%;background:var(--gold-bright);border-radius:99px"></div></div>')
+            + '</div>';
+        }).join('') + '</div>';
+      celebrateQuests(qs);
+    }
     celebrate(d.badges || []);
     starter(d);
+  }
+
+  // Celebrate NEWLY completed weekly quests — same localStorage-diff pattern
+  // as badges, keyed per quest so a done quest cheers exactly once.
+  function celebrateQuests(quests) {
+    var KEY = 'rc_arena_quests';
+    var seen;
+    try { seen = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { seen = []; }
+    var doneKeys = quests.filter(function (q) { return q.done; })
+      .map(function (q) { return q.key; });
+    var fresh = doneKeys.filter(function (k) { return seen.indexOf(k) < 0; });
+    try { localStorage.setItem(KEY, JSON.stringify(doneKeys)); } catch (e) { /* private mode */ }
+    if (!fresh.length || fresh.length === doneKeys.length && doneKeys.length > 1 && !seen.length) return;
+    var q = quests.filter(function (x) { return x.key === fresh[0]; })[0];
+    if (!q) return;
+    var el = $('cheer');
+    el.innerHTML = '🎉 Quest complete: <b>' + q.icon + ' ' + esc(q.name) + '</b>';
+    el.hidden = false;
+    setTimeout(function () { el.hidden = true; }, 5000);
+    confetti();
+    haptic([16, 30, 16]);
   }
 
   // Celebrate NEWLY earned badges (diffed against localStorage — client-side

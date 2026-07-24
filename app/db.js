@@ -427,6 +427,12 @@ class MemoryDB {
         const rows = this.arenaTrades.slice().sort((a, b) => b.id - a.id).slice(0, 40);
         return [rows.map(r => ({ ...r })), []];
       }
+      if (cmd.includes('WHERE USER_ID') && !cmd.includes('LIMIT') && !cmd.includes('CLOSED_AT')) {
+        // streaks/quests: the user's FULL close history (no cap)
+        const rows = this.arenaTrades.filter(t => t.user_id === params[0])
+          .sort((a, b) => b.id - a.id);
+        return [rows.map(r => ({ ...r })), []];
+      }
       // history: WHERE user_id = ? ORDER BY id DESC LIMIT 30
       const rows = this.arenaTrades.filter(t => t.user_id === params[0])
         .sort((a, b) => b.id - a.id).slice(0, 30);
