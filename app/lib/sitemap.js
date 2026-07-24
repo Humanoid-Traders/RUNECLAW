@@ -36,6 +36,8 @@ const STATIC_PATHS = [
   { path: '/stress', changefreq: 'monthly', priority: '0.7' },
   { path: '/flight', changefreq: 'weekly', priority: '0.7' },
   { path: '/strengthmap', changefreq: 'daily', priority: '0.7' },
+  // Paper Trading Arena — the zero-friction on-ramp (virtual stake, no keys).
+  { path: '/arena', changefreq: 'daily', priority: '0.8' },
 ];
 
 // Private / account / API surfaces crawlers should never index.

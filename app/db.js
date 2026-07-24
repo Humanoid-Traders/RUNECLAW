@@ -52,6 +52,11 @@ class MemoryDB {
     this.agentLetters = [];   // weekly agent letters (UPSERT-free; one per week_key)
     this.copySubs = [];       // strategy-agent follows (UNIQUE user_id+agent_id)
     this._nextCopySubId = 1;
+    this.arenaAccounts = {};  // user_id -> { balance, created_at } (paper arena)
+    this.arenaPositions = []; // open paper positions
+    this._nextArenaPosId = 1;
+    this.arenaTrades = [];    // closed paper trades (history)
+    this._nextArenaTradeId = 1;
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -231,6 +236,81 @@ class MemoryDB {
       const rows = this.userStrategies.filter(s => s.visibility === 'public')
         .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
         .slice(0, Number(params[0]) || 120);
+      return [rows.map(r => ({ ...r })), []];
+    }
+
+    // -- PAPER TRADING ARENA (virtual accounts; §4: no real funds ever) --
+    if (cmd.includes('INSERT INTO ARENA_ACCOUNTS')) {
+      // params: user_id, balance, created_at
+      if (!this.arenaAccounts[params[0]]) {
+        this.arenaAccounts[params[0]] = { user_id: params[0], balance: params[1], created_at: params[2] };
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('UPDATE ARENA_ACCOUNTS')) {
+      // params: balance, user_id
+      const a = this.arenaAccounts[params[1]];
+      if (!a) return [{ affectedRows: 0 }, []];
+      a.balance = params[0];
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM ARENA_ACCOUNTS')) {
+      if (cmd.includes('WHERE USER_ID')) {
+        const a = this.arenaAccounts[params[0]];
+        return [a ? [{ ...a }] : [], []];
+      }
+      // leaderboard: all accounts
+      return [Object.values(this.arenaAccounts).map(a => ({ ...a })), []];
+    }
+    if (cmd.includes('INSERT INTO ARENA_POSITIONS')) {
+      // params: user_id, symbol, direction, entry, margin, leverage, opened_at
+      this.arenaPositions.push({
+        id: this._nextArenaPosId++, user_id: params[0], symbol: params[1],
+        direction: params[2], entry: params[3], margin: params[4],
+        leverage: params[5], opened_at: params[6],
+      });
+      return [{ affectedRows: 1, insertId: this._nextArenaPosId - 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM ARENA_POSITIONS')) {
+      // params: id, user_id (own rows only)
+      const before = this.arenaPositions.length;
+      this.arenaPositions = this.arenaPositions.filter(
+        p => !(p.id === params[0] && p.user_id === params[1]));
+      return [{ affectedRows: before - this.arenaPositions.length }, []];
+    }
+    if (cmd.includes('FROM ARENA_POSITIONS')) {
+      if (cmd.includes('WHERE ID')) {
+        // params: id, user_id
+        const rows = this.arenaPositions.filter(p => p.id === params[0] && p.user_id === params[1]);
+        return [rows.map(r => ({ ...r })), []];
+      }
+      if (cmd.includes('WHERE USER_ID')) {
+        const rows = this.arenaPositions.filter(p => p.user_id === params[0])
+          .sort((a, b) => b.id - a.id);
+        return [rows.map(r => ({ ...r })), []];
+      }
+      // leaderboard: all open positions
+      return [this.arenaPositions.map(r => ({ ...r })), []];
+    }
+    if (cmd.includes('INSERT INTO ARENA_TRADES')) {
+      // params: user_id, symbol, direction, entry, exit_price, margin, leverage, pnl, reason, opened_at, closed_at
+      this.arenaTrades.push({
+        id: this._nextArenaTradeId++, user_id: params[0], symbol: params[1],
+        direction: params[2], entry: params[3], exit_price: params[4],
+        margin: params[5], leverage: params[6], pnl: params[7],
+        reason: params[8], opened_at: params[9], closed_at: params[10],
+      });
+      return [{ affectedRows: 1, insertId: this._nextArenaTradeId - 1 }, []];
+    }
+    if (cmd.includes('FROM ARENA_TRADES')) {
+      if (cmd.includes('COUNT(*)') && cmd.includes('GROUP BY USER_ID')) {
+        const counts = {};
+        for (const t of this.arenaTrades) counts[t.user_id] = (counts[t.user_id] || 0) + 1;
+        return [Object.entries(counts).map(([user_id, n]) => ({ user_id: Number(user_id), n })), []];
+      }
+      // history: WHERE user_id = ? ORDER BY id DESC LIMIT 30
+      const rows = this.arenaTrades.filter(t => t.user_id === params[0])
+        .sort((a, b) => b.id - a.id).slice(0, 30);
       return [rows.map(r => ({ ...r })), []];
     }
 
@@ -1323,6 +1403,46 @@ async function migrate() {
         user_id INT PRIMARY KEY,
         telegram_id VARCHAR(32) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Paper Trading Arena — virtual accounts for every registered user, no
+    // exchange keys or bot gateway required. §4: virtual funds only; the public
+    // leaderboard built on these shows percent return + opt-in handles only.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS arena_accounts (
+        user_id INT PRIMARY KEY,
+        balance DOUBLE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS arena_positions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        symbol VARCHAR(20) NOT NULL,
+        direction VARCHAR(5) NOT NULL,
+        entry DOUBLE NOT NULL,
+        margin DOUBLE NOT NULL,
+        leverage INT NOT NULL,
+        opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_arena_pos_user (user_id)
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS arena_trades (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        symbol VARCHAR(20) NOT NULL,
+        direction VARCHAR(5) NOT NULL,
+        entry DOUBLE NOT NULL,
+        exit_price DOUBLE NOT NULL,
+        margin DOUBLE NOT NULL,
+        leverage INT NOT NULL,
+        pnl DOUBLE NOT NULL,
+        reason VARCHAR(12) NOT NULL,
+        opened_at TIMESTAMP NULL,
+        closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_arena_tr_user (user_id)
       )
     `);
   }
