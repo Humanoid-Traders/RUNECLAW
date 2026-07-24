@@ -17,7 +17,7 @@ const app = read('js/app.js');
 
 test('SSE live pushes refresh in place (soft), never a full teardown', () => {
   // Every stream handler that re-renders the current view must pass soft mode…
-  const sse = dash.slice(dash.indexOf('connectStream({'), dash.indexOf('activity: onActivity'));
+  const sse = dash.slice(dash.indexOf('connectStream({'), dash.indexOf('activity:'));
   const rerenders = (sse.match(/showView\(/g) || []).length;
   const soft = (sse.match(/\{ soft: true \}/g) || []).length;
   assert.ok(rerenders >= 4 && soft === rerenders,

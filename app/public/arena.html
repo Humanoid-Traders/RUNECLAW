@@ -257,6 +257,12 @@
   var fmt2 = function (n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
   var direction = 'LONG';
   var paintFollow;   // assigned in the logged-in block; read by loadAccount
+  // Haptic ticks (Android): a physical confirmation for the moments that
+  // matter — fill, close, badge unlock. Guarded; a no-vibrate device is a
+  // silent no-op, and OS-level settings remain the user's control.
+  function haptic(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* unsupported */ }
+  }
   var lastBalance = null;   // feeds the pre-trade risk preview
 
   function pnlCls(n) { return n > 0 ? 'up-c' : n < 0 ? 'down-c' : ''; }
@@ -334,6 +340,7 @@
     el.hidden = false;
     setTimeout(function () { el.hidden = true; }, 5000);
     confetti();
+    haptic([16, 30, 16]);
   }
 
   // A one-second confetti burst for unlocks — canvas, ~40 particles, gone in
@@ -503,7 +510,7 @@
         tp: $('tTp').value || null, sl: $('tSl').value || null,
       }, timeoutMs: 14000 }).catch(function () { return null; });
       $('openBtn').disabled = false;
-      if (r && r.ok) { tmsg('Filled ' + r.data.filled.direction + ' ' + r.data.filled.symbol + ' @ ' + fmtP(r.data.filled.entry)); loadAccount(); loadBoard(); }
+      if (r && r.ok) { haptic(12); tmsg('Filled ' + r.data.filled.direction + ' ' + r.data.filled.symbol + ' @ ' + fmtP(r.data.filled.entry)); loadAccount(); loadBoard(); }
       else tmsg((r && r.data && r.data.error) || 'Open failed — try again.');
     });
 
@@ -511,7 +518,7 @@
       var b = e.target.closest('[data-close]'); if (!b) return;
       b.disabled = true;
       var r = await RC.fetchJSON('/api/arena/close', { method: 'POST', body: { position_id: Number(b.getAttribute('data-close')) }, timeoutMs: 14000 }).catch(function () { return null; });
-      if (r && r.ok) { tmsg('Closed ' + r.data.closed.symbol + ' — PnL ' + (r.data.closed.pnl > 0 ? '+' : '') + fmt2(r.data.closed.pnl) + ' vUSDT'); loadAccount(); loadBoard(); }
+      if (r && r.ok) { haptic([12, 40, 12]); tmsg('Closed ' + r.data.closed.symbol + ' — PnL ' + (r.data.closed.pnl > 0 ? '+' : '') + fmt2(r.data.closed.pnl) + ' vUSDT'); loadAccount(); loadBoard(); }
       else { b.disabled = false; tmsg((r && r.data && r.data.error) || 'Close failed — try again.'); }
     });
 

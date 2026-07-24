@@ -418,6 +418,14 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .w3-card .w3-name { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .w3-card .w3-val { margin-left: auto; white-space: nowrap; }
 .w3-delta { font-family: var(--font-data); font-size: var(--fs-xs); white-space: nowrap; }
+/* Engine heartbeat — a small dot beside the mode chip that PULSES when a live
+   SSE event arrives (scan/trade/signal/feed) and dims after long silence: the
+   feeling of a living engine, in four pixels. */
+.pulse-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--up); display: inline-block; opacity: .45; transition: opacity .4s ease, background .4s ease; }
+.pulse-dot.beat { animation: rcBeat .9s ease-out; opacity: 1; }
+.pulse-dot.quiet { background: var(--text-3); opacity: .35; }
+@keyframes rcBeat { 0% { box-shadow: 0 0 0 0 rgba(47,191,113,.6); } 100% { box-shadow: 0 0 0 9px rgba(47,191,113,0); } }
+@media (prefers-reduced-motion: reduce) { .pulse-dot.beat { animation: none; } }
 @media (max-width: 520px) { .w3-card { flex-wrap: wrap; } .w3-card .w3-val { flex-basis: 100%; text-align: right; } }
 /* Mobile-first touch targets (Android): interactive controls reach the ~40px
    comfortable tap size on touch/small screens without changing desktop. */
