@@ -70,3 +70,15 @@ test('the arena celebrates new badges and guides first-run users', () => {
   assert.match(html, /Your first 5 minutes/);
   assert.match(html, /Practice-follow/);
 });
+
+test('purposeful motion: count-up stats, pnl change pulses, confetti — all reduced-motion aware', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /RC\.countUp\(\$\('vBal'\)/);
+  assert.match(html, /RC\.countUp\(\$\('vRet'\)/);
+  assert.match(html, /pulse-up/);
+  assert.match(html, /pulseCls\(/);
+  assert.match(html, /function confetti/);
+  // every motion path respects prefers-reduced-motion (countUp internally + CSS + confetti guard)
+  const guards = (html.match(/prefers-reduced-motion/g) || []).length;
+  assert.ok(guards >= 3, `reduced-motion guards across cheer/pulse/confetti (found ${guards})`);
+});
