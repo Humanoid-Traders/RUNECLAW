@@ -31,3 +31,8 @@ test('arena board: rank moves show ▲/▼ chips, never on first paint', () => {
   assert.match(arena, /rk-move/);
   assert.match(arena, /prefers-reduced-motion: reduce\) \{ \.rk-move \{ animation: none/);
 });
+
+test('season standings: the same rank-move chips make the race visible', () => {
+  assert.match(arena, /var prevSeasonRanks = null;/);
+  assert.match(arena, /prevSeasonRanks && prevSeasonRanks\[x\.handle\] != null && prevSeasonRanks\[x\.handle\] !== x\.rank/);
+});

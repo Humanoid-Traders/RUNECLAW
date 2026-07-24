@@ -665,6 +665,7 @@ window.addEventListener('error', function (e) {
   // moving), never on first paint. In-page memory only; honest by
   // construction (it can only show moves that actually happened here).
   var prevRanks = null;
+  var prevSeasonRanks = null;
   async function loadBoard() {
     var r = await RC.fetchJSON('/api/arena/leaderboard', { auth: false, timeoutMs: 14000 }).catch(function () { return null; });
     var d = r && r.ok && r.data;
@@ -981,10 +982,23 @@ window.addEventListener('error', function (e) {
     $('seasonRows').innerHTML = s.status === 'upcoming'
       ? '<div class="empty">Standings open when the season starts — trades closed inside the window count.</div>'
       : rows.length ? rows.map(function (x) {
-          return '<div class="lb-row"><span class="rk">#' + x.rank + '</span><span>' + esc(x.handle) + '</span>'
+          // Same rank-move chips as the main board: in-page memory only,
+          // never on first paint — the race becomes visible mid-session.
+          var move = '';
+          if (prevSeasonRanks && prevSeasonRanks[x.handle] != null && prevSeasonRanks[x.handle] !== x.rank) {
+            var up = prevSeasonRanks[x.handle] > x.rank;
+            move = ' <span class="rk-move ' + (up ? 'up-c' : 'down-c') + '">' + (up ? '▲' : '▼')
+              + Math.abs(prevSeasonRanks[x.handle] - x.rank) + '</span>';
+          }
+          return '<div class="lb-row"><span class="rk">#' + x.rank + move + '</span><span>' + esc(x.handle) + '</span>'
             + '<span class="' + pnlCls(x.return_pct) + '">' + (x.return_pct > 0 ? '+' : '') + fmt2(x.return_pct) + '%</span>'
             + '<span class="tr">' + x.trades + ' trades</span></div>';
         }).join('') : '<div class="empty">No closed trades in the window yet — the season crown is up for grabs.</div>';
+    if (rows.length) {
+      var nsr = {};
+      rows.forEach(function (x) { nsr[x.handle] = x.rank; });
+      prevSeasonRanks = nsr;
+    }
   }
 
   // Operator-only season authoring — what to SHOW; the server re-checks admin.
