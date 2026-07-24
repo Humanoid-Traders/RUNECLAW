@@ -57,6 +57,8 @@ class MemoryDB {
     this._nextArenaPosId = 1;
     this.arenaTrades = [];    // closed paper trades (history)
     this._nextArenaTradeId = 1;
+    this.arenaSeasons = [];   // named competition windows (no resets)
+    this._nextArenaSeasonId = 1;
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -302,7 +304,27 @@ class MemoryDB {
       });
       return [{ affectedRows: 1, insertId: this._nextArenaTradeId - 1 }, []];
     }
+    if (cmd.includes('INSERT INTO ARENA_SEASONS')) {
+      // params: name, starts_at, ends_at, created_at
+      this.arenaSeasons.push({ id: this._nextArenaSeasonId++, name: params[0],
+        starts_at: params[1], ends_at: params[2], created_at: params[3] });
+      return [{ affectedRows: 1, insertId: this._nextArenaSeasonId - 1 }, []];
+    }
+    if (cmd.includes('FROM ARENA_SEASONS')) {
+      // newest first — the route picks the relevant one
+      const rows = this.arenaSeasons.slice().sort((a, b) => b.id - a.id);
+      return [rows.map(r => ({ ...r })), []];
+    }
     if (cmd.includes('FROM ARENA_TRADES')) {
+      if (cmd.includes('CLOSED_AT >=')) {
+        // season window: WHERE closed_at >= ? AND closed_at <= ?
+        const lo = new Date(params[0]).getTime(), hi = new Date(params[1]).getTime();
+        const rows = this.arenaTrades.filter(t => {
+          const c = new Date(t.closed_at).getTime();
+          return c >= lo && c <= hi;
+        });
+        return [rows.map(r => ({ ...r })), []];
+      }
       if (cmd.includes('COUNT(*)') && cmd.includes('GROUP BY USER_ID')) {
         const counts = {};
         for (const t of this.arenaTrades) counts[t.user_id] = (counts[t.user_id] || 0) + 1;
@@ -1443,6 +1465,15 @@ async function migrate() {
         opened_at TIMESTAMP NULL,
         closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_arena_tr_user (user_id)
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS arena_seasons (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(60) NOT NULL,
+        starts_at TIMESTAMP NOT NULL,
+        ends_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
   }

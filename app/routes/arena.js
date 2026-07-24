@@ -213,4 +213,54 @@ router.get('/leaderboard', async (req, res) => {
   }
 });
 
+// ---- Competition seasons ------------------------------------------------
+const seasons = require('../lib/arena_seasons');
+
+// GET /api/arena/season — PUBLIC. The most recently authored season with its
+// live status and (once it has started) the in-window standings. A season is
+// a time window, never a reset — the all-time board keeps running.
+router.get('/season', async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT id, name, starts_at, ends_at FROM arena_seasons');
+    const season = rows[0];
+    if (!season) return res.json({ season: null });
+    const status = seasons.seasonStatus(season, new Date());
+    const out = {
+      season: { name: season.name, starts_at: season.starts_at, ends_at: season.ends_at, status },
+      virtual: true,
+    };
+    if (status !== 'upcoming') {
+      const [trades] = await pool.execute(
+        'SELECT user_id, pnl FROM arena_trades WHERE closed_at >= ? AND closed_at <= ?',
+        [season.starts_at, season.ends_at]);
+      const [handles] = await pool.execute(
+        'SELECT id, leaderboard_handle FROM users WHERE leaderboard_handle IS NOT NULL');
+      out.rows = seasons.seasonRanking(trades, new Map(handles.map((h) => [h.id, h.leaderboard_handle])));
+    }
+    res.json(out);
+  } catch (err) {
+    console.error('Arena season error:', err.message);
+    res.status(500).json({ error: 'Season unavailable' });
+  }
+});
+
+// POST /api/arena/season { name, starts_at, ends_at } — operator only.
+router.post('/season', authMiddleware, async (req, res) => {
+  try {
+    const [u] = await pool.execute('SELECT plan FROM users WHERE id = ?', [req.user.user_id]);
+    if (!u[0] || String(u[0].plan) !== 'admin') {
+      return res.status(403).json({ error: 'admin_required', detail: 'Only the operator can author a season.' });
+    }
+    const v = seasons.validateSeason(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    await pool.execute(
+      'INSERT INTO arena_seasons (name, starts_at, ends_at, created_at) VALUES (?, ?, ?, ?)',
+      [v.data.name, v.data.starts_at, v.data.ends_at, new Date()]);
+    res.json({ ok: true, season: { name: v.data.name, starts_at: v.data.starts_at, ends_at: v.data.ends_at } });
+  } catch (err) {
+    console.error('Arena season create error:', err.message);
+    res.status(500).json({ error: 'Season create failed' });
+  }
+});
+
 module.exports = router;
