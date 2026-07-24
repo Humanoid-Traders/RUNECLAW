@@ -115,6 +115,14 @@
   Prove your edge before you ever connect a real account — and when paper competitions run, this is where
   they'll happen.</p>
 
+  <!-- Live market radar — the battlefield in 3D: real top-volume symbols as
+       glowing blips, lifted by 24h momentum, green up / red down. Hover to
+       inspect. Pure canvas, reduced-motion safe (renders one calm frame). -->
+  <section class="panel" id="radarPanel" hidden>
+    <h2>The battlefield <span class="muted" style="text-transform:none;letter-spacing:0">· live market · hover a blip</span></h2>
+    <canvas id="mktRadar" style="width:100%;height:min(300px,42vw);display:block"></canvas>
+  </section>
+
   <!-- Competition season banner + standings (populated when one is authored) -->
   <section class="panel" id="seasonPanel" hidden>
     <h2>Competition season</h2>
@@ -234,6 +242,7 @@
 </div>
 
 <script src="/js/app.js?v=3"></script>
+<script src="/js/radar3d.js?v=3" defer></script>
 <script>
 (function () {
   var RC = window.RC || {};
@@ -580,6 +589,36 @@
       return '<div class="hall-season"><div class="hn">' + esc(s.name) + '<span class="dates">' + esc(dates) + '</span></div>' + podium + '</div>';
     }).join('');
   }
+
+  // The battlefield radar — real top-volume markets rendered as a 3D sweep:
+  // angle spreads the symbols, elevation = |24h move|, green up / red down,
+  // the strongest movers ping when the beam crosses them. Refreshes with the
+  // same public feed the ticket uses; skipped silently if the lib is absent.
+  var radar = null;
+  async function loadRadar() {
+    if (!window.RC3DRadar) return;
+    var r = await RC.fetchJSON('/api/market/tickers', { auth: false, timeoutMs: 12000 }).catch(function () { return null; });
+    var list = r && r.ok && r.data && Array.isArray(r.data.data) ? r.data.data : [];
+    var top = list.filter(function (t) { return /USDT$/.test(t.symbol || ''); })
+      .sort(function (a, b) { return (parseFloat(b.usdtVolume) || 0) - (parseFloat(a.usdtVolume) || 0); })
+      .slice(0, 14);
+    if (!top.length) return;
+    $('radarPanel').hidden = false;
+    if (!radar) radar = RC3DRadar.mount($('mktRadar'), {});
+    radar.update(top.map(function (t, i) {
+      var ch = (parseFloat(t.change24h) || 0) * 100;
+      return {
+        label: String(t.symbol).replace(/USDT$/, ''),
+        angle: (i / top.length) + 0.03,                     // even spread
+        radius: 0.35 + 0.55 * (i / top.length),            // volume rank → center-out
+        intensity: Math.min(1, Math.abs(ch) / 8),
+        elev: Math.min(1, Math.abs(ch) / 10),
+        up: ch >= 0,
+      };
+    }));
+  }
+  loadRadar();
+  setInterval(loadRadar, 45000);
 
   loadSymbols();
   loadBoard();
