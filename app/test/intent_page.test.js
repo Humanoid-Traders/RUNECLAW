@@ -30,6 +30,13 @@ test('it cross-links back into Guardian', () => {
   assert.match(html, /href="\/guardian"/);
 });
 
+test('it offers share-link + JSON export and reads a shared #p= link', () => {
+  assert.match(html, /id="shareBtn"/);
+  assert.match(html, /id="jsonBtn"/);
+  assert.match(html, /encodeShare\(/);
+  assert.match(html, /decodeShare\(location\.hash\)/);
+});
+
 test('§4: the static copy makes the compile-only, no-funds posture explicit', () => {
   assert.match(html, /binds nothing|compile preview|compiler preview|moves no funds/i);
   assert.match(html, /not investment advice/i);
