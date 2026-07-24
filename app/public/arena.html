@@ -309,7 +309,7 @@ window.addEventListener('error', function (e) {
 </script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/i18n.js?v=15"></script>
-<script src="/js/chartread.js?v=1"></script>
+<script src="/js/chartread.js?v=2"></script>
 <script src="/js/radar3d.js?v=3" defer></script>
 <script>
 (function () {
@@ -394,10 +394,12 @@ window.addEventListener('error', function (e) {
       var results = await Promise.all([
         RC.fetchJSON('/api/market/candles/' + encodeURIComponent(sym) + '?granularity=1h&limit=120', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
         RC.fetchJSON('/api/patterns?symbol=' + encodeURIComponent(base + '/USDT') + '&timeframe=4h', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
+        RC.fetchJSON('/api/insight?symbol=' + encodeURIComponent(base + '/USDT') + '&timeframe=1h&limit=120', { auth: false, timeoutMs: 12000 }).catch(function () { return null; }),
       ]);
       var rows = results[0] && results[0].ok && results[0].data && Array.isArray(results[0].data.data) ? results[0].data.data : [];
       var pat = results[1] && results[1].ok ? results[1].data : null;
-      d0 = { at: Date.now(), candles: rows, patterns: pat };
+      var insD = results[2] && results[2].ok ? results[2].data : null;
+      d0 = { at: Date.now(), candles: rows, patterns: pat, insight: insD };
       chartData[sym] = d0;
     }
     cell = $('chartCell' + p.id);       // the tbody may have rebuilt mid-fetch
@@ -408,8 +410,17 @@ window.addEventListener('error', function (e) {
       cell.innerHTML = '<span class="muted">Market candles unavailable right now — try again shortly.</span>';
       return;
     }
+    // Top Elliott read (if the engine sees one) → wave labels on the chart.
+    var ew = null;
+    var cps = (d0.patterns && d0.patterns.chart_patterns) || [];
+    for (var wi = 0; wi < cps.length; wi++) {
+      if (/^Elliott/i.test(cps[wi].name || '')) { ew = cps[wi]; break; }
+    }
     cell.innerHTML = CR.svgChart(parsed, {
       entry: p.entry, sl: p.sl, tp: p.tp, liq: p.liq_price, direction: p.direction,
+      levels: (d0.insight && d0.insight.levels) || [],
+      fvgs: (d0.insight && d0.insight.fvgs) || [],
+      waves: ew ? CR.elliottWavePoints(ew) : [],
     }) + readChips(p, parsed, d0.patterns);
   }
   function renderAccount(d) {

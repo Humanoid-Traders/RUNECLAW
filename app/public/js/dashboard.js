@@ -1464,6 +1464,21 @@
         }
       } catch (e) { /* overlays are best-effort */ }
 
+      // Engine S/R levels as price lines — the same levels the decision
+      // picture lists, drawn where they act. Top 3 by score, best-effort
+      // (the insight bridge caches 30s server-side).
+      try {
+        const base2 = sym.replace('USDT', '');
+        const tf2 = ({ '15min': '15m' })[gran] || gran;
+        const ri = await fetchJSON(`/api/insight?symbol=${encodeURIComponent(base2 + '/USDT')}&timeframe=${tf2}&limit=200`, { auth: false, timeoutMs: 10000 });
+        const lvls = (ri.data?.levels || []).slice()
+          .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)).slice(0, 3);
+        for (const l of lvls) {
+          if (!(Number(l.price) > 0) || !tvSeries) continue;
+          tvSeries.createPriceLine({ price: Number(l.price), color: 'rgba(120,150,220,.65)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: String(l.kind || 'lvl') });
+        }
+      } catch (e) { /* level overlay is best-effort */ }
+
       tvChart.timeScale().fitContent();
 
       // Live updates: refresh the last candle while the chart stays mounted.
@@ -2049,8 +2064,17 @@
         // caller has skin in it) the position/signal's own geometry lines.
         const chartBox = document.getElementById('symChart');
         if (chartBox && parsed.length >= 5) {
-          chartBox.innerHTML = window.RCChartRead.svgChart(parsed, geo
-            ? { entry: geo.e, sl: geo.sl, tp: geo.tp, direction: geo.d } : {});
+          // Full picture: engine S/R levels + FVG zones (insight, 4h) and the
+          // top Elliott wave count (patterns, 4h) — matched timeframes.
+          let ew = null;
+          for (const cp of (pd && pd.chart_patterns) || []) {
+            if (/^Elliott/i.test(cp.name || '')) { ew = cp; break; }
+          }
+          chartBox.innerHTML = window.RCChartRead.svgChart(parsed, Object.assign(
+            geo ? { entry: geo.e, sl: geo.sl, tp: geo.tp, direction: geo.d } : {},
+            { levels: (ins && ins.data && ins.data.levels) || [],
+              fvgs: (ins && ins.data && ins.data.fvgs) || [],
+              waves: ew ? window.RCChartRead.elliottWavePoints(ew) : [] }));
         }
         if (parsed.length < 15) return;
         const vw = window.RCChartRead.vwap(parsed);

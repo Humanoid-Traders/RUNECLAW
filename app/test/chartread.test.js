@@ -126,6 +126,41 @@ test('svgChart: draws candles, position levels in range, and the structure tag',
   assert.ok(svg.indexOf('aria-label') > 0, 'chart is labeled for screen readers');
 });
 
+test('elliottWavePoints: only engine-emitted wave prices, only Elliott patterns', () => {
+  const pts = CR.elliottWavePoints({ name: 'Elliott 5-Wave Impulse',
+    key_levels: { w1_start: 90, w1_top: 110, w2_low: 95, w3_top: 130, w4_low: 118, w5_top: 140, w3_fib: 1.62 } });
+  const labels = pts.map(p => p.label).join('');
+  assert.equal(labels, '12345');
+  assert.equal(pts.find(p => p.label === '3').price, 130);
+  // Non-Elliott patterns and missing key_levels yield nothing.
+  assert.deepEqual(CR.elliottWavePoints({ name: 'Double Top', key_levels: { top1: 1 } }), []);
+  assert.deepEqual(CR.elliottWavePoints(null), []);
+});
+
+test('matchWaveBars: labels land on the bar where the extreme printed — or not at all', () => {
+  const candles = path([[0, 100], [7, 90], [14, 110], [21, 100]]);
+  const hits = CR.matchWaveBars(candles, [
+    { label: '2', price: 89.5 },     // == the low wick at bar 7 (90 - 0.5)
+    { label: '3', price: 110.5 },    // == the high wick at bar 14
+    { label: '5', price: 500 },      // nowhere in the window → skipped
+  ]);
+  assert.deepEqual(hits.map(h => [h.label, h.i]), [['2', 7], ['3', 14]]);
+});
+
+test('svgChart: engine levels, FVG zones, and wave labels render when supplied', () => {
+  const candles = path([[0, 100], [7, 90], [14, 110], [21, 100]]);
+  const svg = CR.svgChart(candles, {
+    levels: [{ price: 105, kind: 'poc', score: 3 }, { price: 9999, kind: 'far', score: 9 }],
+    fvgs: [{ kind: 'bullish', top: 103, bottom: 101, filled: false }],
+    waves: [{ label: '3', price: 110.5 }],
+  });
+  assert.match(svg, />poc</);                        // in-range level labeled
+  assert.ok(svg.indexOf('far') < 0, 'out-of-range level not drawn');
+  assert.match(svg, /rgba\(47,191,113,\.10\)/);      // unfilled bull FVG tint
+  assert.match(svg, /<circle[^>]+stroke="#e6b03c"/); // wave badge
+  assert.match(svg, /text-anchor="middle">3</);
+});
+
 test('svgChart and analytics degrade to empty/null on thin data — never invent', () => {
   assert.equal(CR.svgChart([], {}), '');
   assert.equal(CR.vwap([]), null);
