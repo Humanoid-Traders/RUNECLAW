@@ -160,6 +160,7 @@
   <!-- Explore the flagship experiences straight from the hero, so a first-time
        visitor sees the breadth (not just a signup box). -->
   <div class="hero-explore" style="display:flex;gap:var(--s2);flex-wrap:wrap;justify-content:center;margin-top:var(--s3)">
+    <a class="btn btn--ghost btn--sm" href="/arena">🏟️ <span data-i18n="hero.explore_arena">Paper Arena</span></a>
     <a class="btn btn--ghost btn--sm" href="/strengthmap">🌐 <span data-i18n="hero.explore_map">3D Strength Map</span></a>
     <a class="btn btn--ghost btn--sm" href="/guardian">🛡️ <span data-i18n="hero.explore_guardian">Guardian safety suite</span></a>
     <a class="btn btn--ghost btn--sm" href="/agents">⚔️ <span data-i18n="hero.explore_market">Marketplace</span></a>
@@ -298,6 +299,25 @@
   </div>
   <p style="margin-top:var(--s4)">
     <a class="btn btn--primary btn--sm" href="/guardian" data-i18n="sec.guardian_cta">Explore Guardian →</a>
+  </p>
+</section>
+
+<!-- Paper Trading Arena: the zero-friction on-ramp. Every account gets the
+     same virtual stake; the public board ranks percent return under opt-in
+     anonymous handles (§4: no dollar figures on this surface). -->
+<section class="section reveal-on-scroll" id="arenaTease" aria-labelledby="arena-h">
+  <div class="section-head">
+    <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-target"></use></svg> <span>Paper Trading Arena</span></div>
+    <h2 id="arena-h" data-i18n="sec.arena_h">Prove your edge before you risk a cent</h2>
+    <p data-i18n="sec.arena_p">Every account gets a paper trading account the moment you open the Arena — the same virtual starting stake for everyone, no exchange keys, no setup. Trade live markets at real prices with real liquidation mechanics, and climb a public leaderboard ranked purely on percent return. When paper competitions run, this is where they happen.</p>
+  </div>
+  <div class="feature-grid rc-stagger">
+    <div class="feature"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">🎫</span><h3 data-i18n="sec.arena_f1h">Same stake, pure skill</h3><p data-i18n="sec.arena_f1p">Everyone starts identical, so the ranking measures nothing but your calls — percent return, anonymous handles, zero dollar-waving.</p></div>
+    <div class="feature"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">📈</span><h3 data-i18n="sec.arena_f2h">Real prices, real mechanics</h3><p data-i18n="sec.arena_f2p">Fills at live market prices, leverage up to 20×, and liquidations enforced with the same math the Stress Lab models — honest practice, not a toy.</p></div>
+    <div class="feature"><span style="font-size:26px;line-height:1;display:block;margin-bottom:8px">🚀</span><h3 data-i18n="sec.arena_f3h">Zero friction</h3><p data-i18n="sec.arena_f3p">No API keys, no deposit, nothing to configure — register and your account exists. The safest possible way to meet the platform.</p></div>
+  </div>
+  <p style="margin-top:var(--s4)">
+    <a class="btn btn--primary btn--sm" href="/arena" data-i18n="sec.arena_cta">Enter the Arena →</a>
   </p>
 </section>
 
@@ -522,7 +542,7 @@
   </form>
 </section>
 
-<script src="/js/i18n.js?v=11"></script>
+<script src="/js/i18n.js?v=12"></script>
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=24" defer></script>
