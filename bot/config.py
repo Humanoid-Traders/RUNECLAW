@@ -1327,6 +1327,12 @@ class AnalyzerConfig:
     # prices into the level-aware snap map tagged 'pattern_target'
     # (tighten/clip-only, same as 'ew_target'). Direct A/B before any flip.
     pattern_target_levels_enabled: bool = _env_bool("PATTERN_TARGET_LEVELS_ENABLED", False)
+    # Divergence sub-labels (default OFF — tuning audit): the drop-one
+    # ablation priced only the WHOLE divergence voter (removal −1.54pp);
+    # per-indicator labels (divergence_rsi/macd/obv) make each source
+    # individually measurable by the harness and learnable by the weight
+    # learner. OFF keeps the legacy single 'divergence' label byte-identical.
+    divergence_sublabels_enabled: bool = _env_bool("DIVERGENCE_SUBLABELS_ENABLED", False)
 
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
     # each is env-overridable. These activate VWAP math that used to be computed
