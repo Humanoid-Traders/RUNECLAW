@@ -36,8 +36,13 @@ function computeArenaBadges(ctx = {}) {
     }
   }
 
+  const planned = trades.filter((t) => t.reason === 'tp' || t.reason === 'sl').length;
+  const targetsHit = trades.filter((t) => t.reason === 'tp').length;
+
   const defs = [
     ['first_blood', '🩸', 'First blood', 'Close your first paper trade.', n >= 1],
+    ['planner', '📐', 'The planner', 'Have 5 trades close by your own TP or SL — exits decided before entry.', planned >= 5],
+    ['target_hit', '🏹', 'Bullseye', 'Ride 3 trades all the way into your take-profit.', targetsHit >= 3],
     ['veteran', '🎖️', 'Arena veteran', 'Close 10 paper trades.', n >= 10],
     ['hot_streak', '🔥', 'Hot streak', 'Win 3 closes in a row.', bestWinStreak >= 3],
     ['sharpshooter', '🎯', 'Sharpshooter', 'Win rate 60%+ over 10+ closes.', n >= 10 && wins / n >= 0.6],

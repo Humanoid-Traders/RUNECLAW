@@ -433,20 +433,53 @@
       $('dirShort').classList.add('on-short'); $('dirLong').classList.remove('on-long');
     });
     // Pre-trade risk preview — same math the server enforces (MMR 0.005):
-    // know your liquidation distance and stake share BEFORE you click.
+    // know your liquidation distance, stake share and reward:risk BEFORE you
+    // click. The live mark is fetched per symbol (debounced, best-effort) so
+    // the R:R is computed against a real price, never a guess.
+    var liveMark = null, markSym = '', markTimer = null;
+    function fetchMark() {
+      var sym = $('tSym').value.trim().toUpperCase();
+      if (!sym || sym === markSym) { riskPreview(); return; }
+      RC.fetchJSON('/api/market/ticker/' + encodeURIComponent(sym), { auth: false, timeoutMs: 8000 })
+        .then(function (r) {
+          var row = r && r.ok && r.data && r.data.data && (Array.isArray(r.data.data) ? r.data.data[0] : r.data.data);
+          var px = row && parseFloat(row.lastPr);
+          liveMark = px > 0 ? px : null; markSym = sym; riskPreview();
+        }).catch(function () { liveMark = null; markSym = sym; riskPreview(); });
+    }
     function riskPreview() {
       var m = Number($('tMargin').value) || 0, lv = Number($('tLev').value) || 1;
       var liqMove = (1 - 0.005) / lv * 100;
       var share = lastBalance > 0 ? (m / lastBalance * 100) : null;
       var hot = liqMove <= 7 ? ' hot' : '';
-      $('riskPreview').innerHTML =
-        '<span>notional ' + fmt2(m * lv) + ' vUSDT</span>'
+      var html = '<span>notional ' + fmt2(m * lv) + ' vUSDT</span>'
         + '<span class="' + hot.trim() + '">a ' + liqMove.toFixed(1) + '% adverse move liquidates</span>'
         + (share != null ? '<span>' + share.toFixed(1) + '% of your balance at risk</span>' : '');
+      if (liveMark > 0) {
+        html += '<span>mark ' + fmtP(liveMark) + '</span>';
+        var tp = Number($('tTp').value), sl = Number($('tSl').value);
+        var long = direction === 'LONG';
+        var reward = tp > 0 ? (long ? tp - liveMark : liveMark - tp) : null;
+        var risk = sl > 0 ? (long ? liveMark - sl : sl - liveMark) : null;
+        if (reward != null && risk != null && reward > 0 && risk > 0) {
+          var rr = reward / risk;
+          html += '<span class="' + (rr >= 1.5 ? '' : 'hot') + '">R:R ' + rr.toFixed(1) + ' : 1</span>';
+        } else if ((tp > 0 && reward <= 0) || (sl > 0 && risk <= 0)) {
+          html += '<span class="hot">TP/SL on the wrong side of the mark</span>';
+        }
+      }
+      $('riskPreview').innerHTML = html;
     }
     $('tMargin').addEventListener('input', riskPreview);
+    $('tTp').addEventListener('input', riskPreview);
+    $('tSl').addEventListener('input', riskPreview);
+    $('tSym').addEventListener('input', function () {
+      clearTimeout(markTimer); markTimer = setTimeout(fetchMark, 450);
+    });
+    $('dirLong').addEventListener('click', riskPreview);
+    $('dirShort').addEventListener('click', riskPreview);
     $('tLev').addEventListener('input', function () { $('levVal').textContent = $('tLev').value + '×'; riskPreview(); });
-    riskPreview();
+    fetchMark();
 
     $('openBtn').addEventListener('click', async function () {
       $('openBtn').disabled = true; tmsg('Opening…');
