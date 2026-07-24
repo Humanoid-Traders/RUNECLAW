@@ -20,7 +20,7 @@ test('the /guardian route is served', () => {
 });
 
 test('the hub links every module and states the principle', () => {
-  for (const href of ['/flight', '/stress', '/sentinel', '/dashboard#trade']) {
+  for (const href of ['/flight', '/stress', '/sentinel', '/intent']) {
     assert.ok(gd.includes(`href="${href}"`), `hub links ${href}`);
   }
   // the guiding principle (propose → authorize → enforce → prove → recover)

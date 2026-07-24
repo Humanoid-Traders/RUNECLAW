@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Intent Compiler</title>
+<meta name="description" content="Say your limits in plain words — “only majors, max 5% per trade, no shorts, stop if down 8%” — and the Intent Compiler turns them into a deterministic, revocable Authority Envelope: typed rules, each tagged with who enforces it (the wallet, the risk gate, or a human approval). Compile only — it binds nothing and moves no funds.">
+<meta property="og:title" content="RUNECLAW — Intent Compiler">
+<meta property="og:description" content="Plain-language limits → a deterministic, wallet-enforceable Authority Envelope. The AI proposes; deterministic controls authorize; the wallet enforces. Compile only, no execution.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/intent">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Intent Compiler">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=18">
+<style>
+  .in-wrap { max-width: 940px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); } .topnav a:hover { color: var(--text-1); }
+  .in-hero h1 { font-family: var(--font-display); letter-spacing: .05em; font-size: clamp(26px, 4vw, 40px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 74ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
+  #intent { width: 100%; box-sizing: border-box; font: inherit; font-size: var(--fs-md); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--bg); color: var(--text-1); resize: vertical; line-height: 1.5; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
+  .chip { background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); border-radius: 999px; padding: 5px 12px; font-size: var(--fs-xs); cursor: pointer; }
+  .chip:hover { color: var(--text-1); border-color: var(--line-2); }
+  .summary { border-left: 3px solid var(--gold-bright); padding: var(--s2) var(--s4); background: var(--surface-2); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; line-height: 1.6; }
+  .summary b { color: var(--text-1); }
+  /* Rule cards */
+  .rule { display: grid; grid-template-columns: 1fr auto; gap: 4px var(--s3); padding: var(--s3) 0; border-top: 1px solid var(--line); align-items: baseline; }
+  .rule:first-child { border-top: 0; }
+  .rule .nm { font-weight: 600; color: var(--text-1); }
+  .rule .hu { grid-column: 1 / 2; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; }
+  .rule .tn { grid-column: 1 / -1; color: var(--text-3); font-size: var(--fs-xs); margin-top: 2px; }
+  .tier { justify-self: end; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 2px 9px; border-radius: 999px; white-space: nowrap; border: 1px solid var(--line-2); }
+  .tier.wallet { color: var(--up); border-color: var(--up); }
+  .tier.gate { color: var(--gold-bright); border-color: var(--gold-bright); }
+  .tier.approval { color: #ff9f45; border-color: #ff9f45; }
+  .tier.monitor { color: #7aa2ff; border-color: #7aa2ff; }
+  /* Coverage meter */
+  .cov { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--s3); }
+  .cov .ax { font-size: var(--fs-xs); font-family: var(--font-data); padding: 3px 10px; border-radius: 6px; border: 1px solid var(--line); color: var(--text-3); }
+  .cov .ax.on { color: var(--up); border-color: rgba(47,191,113,.4); background: rgba(47,191,113,.08); }
+  .warns { margin-top: var(--s2); }
+  .warn { color: #e6c34b; font-size: var(--fs-sm); padding: 4px 0; }
+  .muted { color: var(--text-3); }
+  .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; border-radius: var(--radius-sm); }
+</style>
+</head>
+<body>
+<div class="in-wrap" role="main">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/guardian">Guardian</a>
+    <a href="/firewall">Firewall</a>
+    <a href="/dashboard">Open the app</a>
+  </nav>
+  <div class="in-hero"><h1>Intent Compiler</h1></div>
+  <p class="lede">A wish is not a policy. <b>“Only majors, max 5% per trade, no shorts, stop if down 8%”</b> is
+  what you mean — but an agent can only be trusted with money if that sentence becomes something a machine can
+  <b>check before it signs</b>. The Intent Compiler turns plain words into a deterministic, revocable
+  <b>Authority Envelope</b>: typed rules, each tagged with <b>who enforces it</b> — the wallet, the risk gate, or a
+  human approval. This is the Guardian principle in one screen: the AI proposes, deterministic controls authorize,
+  the wallet enforces.</p>
+
+  <section class="panel">
+    <h2>Describe your limits</h2>
+    <textarea id="intent" rows="3" spellcheck="false" autocomplete="off"
+      placeholder="only majors, max 5% per trade, no shorts, min confidence 70%, stop if down 8%"></textarea>
+    <div class="chips" id="examples"></div>
+  </section>
+
+  <div class="summary panel" id="summary" style="border-radius:var(--radius)"></div>
+
+  <section class="panel">
+    <h2>Coverage</h2>
+    <div class="cov" id="coverage"></div>
+    <div class="warns" id="warnings"></div>
+  </section>
+
+  <section class="panel"><h2>Authority Envelope — compiled rules</h2><div id="rules"></div></section>
+
+  <p class="disc">This is a <b>compiler preview</b>: it turns language into a policy so you can read exactly what
+  would be enforced. It binds nothing, signs nothing and moves no funds — in the app, a compiled envelope is
+  <b>tighten-only</b> (it can only narrow the engine's caps), previews before it binds, and is revocable at any
+  time. It is a public demo, so it never shows a dollar figure; a dollar-denominated approval limit compiles to an
+  approval rule whose exact number you set privately in the app. A safety aid, not investment advice.</p>
+</div>
+
+<script src="/js/intent-model.js?v=1"></script>
+<script>
+(function () {
+  var M = window.IntentModel;
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var $ = function (id) { return document.getElementById(id); };
+  if (!M) { $('rules').innerHTML = '<p class="muted">The Intent Compiler model failed to load.</p>'; return; }
+
+  var EXAMPLES = [
+    'only majors, max 5% per trade, no shorts, min confidence 70%, stop if down 8%',
+    'keep 40% in stables, max 3x leverage, daily loss limit 4%',
+    'only BTC and ETH, no bridges, unwind everything on a depeg',
+    'long only, high-confidence only, max 8 trades per day, stop if down 10%',
+  ];
+  var AXIS_LABEL = { size: 'size', exposure: 'exposure', leverage: 'leverage', direction: 'direction',
+    loss: 'loss stop', scope: 'scope', approval: 'approval', emergency: 'emergency' };
+
+  function render() {
+    var out = M.compile($('intent').value);
+    $('summary').innerHTML = '<b>Compiled:</b> ' + esc(out.summary);
+
+    // Coverage chips
+    var axes = out.coverage.axes || {};
+    $('coverage').innerHTML = M.AXES.map(function (a) {
+      return '<span class="ax' + (axes[a] ? ' on' : '') + '">' + (axes[a] ? '✓ ' : '') + esc(AXIS_LABEL[a] || a) + '</span>';
+    }).join('');
+
+    // Warnings
+    $('warnings').innerHTML = (out.warnings || []).map(function (w) {
+      return '<div class="warn">⚠ ' + esc(w) + '</div>'; }).join('');
+
+    // Rules
+    $('rules').innerHTML = out.rules.length ? out.rules.map(function (r) {
+      return '<div class="rule">'
+        + '<div class="nm">' + esc(r.label) + '</div>'
+        + '<span class="tier ' + esc(r.tier) + '">' + esc(r.tier_label) + '</span>'
+        + '<div class="hu">' + esc(r.human) + '</div>'
+        + '<div class="tn">↳ ' + esc(r.tier_note) + '</div>'
+        + '</div>';
+    }).join('') : '<p class="muted small">Type your limits above — recognized rules appear here as an Authority Envelope.</p>';
+  }
+
+  $('examples').innerHTML = EXAMPLES.map(function (e, i) {
+    return '<button class="chip" type="button" data-ex="' + i + '">' + esc(e.length > 46 ? e.slice(0, 44) + '…' : e) + '</button>'; }).join('');
+  $('examples').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ex]'); if (!b) return;
+    $('intent').value = EXAMPLES[Number(b.getAttribute('data-ex'))]; render(); $('intent').focus();
+  });
+  $('intent').addEventListener('input', render);
+
+  $('intent').value = EXAMPLES[0];
+  render();
+})();
+</script>
+</body>
+</html>

@@ -23,7 +23,7 @@ test('the hero shows explore links to the flagship experiences', () => {
 test('a Guardian section showcases every module, each linking to its live tool', () => {
   const sec = index.slice(index.indexOf('id="guardianTease"'));
   const cut = sec.slice(0, sec.indexOf('</section>') + 10);
-  for (const href of ['/flight', '/stress', '/sentinel', '/firewall', '/escape', '/dashboard#trade']) {
+  for (const href of ['/flight', '/stress', '/sentinel', '/firewall', '/escape', '/intent']) {
     assert.ok(cut.includes(`href="${href}"`), `Guardian section links ${href}`);
   }
   assert.match(cut, /Flight Recorder/);

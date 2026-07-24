@@ -9,7 +9,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
-const PAGES = ['guardian', 'flight', 'stress', 'sentinel', 'firewall', 'escape'];
+const PAGES = ['guardian', 'flight', 'stress', 'sentinel', 'firewall', 'escape', 'intent'];
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f + '.html'), 'utf8');
 
 test('every tool page has a visible keyboard-focus ring', () => {
