@@ -4131,8 +4131,30 @@
     container.innerHTML = viewHead('Worlds',
       'Your on-chain identity, NFTs & metaverse worlds — read-only, links out to the world');
     if (!LOGGED_IN) {
-      container.insertAdjacentHTML('beforeend',
-        `<section class="panel">${loginGate('Log in and link a wallet to see your web3 identity and metaverse worlds.')}</section>`);
+      // Preview: the worlds RUNECLAW recognises (curated public directory,
+      // each linking to the official world) — your own identity/NFTs unlock
+      // with a linked wallet.
+      container.insertAdjacentHTML('beforeend', `
+        <div class="stack">
+          <section class="panel">${loginGate('Log in and link a wallet to see your web3 identity and metaverse worlds.')}</section>
+          <section class="panel">
+            <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>The worlds we mirror
+              <span class="badge" style="margin-left:auto">preview</span></h2>
+            <p class="small muted" style="margin-bottom:var(--s3)">Link a wallet (read-only — it signs one login
+            message, never a transaction) and RUNECLAW maps your ENS identity and NFTs into their worlds:</p>
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              ${[
+                ['🗺️', 'Decentraland', 'https://decentraland.org'],
+                ['🏝️', 'The Sandbox', 'https://www.sandbox.game'],
+                ['👁️', 'Otherside', 'https://otherside.xyz'],
+                ['🏷️', 'ENS names', 'https://ens.domains'],
+                ['👕', 'Wearables', 'https://opensea.io'],
+              ].map(([i, n, u]) => `<a class="btn btn--ghost btn--sm" href="${u}" target="_blank" rel="noopener">${i} ${n}</a>`).join('')}
+            </div>
+            <p style="margin-top:var(--s3)"><a class="btn btn--primary btn--sm" href="/">Create your free account</a>
+            <span class="small muted" style="margin-left:8px">then link a wallet to see yours — read-only, always</span></p>
+          </section>
+        </div>`);
       return;
     }
     container.insertAdjacentHTML('beforeend', `
@@ -4321,8 +4343,28 @@
     container.innerHTML = viewHead('Reputation',
       'Outcome-based agent score from your realized trades — advisory, not a verdict');
     if (!LOGGED_IN) {
-      container.insertAdjacentHTML('beforeend',
-        `<section class="panel">${loginGate('Log in to see your agent\'s outcome-based reputation.')}</section>`);
+      // Preview: HOW the score works (the real axes and red flags the scorer
+      // checks) — explanation only, no fabricated example numbers.
+      container.insertAdjacentHTML('beforeend', `
+        <div class="stack">
+          <section class="panel">${loginGate('Log in to see your agent\'s outcome-based reputation.')}</section>
+          <section class="panel">
+            <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>How the score is earned
+              <span class="badge" style="margin-left:auto">preview</span></h2>
+            <p class="small muted" style="margin-bottom:var(--s3)">A verifiable, confidence-adjusted score computed
+            only from <b>realized closed trades</b> — all ratios, no dollar bragging, advisory never a verdict.
+            The scorer also raises honest red flags:</p>
+            ${[
+              ['📊', 'Thin sample — few closes pull the score toward neutral until there\'s history'],
+              ['📉', 'Deep drawdown — how far the record fell from its peak'],
+              ['💸', 'Fee drag — when costs quietly eat the edge'],
+              ['📅', 'Inconsistency — losing months outnumbering winners'],
+              ['💥', 'Tail risk — a single loss dwarfing the average win'],
+            ].map(([i, t]) => `<div class="kv-row"><span>${i} ${t}</span></div>`).join('')}
+            <p style="margin-top:var(--s3)"><a class="btn btn--primary btn--sm" href="/">Create your free account</a>
+            <span class="small muted" style="margin-left:8px">every close you make starts building your score</span></p>
+          </section>
+        </div>`);
       return;
     }
     container.insertAdjacentHTML('beforeend', `
