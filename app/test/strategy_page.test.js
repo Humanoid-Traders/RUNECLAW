@@ -70,5 +70,5 @@ test('the marketplace cards link to each agent\'s public page', () => {
 
 test('cache-buster bumped so the marketplace permalink ships', () => {
   const dhtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'dashboard.html'), 'utf8');
-  assert.match(dhtml, /dashboard\.js\?v=(79|8\d)/);
+  { const v = Number((dhtml.match(/dashboard\.js\?v=(\d+)/) || [])[1]); assert.ok(v >= 79, `dashboard.js v>=79 (got ${v})`); }
 });

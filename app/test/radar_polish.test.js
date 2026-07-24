@@ -61,7 +61,7 @@ test('the Markets view has a radar jump-nav wired to the panels', () => {
 });
 
 test('cache-busters were bumped so the polish actually ships', () => {
-  assert.match(html, /dashboard\.js\?v=(7[4-9]|8\d)/);
+  { const v = Number((html.match(/dashboard\.js\?v=(\d+)/) || [])[1]); assert.ok(v >= 74, `dashboard.js v>=74 (got ${v})`); }
   assert.match(html, /styles\.css\?v=(1[5-9]|[2-9]\d)/);
 });
 
