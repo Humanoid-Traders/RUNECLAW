@@ -234,6 +234,23 @@
      just the nav): each card is one of the engine's real strategy agents with a
      verified, frozen backtest — design + regime only, percent/ratio never a
      dollar figure (§4). Cards link into the public /agents marketplace. -->
+<!-- 3D Strength Map showcase — the flagship market-intelligence visual, brought
+     onto the front door. Public market data only, links to the live /strengthmap. -->
+<section class="section reveal-on-scroll" id="strengthTease" aria-labelledby="strength-h">
+  <div class="card" style="position:relative;overflow:hidden;background:radial-gradient(130% 150% at 12% 0%, rgba(214,178,90,.10), transparent 55%), var(--surface);border:1px solid var(--line-2)">
+    <div class="section-head" style="margin-bottom:var(--s3)">
+      <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-radar"></use></svg> <span data-i18n="sec.strength_eyebrow">Market intelligence</span></div>
+      <h2 id="strength-h" data-i18n="sec.strength_h">See the whole market in 3D</h2>
+      <p data-i18n="sec.strength_p">Every Bitget USDT-perp plotted by momentum, funding and open interest, coloured by long-vs-short strength — the entire universe at a glance. Orbit it, tap a coin for its factor breakdown, then open the trade on your CEX or DEX of choice.</p>
+    </div>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:var(--s4)">
+      <span class="sm-pill">Momentum</span><span class="sm-pill">Trend</span><span class="sm-pill">ΔOI</span><span class="sm-pill">Funding</span><span class="sm-pill">Long / Short strength</span>
+    </div>
+    <a class="btn btn--primary btn--sm" href="/strengthmap" data-i18n="sec.strength_cta">🌐 Open the 3D Strength Map →</a>
+  </div>
+</section>
+<style>.sm-pill{font-size:var(--fs-xs);padding:3px 11px;border-radius:999px;border:1px solid var(--line-2);color:var(--text-2);font-family:var(--font-data,inherit);white-space:nowrap}</style>
+
 <section class="section reveal-on-scroll" id="marketplaceTease" aria-labelledby="mkt-h">
   <div class="section-head">
     <h2 id="mkt-h" data-i18n="sec.mkt_h">The Strategy Agent Marketplace</h2>
@@ -489,7 +506,7 @@
   </form>
 </section>
 
-<script src="/js/i18n.js?v=8"></script>
+<script src="/js/i18n.js?v=9"></script>
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=24" defer></script>
