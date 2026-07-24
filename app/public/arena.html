@@ -73,6 +73,13 @@
   .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--s3); }
   .badge-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--gold-bright); color: var(--text-1); background: var(--surface-2); cursor: default; }
   .badge-chip.locked { border-color: var(--line); color: var(--text-3); opacity: .55; filter: grayscale(1); }
+  .cheer { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--gold-bright); border-radius: 999px; padding: 10px 18px; font-size: var(--fs-sm); box-shadow: var(--shadow), var(--glow); z-index: 50; animation: cheerIn .35s ease; }
+  @keyframes cheerIn { from { transform: translate(-50%, 16px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .cheer { animation: none; } }
+  .starter { border: 1px dashed var(--gold-bright); border-radius: var(--radius-sm); padding: var(--s3) var(--s4); margin-top: var(--s3); }
+  .starter .t { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--gold-bright); margin-bottom: 6px; }
+  .starter .step { font-size: var(--fs-sm); color: var(--text-2); padding: 3px 0; }
+  .starter .step.done { color: var(--text-3); text-decoration: line-through; }
   .optin { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
   .optin input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: var(--fs-sm); }
   .cta { display: inline-block; margin-top: var(--s2); }
@@ -132,6 +139,8 @@
     <h2>Your paper account <span class="muted" style="text-transform:none;letter-spacing:0">· virtual funds only</span></h2>
     <div class="stats" id="stats"></div>
     <div class="badges" id="badges"></div>
+    <div id="starter" hidden></div>
+    <div id="cheer" class="cheer" hidden role="status" aria-live="polite"></div>
   </section>
 
   <section class="panel" id="ticketPanel" hidden>
@@ -251,6 +260,40 @@
       return '<span class="badge-chip' + (b.earned ? '' : ' locked') + '" title="' + esc(b.desc) + '">'
         + b.icon + ' ' + esc(b.name) + '</span>';
     }).join('');
+    celebrate(d.badges || []);
+    starter(d);
+  }
+
+  // Celebrate NEWLY earned badges (diffed against localStorage — client-side
+  // only, so it works offline-of-the-server and never double-cheers).
+  function celebrate(badges) {
+    var KEY = 'rc_arena_badges';
+    var seen;
+    try { seen = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { seen = []; }
+    var earned = badges.filter(function (b) { return b.earned; }).map(function (b) { return b.key; });
+    var fresh = badges.filter(function (b) { return b.earned && seen.indexOf(b.key) < 0; });
+    try { localStorage.setItem(KEY, JSON.stringify(earned)); } catch (e) { /* private mode */ }
+    if (!fresh.length || !seen.length && fresh.length === earned.length && earned.length > 2) return; // first visit with history: no fanfare
+    if (!fresh.length) return;
+    var b = fresh[0];
+    var el = $('cheer');
+    el.innerHTML = '🎉 Achievement unlocked: <b>' + b.icon + ' ' + esc(b.name) + '</b>';
+    el.hidden = false;
+    setTimeout(function () { el.hidden = true; }, 5000);
+  }
+
+  // First-run starter path — shown until the first close is on the books.
+  function starter(d) {
+    var el = $('starter');
+    if ((d.history || []).length > 0) { el.hidden = true; return; }
+    var hasOpen = (d.positions || []).length > 0;
+    el.hidden = false;
+    el.className = 'starter';
+    el.innerHTML = '<div class="t">Your first 5 minutes</div>'
+      + '<div class="step' + (hasOpen ? ' done' : '') + '">1. Open a paper position below — any symbol, small margin</div>'
+      + '<div class="step">2. Close it (profit or loss — both teach) to start your record</div>'
+      + '<div class="step">3. Pick a handle at the bottom to enter the board</div>'
+      + '<div class="step">4. Flip on Practice-follow to trade alongside the engine</div>';
   }
 
   async function loadAccount() {

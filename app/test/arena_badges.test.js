@@ -59,3 +59,14 @@ test('the account endpoint + page ship the badges', () => {
   assert.match(html, /badge-chip/);
   assert.match(html, /locked/);
 });
+
+test('the arena celebrates new badges and guides first-run users', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
+  assert.match(html, /id="cheer"/);
+  assert.match(html, /Achievement unlocked/);
+  assert.match(html, /rc_arena_badges/);           // client-side diff store
+  assert.match(html, /prefers-reduced-motion/);
+  assert.match(html, /id="starter"/);
+  assert.match(html, /Your first 5 minutes/);
+  assert.match(html, /Practice-follow/);
+});
