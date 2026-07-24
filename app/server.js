@@ -263,8 +263,13 @@ app.get('/trader/:handle', (req, res) => {
 // rather than shipping an empty/false statement. §F-15: the cert fingerprint
 // is public by design (it's printed on every APK).
 app.get('/.well-known/assetlinks.json', (req, res) => {
-  const pkg = (process.env.ANDROID_PACKAGE || '').trim();
-  const sha = (process.env.ANDROID_CERT_SHA256 || '').trim();
+  // The operator's published app identity — PUBLIC by design (the fingerprint
+  // is printed on every APK), so shipping it as the default is §F-15-safe.
+  // Env still overrides for forks / re-keyed builds; blanking both disables.
+  const DEFAULT_ANDROID_PACKAGE = 'com.humanoidtraders.runeclaw';
+  const DEFAULT_ANDROID_CERT_SHA256 = '60:49:32:1C:B0:A8:E2:20:61:87:C7:B6:0B:51:19:E9:56:B5:C7:3E:4D:B8:86:C8:64:77:9B:62:E9:67:0F:50';
+  const pkg = (process.env.ANDROID_PACKAGE ?? DEFAULT_ANDROID_PACKAGE).trim();
+  const sha = (process.env.ANDROID_CERT_SHA256 ?? DEFAULT_ANDROID_CERT_SHA256).trim();
   if (!pkg || !sha) return res.status(404).json({ error: 'not_configured' });
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.json([{
