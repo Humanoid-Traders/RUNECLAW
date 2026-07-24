@@ -28,6 +28,7 @@
   .up-c { color: var(--up); } .down-c { color: var(--down); }
   .meta { display: flex; gap: var(--s4); flex-wrap: wrap; margin: var(--s3) 0; color: var(--text-2); font-size: var(--fs-sm); font-family: var(--font-data); }
   .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: var(--s3) 0; }
+  .spark-wrap { margin: var(--s3) 0; }
   .badge-chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--gold-bright); background: var(--surface-2); }
   .tr-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: var(--s3); padding: 7px 0; border-bottom: 1px solid var(--line); font-family: var(--font-data); font-size: var(--fs-sm); }
   .tr-row .rz { color: var(--text-3); font-size: var(--fs-xs); }
@@ -91,6 +92,28 @@
       if ((d.badges || []).length) {
         html += '<div class="badges">' + d.badges.map(function (b) {
           return '<span class="badge-chip" title="' + esc(b.name) + '">' + b.icon + ' ' + esc(b.name) + '</span>'; }).join('') + '</div>';
+      }
+      // Form sparkline — the last closes as bars, oldest → newest, height ∝
+      // |% on margin| (capped at 60%), green wins / red losses. §4: percent
+      // only, drawn from the same public card data as the list below.
+      var rec = (d.recent || []).filter(function (t) { return t.ret_pct != null; });
+      if (rec.length >= 3) {
+        var seq = rec.slice().reverse();
+        var bw = 14, gap = 4, hMax = 34, mid = 38;
+        var w = seq.length * (bw + gap);
+        var bars = seq.map(function (t, i) {
+          var mag = Math.min(Math.abs(t.ret_pct), 60) / 60 * hMax;
+          var up = t.ret_pct >= 0;
+          return '<rect x="' + (i * (bw + gap)) + '" y="' + (up ? mid - mag : mid).toFixed(1)
+            + '" width="' + bw + '" height="' + Math.max(1.5, mag).toFixed(1)
+            + '" rx="2" fill="' + (up ? '#2fbf71' : '#e05252') + '" opacity=".85"><title>'
+            + esc(t.symbol) + ' ' + (t.ret_pct > 0 ? '+' : '') + f2(t.ret_pct) + '%</title></rect>';
+        }).join('');
+        html += '<div class="spark-wrap"><svg viewBox="0 0 ' + w + ' 76" role="img" '
+          + 'aria-label="Recent closes, percent on margin" style="width:100%;max-width:' + (w * 2) + 'px;height:auto;display:block">'
+          + '<line x1="0" y1="' + mid + '" x2="' + w + '" y2="' + mid + '" stroke="rgba(160,170,190,.35)" stroke-width="1"/>'
+          + bars + '</svg>'
+          + '<div class="rz" style="margin-top:2px">last ' + seq.length + ' closes · % on margin · oldest → newest</div></div>';
       }
       html += (d.recent || []).length
         ? d.recent.map(function (t) {
