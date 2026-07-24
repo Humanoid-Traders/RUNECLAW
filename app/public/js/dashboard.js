@@ -2731,11 +2731,14 @@
         { label: (c && c.venue ? c.venue.toUpperCase() : 'Exchange'), value: (c && c.ok ? c.equity_usd : 0), cls: 'chip--info' },
         { label: 'Wallet', value: (w && w.linked ? w.total_usd : 0), cls: 'chip--up' },
       ]);
-      return rows.join('')
-        + `<div class="kv-row" style="border-top:1px solid var(--line);margin-top:var(--s2);padding-top:var(--s2)">
-            <span><b>Real total</b></span>
-            <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>`
+      // Hero headline first — the one number this panel exists to answer —
+      // then the composition bar and the per-source rows beneath it.
+      return `<div class="w3-hero">
+            <span class="k">Real net worth <span class="muted small">CEX + on-chain · paper excluded</span></span>
+            <b class="v num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b>
+          </div>`
         + composition
+        + rows.join('')
         + `<p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
     }, { empty: { icon: 'icon-globe', text: 'Net worth aggregates once a venue or wallet is reachable.' } });
 
@@ -2750,14 +2753,23 @@
       // own canvas panel (self-cleaning on nav).
       mountAllocation(d);
       const rows = [];
+      // Source cards: one per connected exchange and per on-chain chain — a
+      // typed chip identifies the source kind, the value sits right-aligned.
+      const srcCard = (glyph, name, chip, chipCls, value, sub) => `
+        <div class="w3-card">
+          <span class="tok" aria-hidden="true">${glyph}</span>
+          <span class="w3-name">${name}${sub ? ` <span class="muted small">${sub}</span>` : ''}</span>
+          <span class="chip ${chipCls}">${chip}</span>
+          <b class="num w3-val">${value}</b>
+        </div>`;
       // Venues (connected exchanges).
       if (d.venues && d.venues.length) {
         for (const v of d.venues) {
           const name = esc((v.venue || 'venue').toUpperCase());
-          const tag = v.active ? ' <span class="muted small">active</span>' : '';
-          rows.push(`<div class="kv-row"><span>🏦 ${name}${tag}</span>
-            <b class="num">${v.ok && v.equity_usd != null ? '$' + fmt(v.equity_usd, 2)
-              : `<span class="muted small">${esc(v.detail || 'unreadable')}</span>`}</b></div>`);
+          rows.push(srcCard('🏦', name, 'exchange', 'chip--info',
+            v.ok && v.equity_usd != null ? '$' + fmt(v.equity_usd, 2)
+              : `<span class="muted small">${esc(v.detail || 'unreadable')}</span>`,
+            v.active ? 'active' : ''));
         }
       } else if (d.venues_available) {
         rows.push('<div class="kv-row"><span>🏦 Exchanges</span><span class="muted small">none connected — /connect in Telegram</span></div>');
@@ -2770,9 +2782,8 @@
         for (const c of w.chains) {
           const extra = c.detail ? `<span class="muted small">${esc(c.detail)}</span>`
             : (c.total_usd != null ? '$' + fmt(c.total_usd, 2) : '<span class="muted small">unpriced</span>');
-          const unp = (c.unpriced ? ` <span class="muted small">${c.unpriced} unpriced</span>` : '');
-          rows.push(`<div class="kv-row"><span>👛 ${esc(c.label || c.chain)} <span class="muted small">wallet</span>${unp}</span>
-            <b class="num">${extra}</b></div>`);
+          rows.push(srcCard('👛', esc(c.label || c.chain), 'on-chain', 'chip--up', extra,
+            c.unpriced ? `${c.unpriced} unpriced` : ''));
         }
       } else if (w.linked) {
         rows.push('<div class="kv-row"><span>👛 Wallet</span><span class="muted small">no balances on tracked chains</span></div>');
@@ -2913,19 +2924,36 @@
           ${d.chains ? `across ${d.chains.length} chains` : ''}.</p>`
           + (unreadable.length ? `<p class="muted small">${esc(unreadable.join(', '))} unreadable right now (RPC).</p>` : '');
       }
-      // Per-chain groups (chains with balances first, unreadable ones noted).
+      // Live 24h moves for the held assets — real public market data (best
+      // effort; assets without a listed USDT pair simply show no delta).
+      let chg = {};
+      try {
+        const t = await fetchJSON('/api/market/tickers', { auth: false, timeoutMs: 9000 });
+        for (const row of (t.ok && t.data && t.data.data) || []) {
+          chg[row.symbol] = (parseFloat(row.change24h) || 0) * 100;
+        }
+      } catch (e) { /* deltas are decoration — the balances still render */ }
+      const delta = (sym) => {
+        const c = chg[String(sym).toUpperCase() + 'USDT'];
+        if (c == null || !isFinite(c)) return '';
+        const cls = c > 0 ? 'up' : c < 0 ? 'down' : 'muted';
+        return `<span class="w3-delta ${cls}">${c > 0 ? '+' : ''}${c.toFixed(2)}% <span class="muted small">24h</span></span>`;
+      };
+      // Per-chain groups → asset cards: token glyph, chain chip, amount,
+      // 24h move and value (chains with balances first, unreadable noted).
       const groups = (d.chains || [{ label: d.chain, assets: d.assets, total_usd: d.total_usd }])
         .filter(c => c.assets && c.assets.length)
         .map(c => `
           <p class="small" style="margin-top:var(--s2)"><b>${esc(c.label)}</b>
             <span class="num muted">· $${Number(c.total_usd || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span></p>
-          <div class="tbl-wrap"><table class="tbl">
-            <thead><tr><th>Asset</th><th class="r">Amount</th><th class="r">Value</th></tr></thead>
-            <tbody>${c.assets.map(a => `<tr>
-              <td><b>${esc(a.symbol)}</b></td>
-              <td class="num r">${Number(a.amount).toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
-              <td class="num r">${a.usd != null ? '$' + Number(a.usd).toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'unpriced'}</td></tr>`).join('')}</tbody>
-          </table></div>`).join('');
+          ${c.assets.map(a => `<div class="w3-card">
+            <span class="tok" aria-hidden="true">${esc(String(a.symbol || '?').slice(0, 1))}</span>
+            <span class="w3-name"><b>${esc(a.symbol)}</b>
+              <span class="muted small num">${Number(a.amount).toLocaleString('en-US', { maximumFractionDigits: 6 })}</span></span>
+            <span class="chip chip--up">${esc(c.label || 'chain')}</span>
+            ${delta(a.symbol)}
+            <b class="num w3-val">${a.usd != null ? '$' + Number(a.usd).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '<span class="muted small">unpriced</span>'}</b>
+          </div>`).join('')}`).join('');
       const unreadable = (d.chains || []).filter(c => c.error).map(c => c.label);
       return `<p class="muted small"><b class="num">${esc(short)}</b> —
           balances read straight from the chains.</p>
@@ -2945,19 +2973,26 @@
           and your Aave, Lido and Uniswap positions appear here with liquidation-risk warnings.</p>`;
       }
       const bits = [];
+      const protoCard = (glyph, name, chip, body) => `
+        <div class="w3-card">
+          <span class="tok" aria-hidden="true">${glyph}</span>
+          <span class="w3-name">${name}</span>
+          <span class="chip chip--info">${chip}</span>
+          <b class="num w3-val">${body}</b>
+        </div>`;
       for (const a of (d.aave || [])) {
         const hfCls = a.health_factor === null ? '' : a.health_factor < 1.1 ? 'down' : a.health_factor < 1.5 ? 'chip--warn' : 'up';
-        bits.push(`<div class="kv-row"><span>🏦 Aave v3 · ${esc(a.label)}</span>
-          <b class="num">$${fmt(a.collateral_usd, 0)} coll · $${fmt(a.debt_usd, 0)} debt ·
-          ${a.health_factor === null ? '<span class="muted small">no debt</span>' : `HF <span class="${hfCls}">${a.health_factor}</span>${hfMeter(a.health_factor)}`}</b></div>`);
+        bits.push(protoCard('🏦', `Aave v3 · ${esc(a.label)}`, 'lending',
+          `$${fmt(a.collateral_usd, 0)} coll · $${fmt(a.debt_usd, 0)} debt ·
+          ${a.health_factor === null ? '<span class="muted small">no debt</span>' : `HF <span class="${hfCls}">${a.health_factor}</span>${hfMeter(a.health_factor)}`}`));
       }
       if (d.lido) {
-        bits.push(`<div class="kv-row"><span>🌊 Lido stETH</span>
-          <b class="num">${Number(d.lido.steth_amount).toLocaleString('en-US', { maximumFractionDigits: 4 })} — ${d.lido.usd != null ? '$' + fmt(d.lido.usd, 2) : 'unpriced'}</b></div>`);
+        bits.push(protoCard('🌊', 'Lido stETH', 'staking',
+          `${Number(d.lido.steth_amount).toLocaleString('en-US', { maximumFractionDigits: 4 })} — ${d.lido.usd != null ? '$' + fmt(d.lido.usd, 2) : 'unpriced'}`));
       }
       for (const u of (d.uniswap || [])) {
-        bits.push(`<div class="kv-row"><span>🦄 Uniswap v3 · ${esc(u.label)}</span>
-          <b class="num">${u.positions} LP position${u.positions === 1 ? '' : 's'} <span class="muted small">counted, not valued</span></b></div>`);
+        bits.push(protoCard('🦄', `Uniswap v3 · ${esc(u.label)}`, 'LP',
+          `${u.positions} LP position${u.positions === 1 ? '' : 's'} <span class="muted small">counted, not valued</span>`));
       }
       if (!bits.length) return null;
       const warn = (d.warnings || []).map(w =>
