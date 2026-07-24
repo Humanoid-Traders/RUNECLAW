@@ -101,11 +101,15 @@
   @keyframes tapeIn { from { transform: translateY(-8px); opacity: 0; background: rgba(230,176,60,.10); } to { transform: none; opacity: 1; background: transparent; } }
   @media (prefers-reduced-motion: reduce) { .tape-row.tape-new { animation: none; } }
   @media (max-width: 520px) { .tape-row { grid-template-columns: 18px minmax(70px, 1fr) auto auto; } .tape-row .how, .tape-row .ago { display: none; } }
-  /* Per-position chart expander */
-  .nowrap { white-space: nowrap; }
+  /* Per-position chart expander. The 📈 toggle lives in the SYMBOL cell —
+     far from the no-confirmation Close button — with a real touch target. */
+  .chartbtn { font-size: 15px; padding: 6px 10px; min-width: 40px; min-height: 34px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--surface-2); cursor: pointer; vertical-align: middle; }
+  .chartbtn[aria-expanded="true"] { border-color: var(--gold-bright); }
   .chart-row td { padding: 0 2px 10px; }
-  .chart-cell { min-width: 320px; }
-  .rc-chart { width: 100%; height: auto; max-height: 260px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+  /* Inside .tbl-scroll the row spans the full (wide) table — pin the chart
+     to the visible viewport with sticky so it never renders off-screen. */
+  .chart-cell { position: sticky; left: 0; max-width: calc(100vw - 56px); min-width: 0; }
+  .rc-chart { width: 100%; height: auto; max-height: 280px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); }
   .read-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .read-chip { font-size: var(--fs-xs); font-family: var(--font-data); padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text-2); }
   .read-chip.up-c { border-color: rgba(47,191,113,.5); }
@@ -309,7 +313,7 @@ window.addEventListener('error', function (e) {
 </script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/i18n.js?v=15"></script>
-<script src="/js/chartread.js?v=2"></script>
+<script src="/js/chartread.js?v=3"></script>
 <script src="/js/radar3d.js?v=3" defer></script>
 <script>
 (function () {
@@ -399,7 +403,17 @@ window.addEventListener('error', function (e) {
       var rows = results[0] && results[0].ok && results[0].data && Array.isArray(results[0].data.data) ? results[0].data.data : [];
       var pat = results[1] && results[1].ok ? results[1].data : null;
       var insD = results[2] && results[2].ok ? results[2].data : null;
-      d0 = { at: Date.now(), candles: rows, patterns: pat, insight: insD };
+      // A transient failure must never pin an empty read for 120s: keep the
+      // last GOOD data for whatever failed, and when nothing usable came
+      // back at all, leave the entry stale so the next repaint retries.
+      var prev = d0 || {};
+      d0 = {
+        at: Date.now(),
+        candles: rows.length ? rows : (prev.candles || []),
+        patterns: pat || prev.patterns || null,
+        insight: insD || prev.insight || null,
+      };
+      if (!rows.length && !d0.candles.length) d0.at = 0;
       chartData[sym] = d0;
     }
     cell = $('chartCell' + p.id);       // the tbody may have rebuilt mid-fetch
@@ -417,6 +431,7 @@ window.addEventListener('error', function (e) {
       if (/^Elliott/i.test(cps[wi].name || '')) { ew = cps[wi]; break; }
     }
     cell.innerHTML = CR.svgChart(parsed, {
+      width: Math.max(300, (cell.clientWidth || 0) - 10),
       entry: p.entry, sl: p.sl, tp: p.tp, liq: p.liq_price, direction: p.direction,
       levels: (d0.insight && d0.insight.levels) || [],
       fvgs: (d0.insight && d0.insight.fvgs) || [],
@@ -441,7 +456,10 @@ window.addEventListener('error', function (e) {
     prevStats = { balance: d.balance, equity: d.equity, ret: r };
     var pb = $('posBody');
     pb.innerHTML = d.positions.map(function (p) {
-      var row = '<tr><td class="sym">' + esc(p.symbol)
+      var row = '<tr><td class="sym">'
+        + '<button class="chartbtn" data-chart="' + p.id + '" type="button" aria-expanded="'
+        + (chartOpen[p.id] ? 'true' : 'false') + '" title="Chart & engine read">📈</button> '
+        + esc(p.symbol)
         + (p.source === 'signal' ? ' <span class="chip chip--info" title="Opened by practice-follow">⚡ signal</span>' : '') + '</td>'
         + '<td class="' + (p.direction === 'LONG' ? 'up-c' : 'down-c') + '">' + esc(p.direction) + '</td>'
         + '<td>' + p.leverage + '×</td>'
@@ -449,9 +467,7 @@ window.addEventListener('error', function (e) {
         + '<td class="' + pnlCls(p.pnl) + pulseCls(p) + '">' + (p.pnl == null ? '—' : (p.pnl > 0 ? '+' : '') + fmt2(p.pnl) + ' (' + (p.pnl_pct > 0 ? '+' : '') + fmt2(p.pnl_pct) + '%)') + '</td>'
         + '<td><span class="up-c">' + (p.tp != null ? fmtP(p.tp) : '—') + '</span> / <span class="down-c">' + (p.sl != null ? fmtP(p.sl) : '—') + '</span></td>'
         + '<td class="muted">' + fmtP(p.liq_price) + '</td>'
-        + '<td class="nowrap"><button class="closebtn" data-chart="' + p.id + '" type="button" aria-expanded="'
-        + (chartOpen[p.id] ? 'true' : 'false') + '" title="Chart & engine read">📈</button> '
-        + '<button class="closebtn" data-close="' + p.id + '" type="button">Close</button></td></tr>';
+        + '<td><button class="closebtn" data-close="' + p.id + '" type="button">Close</button></td></tr>';
       if (chartOpen[p.id]) {
         row += '<tr class="chart-row"><td colspan="9"><div class="chart-cell" id="chartCell' + p.id
           + '"><span class="muted">Loading chart & engine read…</span></div></td></tr>';
