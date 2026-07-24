@@ -982,6 +982,45 @@ class ProactiveMonitor:
             return False
         return (now - last_started) > threshold
 
+    @staticmethod
+    def _frame_summaries(frames: "list[Any]") -> "list[str]":
+        """['engine.py:2182 in run', …] oldest → newest — the LAST line is
+        the await the coroutine is parked on."""
+        out: list[str] = []
+        for f in frames:
+            try:
+                code = f.f_code
+                fname = str(code.co_filename).replace("\\", "/").rsplit("/", 1)[-1]
+                out.append(f"{fname}:{f.f_lineno} in {code.co_name}")
+            except Exception:
+                continue
+        return out
+
+    def _stall_diagnosis(self) -> "list[str]":
+        """Best-effort stack of the engine's hung run/tick task.
+
+        The monitor shares the engine's event loop, so when TICK_STALL fires
+        the loop is demonstrably alive and the hang is a parked await — whose
+        suspended frames are readable in place via Task.get_stack(). The
+        engine task is the one whose OUTERMOST frame is Engine.run (a stuck
+        post-tick maintenance await still matches; '_tick' alone would not).
+        Fail-open: any error returns [] and never touches the alert path.
+        """
+        try:
+            for task in asyncio.all_tasks():
+                try:
+                    frames = task.get_stack()
+                except Exception:
+                    continue
+                if not frames:
+                    continue
+                code = frames[0].f_code
+                if code.co_name == "run" and str(code.co_filename).endswith("engine.py"):
+                    return self._frame_summaries(frames)
+        except Exception:
+            pass
+        return []
+
     def _check_engine_tick_stale(self) -> list[Alert]:
         """CRITICAL when the engine tick loop has not STARTED a tick for far
         longer than any legitimate backoff — a hang, not a crash (crashes are
@@ -994,6 +1033,15 @@ class ProactiveMonitor:
         if stalled and not self._tick_stale_alerted:
             self._tick_stale_alerted = True
             age = time.monotonic() - last
+            # Self-diagnosing alert: capture WHERE the loop is parked. Full
+            # chain to the system log; the innermost await into the alert so
+            # the operator (and the next debugging session) see the culprit
+            # line without shelling into the host.
+            stack = self._stall_diagnosis()
+            if stack:
+                system_log.error(
+                    "TICK_STALL stack (oldest → newest): %s", " <- ".join(stack))
+            hung_at = (f"\n\nHung awaiting: {stack[-1]}" if stack else "")
             alerts.append(Alert(
                 alert_type="TICK_STALL",
                 severity="CRITICAL",
@@ -1001,7 +1049,8 @@ class ProactiveMonitor:
                 body=(f"The engine tick loop has not started a cycle for "
                       f"{age:.0f}s (threshold {self.TICK_STALL_THRESHOLD_S:.0f}s). "
                       f"This looks like a HANG, not a crash: positions are NOT "
-                      f"being monitored. Check the process and consider a restart."),
+                      f"being monitored. Check the process and consider a restart."
+                      f"{hung_at}"),
                 dedup_key="tick_stall",
             ))
         elif not stalled:
