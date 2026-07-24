@@ -445,4 +445,9 @@ app.use((err, req, res, next) => {
   // Arena liquidation watch: one push when a paper position drifts within 3%
   // of its liq price (hysteresis re-arm at 6% — never spams a hovering market).
   require('./lib/arena_watch').startArenaWatch();
+
+  // Season ceremonies: the starting gun (upcoming→live) and the final
+  // whistle (→ended, crowning the champion) announce themselves — durable
+  // flags mean a restart never replays a ceremony.
+  require('./lib/season_watch').startSeasonWatch();
 })();

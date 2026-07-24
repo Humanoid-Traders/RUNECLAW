@@ -339,6 +339,14 @@ class MemoryDB {
         starts_at: params[1], ends_at: params[2], created_at: params[3] });
       return [{ affectedRows: 1, insertId: this._nextArenaSeasonId - 1 }, []];
     }
+    if (cmd.includes('UPDATE ARENA_SEASONS')) {
+      // ceremony flags — params: value(1), id  (SET announced_live / announced_end)
+      const srow = this.arenaSeasons.find(x => x.id === params[1]);
+      if (!srow) return [{ affectedRows: 0 }, []];
+      if (cmd.includes('ANNOUNCED_LIVE')) srow.announced_live = params[0];
+      if (cmd.includes('ANNOUNCED_END')) srow.announced_end = params[0];
+      return [{ affectedRows: 1 }, []];
+    }
     if (cmd.includes('FROM ARENA_SEASONS')) {
       // newest first — the route picks the relevant one
       const rows = this.arenaSeasons.slice().sort((a, b) => b.id - a.id);
@@ -1512,9 +1520,14 @@ async function migrate() {
         name VARCHAR(60) NOT NULL,
         starts_at TIMESTAMP NOT NULL,
         ends_at TIMESTAMP NOT NULL,
+        announced_live TINYINT NOT NULL DEFAULT 0,
+        announced_end TINYINT NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Ceremony flags back-fill for pre-existing deployments.
+    try { await pool.execute('ALTER TABLE arena_seasons ADD COLUMN announced_live TINYINT NOT NULL DEFAULT 0'); } catch (e) { /* present */ }
+    try { await pool.execute('ALTER TABLE arena_seasons ADD COLUMN announced_end TINYINT NOT NULL DEFAULT 0'); } catch (e) { /* present */ }
     // Practice-follow: mirror engine signals into the PAPER arena account.
     // §4: paper only — this can never route to a live venue.
     await pool.execute(`
