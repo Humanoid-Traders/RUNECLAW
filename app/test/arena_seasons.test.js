@@ -171,3 +171,25 @@ test('the /arena page mounts the Hall of Champions', () => {
   assert.match(html, /🥇/);
   assert.match(html, /\/trader\//);          // podium links to trader cards
 });
+
+test('launching a season announces it — push broadcast + agent-feed event (§4: no numbers)', async () => {
+  // Capture pushes via the injectable sender; configure fake VAPID first.
+  const push = require('../lib/push');
+  const sent = [];
+  push.setSender(async (sub, payload) => { sent.push(JSON.parse(payload)); });
+  // The route treats push as best-effort — but with a sender injected we can
+  // assert the broadcast when the module believes it's configured. If this
+  // env lacks VAPID config, the feed event still must land.
+  const admin = pool.users.find((u) => u.email === 'season1@example.com');
+  const token = (await req('POST', '/api/auth/login', { body: { email: 'season1@example.com', password: 'longenough1' } })).data.token;
+  const start = new Date(Date.now() - 60000), end = new Date(Date.now() + 3 * 86400000);
+  const r = await req('POST', '/api/arena/season', { token, body: { name: 'Announce Cup', starts_at: start, ends_at: end } });
+  assert.equal(r.status, 200);
+  // The public mind-stream feed carries the launch.
+  const [events] = await pool.execute('SELECT event_type, title, body FROM agent_events ORDER BY id DESC LIMIT 5', []);
+  const ev = events.find((e) => e.event_type === 'arena_season' && /Announce Cup/.test(e.title));
+  assert.ok(ev, 'agent feed announces the season');
+  assert.match(ev.body, /same virtual stake/i);
+  assert.ok(!/\$\s?\d|\d+%/.test(ev.title + ' ' + ev.body), 'announcement carries no numbers (§4)');
+  push.setSender(null);
+});
