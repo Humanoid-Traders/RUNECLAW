@@ -195,6 +195,7 @@ app.use('/api/sentry', require('./routes/sentry'));
 app.use('/api/positions', require('./routes/positions'));
 app.use('/api/arena', require('./routes/arena'));
 app.use('/api/since', require('./routes/since'));
+app.use('/api/watchlist', require('./routes/watchlist'));
 app.use('/api/news', require('./routes/news'));
 app.use('/api/proofofpnl', require('./routes/proofofpnl'));
 app.use('/api/share', require('./routes/share'));
