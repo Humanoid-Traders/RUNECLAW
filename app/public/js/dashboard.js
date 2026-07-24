@@ -6992,12 +6992,31 @@
   // signal -> 'alert', a trade/fill -> 'execute' (no-op unless an avatar is
   // mounted on the current view).
   const agentReact = (clip) => { if (window.RCAgent3D) window.RCAgent3D.react(clip); };
+  // Engine heartbeat: pulse the topbar dot on every live stream event; dim to
+  // "quiet" after 90s of silence so liveness is never faked.
+  let _lastBeat = 0;
+  function beat() {
+    const dot = document.getElementById('pulseDot');
+    if (!dot) return;
+    _lastBeat = Date.now();
+    dot.title = 'Engine live — event just now';
+    dot.classList.remove('quiet');
+    dot.classList.remove('beat'); void dot.offsetWidth; dot.classList.add('beat');
+  }
+  setInterval(() => {
+    const dot = document.getElementById('pulseDot');
+    if (!dot || !_lastBeat) return;
+    const s = Math.round((Date.now() - _lastBeat) / 1000);
+    dot.title = s < 5 ? 'Engine live — event just now' : `Engine live — last event ${s}s ago`;
+    dot.classList.toggle('quiet', s > 90);
+  }, 10000);
+
   connectStream({
-    scan: () => { cache.scan = null; agentReact('analyze'); getScan().then(updateConnChip); if (currentView === 'engine' || currentView === 'deepscan') showView(currentView, { soft: true }); },
-    portfolio: () => { cache.portfolio = null; if (currentView === 'home' || currentView === 'portfolio') showView(currentView, { soft: true }); },
-    trade: () => { cache.portfolio = null; agentReact('execute'); toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView, { soft: true }); },
-    signals: () => { agentReact('alert'); if (currentView === 'signals') showView('signals', { soft: true }); },
-    activity: onActivity,
+    scan: () => { beat(); cache.scan = null; agentReact('analyze'); getScan().then(updateConnChip); if (currentView === 'engine' || currentView === 'deepscan') showView(currentView, { soft: true }); },
+    portfolio: () => { beat(); cache.portfolio = null; if (currentView === 'home' || currentView === 'portfolio') showView(currentView, { soft: true }); },
+    trade: () => { beat(); cache.portfolio = null; agentReact('execute'); toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView, { soft: true }); },
+    signals: () => { beat(); agentReact('alert'); if (currentView === 'signals') showView('signals', { soft: true }); },
+    activity: (e) => { beat(); onActivity(e); },
   });
 
   // Drill-down: click (or Enter/Space) any [data-sym] card opens the symbol

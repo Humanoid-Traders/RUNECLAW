@@ -11,7 +11,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=19">
+<link rel="stylesheet" href="/styles.css?v=20">
 </head>
 <body>
 <a class="skip-link" href="#view-root" data-i18n="dash.skip">Skip to content</a>
@@ -22,6 +22,7 @@
   <div class="spacer"></div>
   <div class="top-actions">
     <span id="modeChip" class="chip chip--paper hidden">PAPER</span>
+    <span id="pulseDot" class="pulse-dot" title="Engine stream connecting…" aria-hidden="true"></span>
     <span data-i18n-switcher></span>
     <a class="btn btn--ghost btn--sm" href="/" id="accountLink" data-i18n="dash.account">Account</a>
   </div>
@@ -115,7 +116,7 @@
 <script src="/vendor/lightweight-charts.standalone.production.js" defer></script>
 <script src="/js/radar3d.js?v=3" defer></script>
 <script src="/js/charts2d.js?v=1" defer></script>
-<script src="/js/dashboard.js?v=94" defer></script>
+<script src="/js/dashboard.js?v=95" defer></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
 </body>
 </html>
