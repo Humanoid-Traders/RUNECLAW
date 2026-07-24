@@ -570,6 +570,8 @@
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>
         ${LOGGED_IN ? `<section class="panel" id="p-cmd" style="padding-top:var(--s3);padding-bottom:var(--s3)"><div id="c-cmd"><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
+        ${LOGGED_IN ? `<section class="panel" id="p-watch"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Watchlist
+          <span class="right muted small">engine patterns push for these</span></h2><div id="c-watch"><div class="skel"></div></div></section>` : ''}
         ${LOGGED_IN ? `<section class="panel" id="p-agent"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Your agent
           <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-mind"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Agent mind-stream
@@ -647,6 +649,10 @@
     }, { empty: { text: 'No portfolio data yet.' } });
 
     if (LOGGED_IN) {
+      // Watchlist strip — starred symbols with live price/24h, each chip a
+      // door into the symbol modal; stars extend the pattern-alert pushes.
+      renderPanel(C('watch'), watchStripLoader);
+
       // Mission-control command bar: a one-glance status strip of the things
       // that matter right now — mode, agent stance, open positions, ⚠️ how many
       // are UNPROTECTED (no exchange stop), today's PnL, and whether trading is
@@ -2012,6 +2018,34 @@
     }).join('') : '<div class="muted small">No active voters this bar.</div>';
     return meter + `<div class="mt-3"><div class="stat mb-2"><div class="k">Why — top voters</div></div>${rows}</div>`;
   }
+  // Watchlist — one fetch per page load; the modal star and the home strip
+  // share it. Starred symbols also extend the engine's pattern-alert pushes.
+  let _watchSet = null;
+  async function getWatchlist(force) {
+    if (!LOGGED_IN) return new Set();
+    if (_watchSet && !force) return _watchSet;
+    const r = await fetchJSON('/api/watchlist', { timeoutMs: 8000 }).catch(() => null);
+    _watchSet = new Set((r && r.ok && r.data && r.data.symbols) || []);
+    return _watchSet;
+  }
+  async function watchStripLoader() {
+    const s = await getWatchlist();
+    if (!s.size) {
+      return `<p class="small muted">Star symbols from any chart (☆ Watch in the symbol view) — engine pattern alerts then cover your watchlist, not just your open positions.</p>`;
+    }
+    const r = await fetchJSON('/api/market/tickers', { auth: false, timeoutMs: 10000 }).catch(() => null);
+    const px = new Map((((r || {}).data || {}).data || []).map((t) => [t.symbol, t]));
+    return `<div class="row" style="gap:8px;flex-wrap:wrap">` + [...s].map((sym) => {
+      const t = px.get(sym);
+      const chg = t ? (parseFloat(t.change24h) || 0) * 100 : null;
+      const b = esc(sym.replace(/USDT$/, ''));
+      return `<span class="chip" data-sym="${b}" role="button" tabindex="0" title="Chart, patterns & structure" style="cursor:pointer">⭐ ${b}`
+        + (t ? ` <b class="num">${esc(t.lastPr)}</b>` : '')
+        + (chg != null ? ` <span class="${chg >= 0 ? 'pos' : 'neg'}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>` : '')
+        + `</span>`;
+    }).join('') + `</div>`;
+  }
+
   // geo (optional): { e: entry, sl, tp, d: direction } — a caller with a
   // position or signal passes its own geometry so the modal chart draws it.
   // _symSeq: monotonically increasing open token — a slow fetch from a
@@ -2054,6 +2088,7 @@
       <div class="row mt-3" style="gap:var(--s2)">
         <a class="btn btn--sm" href="#markets" id="symGoChart">View in Markets</a>
         <button class="btn btn--sm" type="button" id="symAsk">Ask the AI</button>
+        ${LOGGED_IN ? '<button class="btn btn--sm" type="button" id="symStar" aria-pressed="false">☆ Watch</button>' : ''}
       </div>
       <p class="muted small mt-2">Read-only decision picture · patterns are observations, not signals.</p>`;
     mountDeepScanMinis();
@@ -2106,6 +2141,29 @@
     };
     const go = document.getElementById('symGoChart');
     if (go) go.onclick = () => closeSymModal();
+    // Star toggle — stars feed the watchlist strip AND the engine's
+    // pattern-alert pushes (watched symbols, not just held ones).
+    const star = document.getElementById('symStar');
+    if (star) {
+      const paintStar = (on) => {
+        star.textContent = on ? '★ Watching' : '☆ Watch';
+        star.setAttribute('aria-pressed', on ? 'true' : 'false');
+      };
+      getWatchlist().then((s) => { if (!m.hidden) paintStar(s.has(base + 'USDT')); });
+      star.onclick = async () => {
+        star.disabled = true;
+        const r = await fetchJSON('/api/watchlist/toggle', { method: 'POST', body: { symbol: base }, timeoutMs: 8000 }).catch(() => null);
+        star.disabled = false;
+        if (r && r.ok) {
+          await getWatchlist(true);
+          paintStar(!!r.data.watching);
+          const c = document.getElementById('c-watch');
+          if (c) renderPanel(c, watchStripLoader);
+        } else if (r && r.data && r.data.error) {
+          star.textContent = '☆ ' + r.data.error;
+        }
+      };
+    }
   }
 
   async function renderDeepScan() {

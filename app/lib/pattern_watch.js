@@ -29,11 +29,15 @@ const base = (sym) => String(sym || '').toUpperCase()
 /**
  * Pure decision core.
  * @param hits deepscan hits [{symbol, chart_patterns: [{name, signal, confidence}]}]
- * @param positions open paper positions [{user_id, symbol, direction}]
+ * @param interests holders AND watchers: [{user_id, symbol, direction?}] —
+ *   direction present = an open paper position; absent/null = a watchlist
+ *   star. Holders should be listed FIRST: the (user, symbol, pattern) dedupe
+ *   key means the first interest wins the notification phrasing.
  * @param seen Map "user|base|pattern" -> announced-at ts
  * @returns { notify: [{user_id, symbol, direction, name, signal, confidence}], seen: nextMap }
  */
-function transitions(hits, positions, seen, now = Date.now()) {
+function transitions(hits, interests, seen, now = Date.now()) {
+  const positions = interests;
   const bySym = new Map();
   for (const h of hits || []) {
     const b = base(h.symbol);
@@ -55,7 +59,8 @@ function transitions(hits, positions, seen, now = Date.now()) {
       if (next.has(key)) continue;
       next.set(key, now);
       notify.push({
-        user_id: pos.user_id, symbol: pos.symbol, direction: pos.direction,
+        user_id: pos.user_id, symbol: pos.symbol,
+        direction: pos.direction || null,
         name: pat.name, signal: pat.signal || 'neutral',
         confidence: Number(pat.confidence) || 0,
       });
@@ -79,14 +84,25 @@ async function runOnce() {
   if (!hits || !hits.length) return;
   const [positions] = await pool.execute(
     'SELECT id, user_id, symbol, direction, entry, margin, leverage FROM arena_positions');
-  if (!positions.length) return;
-  const { notify, seen } = transitions(hits, positions, seenMap);
+  let watchers = [];
+  try {
+    const [wrows] = await pool.execute('SELECT user_id, symbol FROM user_watchlist');
+    watchers = wrows.map((w) => ({ user_id: w.user_id, symbol: w.symbol, direction: null }));
+  } catch (e) { /* no watchlist yet — holders still covered */ }
+  // Holders FIRST: when someone both holds and watches a symbol, the dedupe
+  // key makes the position phrasing win.
+  const interests = positions.concat(watchers);
+  if (!interests.length) return;
+  const { notify, seen } = transitions(hits, interests, seenMap);
   seenMap = seen;
   for (const n of notify) {
+    const why = n.direction
+      ? `you have a ${n.direction} open`
+      : `it's on your watchlist`;
     await push.notifySubscribers({
       title: '🧭 Engine pattern on your symbol',
       body: `${n.symbol}: ${n.name} (${Math.round(n.confidence * 100)}%, ${n.signal}) — `
-        + `you have a ${n.direction} open. See the chart in the Arena.`,
+        + `${why}. See the chart in the Arena.`,
       url: '/arena',
     }, [n.user_id]).catch(() => {});
   }

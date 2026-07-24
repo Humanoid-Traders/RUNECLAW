@@ -60,6 +60,7 @@ class MemoryDB {
     this.arenaSeasons = [];   // named competition windows (no resets)
     this._nextArenaSeasonId = 1;
     this.arenaFollows = {};   // user_id -> practice-follow prefs (paper only)
+    this.watchlist = [];      // { user_id, symbol, created_at } (starred symbols)
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -296,6 +297,28 @@ class MemoryDB {
       this.arenaFollows[params[0]] = { user_id: params[0], enabled: params[1],
         margin: params[2], leverage: params[3], last_signal_id: params[4], created_at: params[5] };
       return [{ affectedRows: 1 }, []];
+    }
+    // -- USER WATCHLIST (starred symbols; UNIQUE(user_id, symbol)) --
+    if (cmd.includes('INSERT INTO USER_WATCHLIST')) {
+      // params: user_id, symbol, created_at
+      if (!this.watchlist.some(w => w.user_id === params[0] && w.symbol === params[1])) {
+        this.watchlist.push({ user_id: params[0], symbol: params[1], created_at: params[2] });
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM USER_WATCHLIST')) {
+      // params: user_id, symbol
+      const before = this.watchlist.length;
+      this.watchlist = this.watchlist.filter(
+        w => !(w.user_id === params[0] && w.symbol === params[1]));
+      return [{ affectedRows: before - this.watchlist.length }, []];
+    }
+    if (cmd.includes('FROM USER_WATCHLIST')) {
+      if (cmd.includes('WHERE USER_ID')) {
+        const rows = this.watchlist.filter(w => w.user_id === params[0]);
+        return [rows.map(r => ({ ...r })), []];
+      }
+      return [this.watchlist.map(r => ({ ...r })), []];   // pattern watch: everyone
     }
     if (cmd.includes('UPDATE ARENA_FOLLOWS')) {
       // params: last_signal_id, user_id
@@ -1586,6 +1609,14 @@ async function migrate() {
         leverage INT NOT NULL,
         last_signal_id BIGINT NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS user_watchlist (
+        user_id INT NOT NULL,
+        symbol VARCHAR(30) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, symbol)
       )
     `);
   }
