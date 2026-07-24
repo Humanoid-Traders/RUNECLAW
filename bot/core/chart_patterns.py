@@ -804,17 +804,24 @@ def detect_elliott_impulse(
                             conf += 0.05
                             fib_info += f", W2={w2_retrace:.3f} (near {ideal})"
                             break
+                    _kl_partial = {
+                        "w1_start": w1_start, "w1_top": w1_end,
+                        "w2_low": w2_end, "w3_top": w3_end,
+                        "w3_fib": round(w3_fib, 3),
+                        "w2_retrace": round(w2_retrace, 3),
+                    }
+                    # Tuning audit: wave_action's documented W3 boost was dead
+                    # code — no detector ever emitted current_wave, so it fell
+                    # back to description parsing (which "waves 1-3 visible"
+                    # defeats). Dark flag; direct A/B before any default flip.
+                    if _env_bool("ELLIOTT_CURRENT_WAVE_ENABLED", False):
+                        _kl_partial["current_wave"] = "3"
                     return {
                         "name": "Elliott Impulse (Partial)",
                         "signal": "bullish",
                         "confidence": round(min(0.65, conf), 2),
                         "description": f"Bullish impulse forming: waves 1-3 visible | {fib_info}",
-                        "key_levels": {
-                            "w1_start": w1_start, "w1_top": w1_end,
-                            "w2_low": w2_end, "w3_top": w3_end,
-                            "w3_fib": round(w3_fib, 3),
-                            "w2_retrace": round(w2_retrace, 3),
-                        },
+                        "key_levels": _kl_partial,
                     }
 
     # ── Bearish impulse ──
@@ -904,17 +911,20 @@ def detect_elliott_impulse(
                         conf += 0.05
                         fib_info += f", W2={w2_retrace:.3f} (near {ideal})"
                         break
+                _kl_bear = {
+                    "w1_start": w1_start, "w1_low": w1_end,
+                    "w2_high": w2_end, "w3_low": w3_end,
+                    "w3_fib": round(w3_fib, 3),
+                    "w2_retrace": round(w2_retrace, 3),
+                }
+                if _env_bool("ELLIOTT_CURRENT_WAVE_ENABLED", False):
+                    _kl_bear["current_wave"] = "3"
                 return {
                     "name": "Elliott Impulse (Bearish)",
                     "signal": "bearish",
                     "confidence": round(min(0.65, conf), 2),
                     "description": f"Bearish impulse forming: waves 1-3 visible | {fib_info}",
-                    "key_levels": {
-                        "w1_start": w1_start, "w1_low": w1_end,
-                        "w2_high": w2_end, "w3_low": w3_end,
-                        "w3_fib": round(w3_fib, 3),
-                        "w2_retrace": round(w2_retrace, 3),
-                    },
+                    "key_levels": _kl_bear,
                 }
 
     return None

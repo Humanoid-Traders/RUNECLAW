@@ -1812,6 +1812,26 @@ class Analyzer:
                                 _extras.append((float(_t[_tk]), "ew_target"))
                     except Exception:
                         pass
+                # Pattern price objectives (dark flag — tuning audit): the
+                # fib-extension ladder, harmonic D PRZ and Wyckoff phase
+                # extremes were computed and DISCARDED. ON feeds these
+                # already-computed prices into the same snap map (tagged
+                # 'pattern_target'); snap_sl_tp remains tighten/clip-only.
+                if getattr(CONFIG.analyzer, "pattern_target_levels_enabled", False):
+                    _PT_KEYS = ("ext_1.272", "ext_1.618", "D",
+                                "spring_low", "utad_high", "neckline")
+                    for _pk in ("fib_extensions", "harmonic_pattern",
+                                "wyckoff_pattern", "chart_patterns_geo"):
+                        _pv = indicators.get(_pk)
+                        _plist = _pv if isinstance(_pv, list) else ([_pv] if _pv else [])
+                        for _pp in _plist:
+                            _kl = (_pp or {}).get("key_levels") or {}
+                            for _lk in _PT_KEYS:
+                                _lv = _kl.get(_lk)
+                                if isinstance(_lv, bool) or not isinstance(_lv, (int, float)):
+                                    continue
+                                if _lv > 0:
+                                    _extras.append((float(_lv), "pattern_target"))
                 _lvls = gather_levels(
                     highs, lows, closes, atr,
                     times=times,
@@ -3193,23 +3213,31 @@ class Analyzer:
 
         # ── Volume Profile voter ──
         vp = indicators.get("_vp_result")
+        _vp_deferred = None
         if vp is not None:
-            try:
-                # Direction-aware VP votes (audit: the richer
-                # volume_profile_to_confluence was dead code while this path
-                # used a crude above/below-POC bias that ignored VAH/VAL and
-                # the momentum-vs-contrarian split). Direction approximated
-                # from the running vote sum, same convention as the
-                # supply/demand voter below.
-                from bot.core.volume_profile import volume_profile_to_confluence
-                _pre = sum(v * w for v, w in zip(votes, weights))
-                vp_v, vp_w = volume_profile_to_confluence(
-                    vp, "LONG" if _pre >= 0 else "SHORT")
-                votes.extend(vp_v)
-                weights.extend(_lw(w, "volume_profile") for w in vp_w)
-                names.extend(["volume_profile"] * len(vp_w))
-            except Exception as _vp_exc:
-                logger.warning("Volume profile confluence vote failed: %s", _vp_exc)
+            if getattr(CONFIG.analyzer, "vp_twopass_direction_enabled", False):
+                # Two-pass fix (dark flag — tuning audit): the running-sum
+                # direction below depends on voter ORDER and flips
+                # arbitrarily near net-zero. Deferring the VP vote until
+                # every other voter has registered reads the FULL electorate.
+                _vp_deferred = vp
+            else:
+                try:
+                    # Direction-aware VP votes (audit: the richer
+                    # volume_profile_to_confluence was dead code while this path
+                    # used a crude above/below-POC bias that ignored VAH/VAL and
+                    # the momentum-vs-contrarian split). Direction approximated
+                    # from the running vote sum, same convention as the
+                    # supply/demand voter below.
+                    from bot.core.volume_profile import volume_profile_to_confluence
+                    _pre = sum(v * w for v, w in zip(votes, weights))
+                    vp_v, vp_w = volume_profile_to_confluence(
+                        vp, "LONG" if _pre >= 0 else "SHORT")
+                    votes.extend(vp_v)
+                    weights.extend(_lw(w, "volume_profile") for w in vp_w)
+                    names.extend(["volume_profile"] * len(vp_w))
+                except Exception as _vp_exc:
+                    logger.warning("Volume profile confluence vote failed: %s", _vp_exc)
 
         # Stochastic voter (weight 1.2 — momentum + mean-reversion)
         stoch_k = indicators.get("stoch_k")
@@ -3596,6 +3624,20 @@ class Analyzer:
             raise ValueError(
                 f"Confluence votes/weights desync: {len(votes)} votes vs {len(weights)} weights"
             )
+
+        # Deferred VP vote (two-pass flag): the complete electorate is in, so
+        # the momentum-vs-contrarian direction is order-independent.
+        if _vp_deferred is not None:
+            try:
+                from bot.core.volume_profile import volume_profile_to_confluence
+                _pre = sum(v * w for v, w in zip(votes, weights))
+                vp_v, vp_w = volume_profile_to_confluence(
+                    _vp_deferred, "LONG" if _pre >= 0 else "SHORT")
+                votes.extend(vp_v)
+                weights.extend(_lw(w, "volume_profile") for w in vp_w)
+                names.extend(["volume_profile"] * len(vp_w))
+            except Exception as _vp_exc:
+                logger.warning("Volume profile confluence vote failed: %s", _vp_exc)
 
         # ── Mean-reversion oscillator de-correlation (CONFIG.confluence) ──
         # RSI/%B/Stoch/Fib co-fire on the same "price low/high in range" signal.

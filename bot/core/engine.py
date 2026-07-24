@@ -3581,6 +3581,27 @@ class RuneClawEngine:
                           "spread_bps": round(of_signal.spread_bps, 1) if of_signal.spread_bps else 0,
                           "position_size": round(liq_size, 2),
                       })
+                # Shadow-price Check #17 (tuning audit): this return sits
+                # BEFORE the risk-rejection shadow-book branch, so the only
+                # hard book/depth/spread gate was exempt from the
+                # counterfactual ledger built to price gates. Recording-only,
+                # fail-open — /shadow now answers whether the guard eats edge.
+                try:
+                    if getattr(CONFIG, "shadow_book_enabled", False):
+                        from bot.core.shadow_book import SHADOW_BOOK
+                        _lq_regime = ""
+                        try:
+                            _lq_r = getattr(self.analyzer, "_current_regimes",
+                                            {}).get(idea.asset)
+                            _lq_regime = getattr(_lq_r, "value", "") or ""
+                        except Exception:
+                            _lq_regime = ""
+                        SHADOW_BOOK.record_rejection(
+                            idea, [f"LIQUIDITY: {liq_reason}"], liq_reason,
+                            ref_price=float(getattr(signal, "price", 0) or 0),
+                            regime=_lq_regime)
+                except Exception as _lq_exc:
+                    system_log.debug("shadow book liquidity record skipped: %s", _lq_exc)
                 return None
 
         if risk_check.verdict == RiskVerdict.REJECTED:

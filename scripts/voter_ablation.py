@@ -48,6 +48,11 @@ CURATED = [
     # likewise absent and have zero drop-one evidence.
     "ew_impulse", "ew_corrective", "ew_diagonal", "ew_wxy", "ew_mtf_align",
     "fib_extension", "candles_mtf",
+    # Tuning audit round 2: SMC/structure + order-flow voters that likewise
+    # had zero drop-one attribution.
+    "fvg", "premium_discount", "mtf_choch", "mtf_alignment",
+    "of_funding", "of_whale_bias", "of_book_imbalance", "of_cvd_divergence",
+    "of_spot_futures_div", "of_oi_price_div",
 ]
 
 _PATS = {

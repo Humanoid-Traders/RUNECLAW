@@ -90,8 +90,9 @@ class OrderFlowConfig:
     # liquidity. book_top_levels is how many best levels count as "executable",
     # exposed as bid/ask_depth_top_usd. When OF_GUARD_TOP_DEPTH_ENABLED is on, the
     # liquidity guard additionally requires that top-of-book executable depth to
-    # cover the position size (a naturally-scaled tightening); default OFF leaves
-    # the guard byte-identical (25-level sum only).
+    # cover the position size (a naturally-scaled tightening). Default ON since
+    # the 2026-06 operator activation (docs/FLAG_ACTIVATION.md); OFF restores
+    # the 25-level-sum-only guard.
     book_top_levels: int = _env_int("OF_BOOK_TOP_LEVELS", 5)
     guard_top_depth_enabled: bool = _env_bool("OF_GUARD_TOP_DEPTH_ENABLED", True)
     # Cross-venue funding enrichment (bot/core/cross_venue.py): attach what
@@ -126,10 +127,11 @@ class OrderFlowConfig:
     # seconds, and a gappy/stale window confirms on data that no longer reflects
     # live flow. When enabled, the gate additionally requires the wall-clock span
     # of the last 3 bars to fall within [min, max] seconds — too short = burst,
-    # too long = stale/gappy — and rejects the confirmation otherwise. Default OFF
-    # keeps the gate byte-identical (bars stored as bare floats, no span check);
-    # the check is tightening-only (it can only reject a confirmation), so it is
-    # safe-direction regardless of poll cadence.
+    # too long = stale/gappy — and rejects the confirmation otherwise. Default ON
+    # since the 2026-06 operator activation (docs/FLAG_ACTIVATION.md); OFF stores
+    # bars as bare floats with no span check. The check is tightening-only (it
+    # can only reject a confirmation), so it is safe-direction regardless of
+    # poll cadence.
     time_bars_enabled: bool = _env_bool("OF_TIME_BARS_ENABLED", True)
     taker_bar_min_span_sec: float = _env_float("OF_TAKER_BAR_MIN_SPAN_SEC", 20.0)
     # Max span raised 300s -> 1800s: taker bars accrue once per SCAN of a
@@ -146,9 +148,10 @@ class OrderFlowConfig:
     # rates are tiny (typically ±0.0001–0.0005), so the vote was ~60x too small
     # to ever move confluence — effectively dead. The correct scale is 0.0005
     # (= funding_extreme above, and what the smart-money scorer already uses):
-    # |funding| ≥ 0.05% saturates the contrarian vote to ±1. When ON, the vote
-    # uses the fixed scale and actually contributes; default OFF keeps the old
-    # (dead) 0.03 scale so confluence is byte-identical until enabled.
+    # |funding| ≥ 0.05% saturates the contrarian vote to ±1. Default ON since
+    # the 2026-06 operator activation (docs/FLAG_ACTIVATION.md) — the vote uses
+    # the fixed scale and actually contributes; OFF restores the old (dead)
+    # 0.03 scale under which the vote was permanently ~0.
     funding_vote_fixed_scale: bool = _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", True)
 
     # QC-6: the REST CVD-price divergence fallback compared raw WINDOW deltas
