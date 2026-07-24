@@ -81,6 +81,31 @@ test('dashboard: the symbol modal gains a VWAP & structure chip row', () => {
   assert.match(dash, /RCChartRead\.structure\(parsed\)/);
   assert.match(dash, /CHoCH/);
   const m = dashHtml.match(/dashboard\.js\?v=(\d+)/);
-  assert.ok(m && Number(m[1]) >= 97, `dashboard.js version floor (got ${m && m[1]})`);
+  assert.ok(m && Number(m[1]) >= 98, `dashboard.js version floor (got ${m && m[1]})`);
   assert.match(dashHtml, /chartread\.js\?v=\d+/);
+});
+
+test('website-wide: the modal is the universal decision picture with geometry', () => {
+  // openSymbol accepts a caller's geometry and draws it on a full chart.
+  assert.match(dash, /async function openSymbol\(rawSym, geo\)/);
+  assert.match(dash, /id="symChart"/);
+  assert.match(dash, /entry: geo\.e, sl: geo\.sl, tp: geo\.tp/);
+  // The delegation (click + keyboard) passes data-geo through.
+  assert.match(dash, /openSymbol\(el\.getAttribute\('data-sym'\), _geoOf\(el\)\)/);
+  assert.match(dash, /openSymbol\(e\.target\.getAttribute\('data-sym'\), _geoOf\(e\.target\)\)/);
+});
+
+test('signals (public): every signal row opens its chart with its own levels', () => {
+  assert.match(dash, /data-geo='\$\{esc\(JSON\.stringify\(\{ e: s\.entry_price, sl: s\.stop_loss, tp: s\.take_profit, d: s\.direction \}\)\)\}'/);
+  // Position rows pass geometry too (Trade table + Portfolio/Home items).
+  assert.match(dash, /\{ e: p\.entry_price, sl: p\.stop_loss, tp: p\.take_profit, d: p\.direction \}/);
+});
+
+test('markets (public): at-a-glance read chips under the big chart', () => {
+  assert.match(dash, /id="chartRead"/);
+  assert.match(dash, /engine formulas/);
+  const s = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+  assert.match(s, /\.rc-chart \{ width: 100%/);
+  const v = dashHtml.match(/styles\.css\?v=(\d+)/);
+  assert.ok(v && Number(v[1]) >= 21, `styles.css version floor (got ${v && v[1]})`);
 });
