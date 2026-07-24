@@ -2489,6 +2489,11 @@
             <span class="badge" style="margin-left:auto" title="Every connected exchange and on-chain wallet chain, itemised — read-only, RUNECLAW can never move them">read-only</span></h2>
           <div id="c-holdings"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-arena">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Paper Arena
+            <span class="badge" style="margin-left:auto" title="Your practice account — virtual funds only, real live prices. Nothing here can move real money.">virtual</span></h2>
+          <div id="c-arena"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-sentry">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Risk sentry
             <span class="badge" style="margin-left:auto" title="A proactive read-only watch over your standing book — envelope drift, over-cap, concentration, crowding, daily spend. It flags; it never acts.">watch-only</span></h2>
@@ -2741,6 +2746,28 @@
         + rows.join('')
         + `<p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
     }, { empty: { icon: 'icon-globe', text: 'Net worth aggregates once a venue or wallet is reachable.' } });
+
+    // Paper Arena — the practice account beside the real one. Private surface
+    // (§4: virtual dollars fine); percent + badge glory is what we celebrate.
+    renderPanel(C('arena'), async () => {
+      const r = await fetchJSON('/api/arena/account', { timeoutMs: 16000 });
+      const d = r.data;
+      if (!r.ok || !d) return null;
+      const earned = (d.badges || []).filter(b => b.earned);
+      const rp = d.return_pct;
+      return `<div class="w3-hero">
+          <span class="k">Arena return <span class="muted small">all-time · vs the uniform stake</span></span>
+          <b class="v num ${pnlClass(rp)}">${rp > 0 ? '+' : ''}${fmt(rp, 2)}%</b>
+        </div>
+        <div class="kv-row"><span>Balance / equity</span>
+          <b class="num">${fmt(d.balance, 2)} / ${fmt(d.equity, 2)} <span class="muted small">vUSDT</span></b></div>
+        <div class="kv-row"><span>Open positions</span>
+          <b class="num">${(d.positions || []).length} / ${d.limits ? d.limits.max_open : 5}
+          ${d.follow && d.follow.enabled ? '<span class="chip chip--info">⚡ following</span>' : ''}</b></div>
+        ${earned.length ? `<div class="kv-row"><span>Achievements</span>
+          <b title="${esc(earned.map(b => b.name).join(' · '))}">${earned.map(b => b.icon).join(' ')}</b></div>` : ''}
+        <p style="margin-top:var(--s2)"><a class="btn btn--sm" href="/arena">Open the Arena →</a></p>`;
+    }, { empty: { icon: 'icon-target', text: 'Your paper account is created the moment you open the Arena — no keys, no risk.' } });
 
     // Funds by venue & wallet — the same real money as net worth, but itemised
     // per source: one row per connected exchange, one per on-chain chain.
