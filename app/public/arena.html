@@ -150,6 +150,21 @@
     <div class="tmsg" id="tMsg" role="status" aria-live="polite"></div>
   </section>
 
+  <section class="panel" id="followPanel" hidden>
+    <h2>Practice-follow the engine <span class="muted" style="text-transform:none;letter-spacing:0">· paper only · revocable any time</span></h2>
+    <p class="lede" style="margin-bottom:var(--s2);font-size:var(--fs-sm)">Mirror the engine's live signal stream into
+    your paper account: each new signal opens a position at your chosen size, filled at the <b>live mark</b>. It starts
+    from the next signal — never back-fills old calls — and can never touch real funds.</p>
+    <div class="ticket">
+      <div><label for="fMargin">Margin per signal (vUSDT)</label>
+        <input id="fMargin" type="number" min="10" step="10" value="200"></div>
+      <div><label for="fLev">Leverage<span class="lev-val" id="fLevVal">2×</span></label>
+        <input id="fLev" type="range" min="1" max="20" step="1" value="2"></div>
+      <div><button class="btn btn--primary" id="followBtn" type="button">Start following</button></div>
+    </div>
+    <div class="tmsg" id="fMsg" role="status" aria-live="polite"></div>
+  </section>
+
   <section class="panel" id="posPanel" hidden>
     <h2>Open positions</h2>
     <div class="tbl-scroll"><table class="tbl"><thead><tr>
@@ -192,6 +207,7 @@
   var fmtP = function (n) { return n == null ? '—' : Number(n) >= 1000 ? Number(n).toLocaleString('en-US', { maximumFractionDigits: 1 }) : String(Number(n).toPrecision(5)).replace(/\.?0+$/, ''); };
   var fmt2 = function (n) { return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
   var direction = 'LONG';
+  var paintFollow;   // assigned in the logged-in block; read by loadAccount
 
   function pnlCls(n) { return n > 0 ? 'up-c' : n < 0 ? 'down-c' : ''; }
 
@@ -204,7 +220,8 @@
       + '<div class="stat"><div class="k">Open positions</div><div class="v">' + d.positions.length + ' <span class="muted">/ ' + d.limits.max_open + '</span></div></div>';
     var pb = $('posBody');
     pb.innerHTML = d.positions.map(function (p) {
-      return '<tr><td class="sym">' + esc(p.symbol) + '</td>'
+      return '<tr><td class="sym">' + esc(p.symbol)
+        + (p.source === 'signal' ? ' <span class="chip chip--info" title="Opened by practice-follow">⚡ signal</span>' : '') + '</td>'
         + '<td class="' + (p.direction === 'LONG' ? 'up-c' : 'down-c') + '">' + esc(p.direction) + '</td>'
         + '<td>' + p.leverage + '×</td>'
         + '<td>' + fmtP(p.entry) + '</td><td>' + fmtP(p.mark) + '</td>'
@@ -231,7 +248,10 @@
 
   async function loadAccount() {
     var r = await RC.fetchJSON('/api/arena/account', { timeoutMs: 14000 }).catch(function () { return null; });
-    if (r && r.ok && r.data) renderAccount(r.data);
+    if (r && r.ok && r.data) {
+      renderAccount(r.data);
+      if (typeof paintFollow === 'function' && r.data.follow !== undefined) paintFollow(r.data.follow);
+    }
   }
 
   async function loadBoard() {
@@ -262,7 +282,23 @@
   } else {
     $('acctPanel').hidden = false; $('ticketPanel').hidden = false;
     $('posPanel').hidden = false; $('histPanel').hidden = false;
-    $('optin').hidden = false;
+    $('optin').hidden = false; $('followPanel').hidden = false;
+    var following = false;
+    paintFollow = function (f) {
+      following = !!(f && f.enabled);
+      $('followBtn').textContent = following ? 'Stop following' : 'Start following';
+      if (f && f.enabled) { $('fMargin').value = f.margin; $('fLev').value = f.leverage; $('fLevVal').textContent = f.leverage + '×'; }
+    };
+    $('fLev').addEventListener('input', function () { $('fLevVal').textContent = $('fLev').value + '×'; });
+    $('followBtn').addEventListener('click', async function () {
+      $('followBtn').disabled = true;
+      var r = await RC.fetchJSON('/api/arena/follow', { method: 'POST', body: {
+        enabled: !following, margin: Number($('fMargin').value), leverage: Number($('fLev').value),
+      }, timeoutMs: 12000 }).catch(function () { return null; });
+      $('followBtn').disabled = false;
+      if (r && r.ok) { paintFollow(r.data.follow); $('fMsg').textContent = following ? 'Following — new signals will open paper positions.' : 'Stopped. Nothing new will open.'; loadAccount(); }
+      else $('fMsg').textContent = (r && r.data && r.data.error) || 'Update failed.';
+    });
     loadAccount();
     setInterval(loadAccount, 20000);
 
