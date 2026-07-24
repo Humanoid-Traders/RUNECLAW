@@ -317,6 +317,10 @@
       <span style="color:var(--gold-bright)" data-i18n="sec.arena_cta">Enter the Arena →</span>
     </a>
   </div>
+  <!-- Today on RUNECLAW — the daily digest line, assembled only from real
+       engine/arena data (§4: patterns + counts + win rates). Hidden when
+       there is nothing meaningful to say. -->
+  <div id="todayStrip" hidden style="margin-bottom:var(--s3);text-align:center;font-family:var(--font-data);font-size:var(--fs-sm);color:var(--text-2)"></div>
   <!-- Live tape strip — REAL latest closes from the Arena (percent only,
        opt-in handles, §4). Hidden entirely while the tape is quiet:
        liveliness is never faked on the landing page. -->
@@ -1304,6 +1308,36 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catc
       document.getElementById('landingTape').hidden = false;
     })
     .catch(function () { /* strip is decoration on the band */ });
+})();
+</script>
+<script>
+// Today on RUNECLAW — one honest line from /api/today; hidden when there is
+// nothing meaningful to say (no invented headlines, ever).
+(function () {
+  fetch('/api/today', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d) return;
+      var esc = function (t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+      var bits = [];
+      if (d.top_pattern) {
+        bits.push('🧭 ' + esc(String(d.top_pattern.symbol).replace('/USDT', '').replace(/USDT$/, ''))
+          + ' · ' + esc(d.top_pattern.name) + ' (' + Math.round(d.top_pattern.confidence * 100) + '%)');
+      }
+      if (d.signals && d.signals.created_today) {
+        var s = d.signals.created_today + ' signal' + (d.signals.created_today === 1 ? '' : 's') + ' today';
+        if (d.signals.resolved_today) s += ', ' + d.signals.wins_today + '/' + d.signals.resolved_today + ' wins';
+        bits.push('📡 ' + s);
+      }
+      if (d.arena && d.arena.closes_24h) bits.push('🏟️ ' + d.arena.traders + ' traders · ' + d.arena.closes_24h + ' closes in 24h');
+      if (d.season && d.season.status === 'live') bits.push('🏁 ' + esc(d.season.name) + ' is LIVE');
+      if (bits.length < 2) return;   // one lonely stat isn't a digest
+      var el = document.getElementById('todayStrip');
+      el.textContent = 'Today on RUNECLAW — ' + bits.join('  ·  ');
+      el.hidden = false;
+    })
+    .catch(function () { /* digest is decoration on the band */ });
 })();
 </script>
 <!-- Perf + a11y: the 3D hero statically imports three.js (~150KB+). Load it via

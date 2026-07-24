@@ -102,6 +102,14 @@ class MemoryDB {
       return [[{ resolved: resolved.length, wins, net_pnl }], []];
     }
 
+    if (cmd.includes('FROM SIGNALS') && cmd.includes('RESOLVED_AT >=')) {
+      // daily digest: rows resolved since a cutoff (NULL resolved_at never
+      // passes a >= comparison, mirroring MySQL)
+      const lo = new Date(params[0]).getTime();
+      const rows = this.signals.filter(
+        s => s.resolved_at && new Date(s.resolved_at).getTime() >= lo);
+      return [rows.map(r => ({ ...r })), []];
+    }
     if (cmd.includes('FROM SIGNALS') && cmd.includes('ID >')) {
       // Practice-follow sweep: WHERE id > ? ORDER BY id ASC LIMIT ?
       const after = Number(params[0]) || 0;
