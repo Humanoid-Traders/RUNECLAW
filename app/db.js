@@ -77,10 +77,12 @@ class MemoryDB {
       // created_at, resolved_at. ON DUPLICATE KEY updates status/pnl/resolved_at.
       const cols = ['signal_key','symbol','direction','confidence','score','pattern',
         'regime','entry_price','stop_loss','take_profit','rr','thesis','status','pnl',
-        'created_at','resolved_at'];
+        'created_at','resolved_at','seal','seal_payload','sealed_at'];
       const row = {}; cols.forEach((k, i) => { row[k] = params[i]; });
       const existing = this.signals.find(s => s.signal_key === row.signal_key);
       if (existing) {
+        // Provable Calls: ON DUPLICATE updates outcome fields ONLY — the
+        // seal, payload and every decision-time value stay untouched.
         existing.status = row.status; existing.pnl = row.pnl; existing.resolved_at = row.resolved_at;
       } else {
         row.id = this._nextSignalId++;
@@ -102,6 +104,11 @@ class MemoryDB {
       return [[{ resolved: resolved.length, wins, net_pnl }], []];
     }
 
+    if (cmd.includes('FROM SIGNALS') && cmd.includes('SIGNAL_KEY = ?')) {
+      // Provable Calls verify: one sealed row by its stable key
+      const rows = this.signals.filter(s => s.signal_key === params[0]);
+      return [rows.map(r => ({ ...r })), []];
+    }
     if (cmd.includes('FROM SIGNALS') && cmd.includes('RESOLVED_AT >=')) {
       // daily digest: rows resolved since a cutoff (NULL resolved_at never
       // passes a >= comparison, mirroring MySQL)
@@ -1334,10 +1341,22 @@ async function migrate() {
         pnl DECIMAL(20,8) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         resolved_at TIMESTAMP NULL DEFAULT NULL,
+        seal VARCHAR(64) DEFAULT NULL,
+        seal_payload TEXT DEFAULT NULL,
+        sealed_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_created (created_at),
         INDEX idx_symbol (symbol)
       )
     `);
+    // Provable Calls columns for pre-existing installs (fresh installs get
+    // them from the CREATE above).
+    for (const ddl of [
+      'ALTER TABLE signals ADD COLUMN seal VARCHAR(64) DEFAULT NULL',
+      'ALTER TABLE signals ADD COLUMN seal_payload TEXT DEFAULT NULL',
+      'ALTER TABLE signals ADD COLUMN sealed_at TIMESTAMP NULL DEFAULT NULL',
+    ]) {
+      try { await pool.execute(ddl); } catch (e) { /* exists */ }
+    }
     // Web-push subscriptions (opt-in, per browser). endpoint is the unique
     // key so re-subscribing the same browser updates instead of duplicating.
     await pool.execute(`

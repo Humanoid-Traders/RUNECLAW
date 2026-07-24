@@ -605,34 +605,55 @@ router.post('/signals', async (req, res) => {
     // Cap a single batch to bound the write cost of a malformed/huge payload.
     const batch = list.slice(0, 500);
     let upserted = 0;
+    const { sealCall } = require('../lib/callseal');
     for (const s of batch) {
       if (!s || !s.signal_key || !s.symbol || !s.direction) continue;
+      // Provable Calls: the receipt is sealed from the EXACT coerced values
+      // being stored, at the moment the call first lands. ON DUPLICATE KEY
+      // updates only outcome fields — a re-sync (resolution) can never touch
+      // the seal, the payload, or any decision-time value.
+      const fixed = {
+        signal_key: String(s.signal_key).slice(0, 128),
+        symbol: String(s.symbol).slice(0, 32),
+        direction: String(s.direction).slice(0, 8),
+        confidence: Number(s.confidence) || 0,
+        entry_price: Number(s.entry_price) || 0,
+        stop_loss: Number(s.stop_loss) || 0,
+        take_profit: Number(s.take_profit) || 0,
+        pattern: s.pattern ? String(s.pattern).slice(0, 64) : null,
+        regime: s.regime ? String(s.regime).slice(0, 32) : null,
+        created_at: s.created_at ? new Date(s.created_at) : new Date(),
+      };
+      const receipt = sealCall(fixed);
       await pool.execute(
         `INSERT INTO signals
            (signal_key, symbol, direction, confidence, score, pattern, regime,
             entry_price, stop_loss, take_profit, rr, thesis, status, pnl,
-            created_at, resolved_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            created_at, resolved_at, seal, seal_payload, sealed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            status = VALUES(status), pnl = VALUES(pnl),
            resolved_at = VALUES(resolved_at)`,
         [
-          String(s.signal_key).slice(0, 128),
-          String(s.symbol).slice(0, 32),
-          String(s.direction).slice(0, 8),
-          Number(s.confidence) || 0,
+          fixed.signal_key,
+          fixed.symbol,
+          fixed.direction,
+          fixed.confidence,
           Number(s.score) || 0,
-          s.pattern ? String(s.pattern).slice(0, 64) : null,
-          s.regime ? String(s.regime).slice(0, 32) : null,
-          Number(s.entry_price) || 0,
-          Number(s.stop_loss) || 0,
-          Number(s.take_profit) || 0,
+          fixed.pattern,
+          fixed.regime,
+          fixed.entry_price,
+          fixed.stop_loss,
+          fixed.take_profit,
           Number(s.rr) || 0,
           s.thesis != null ? String(s.thesis) : null,
           s.status ? String(s.status).slice(0, 16) : 'NEW',
           (s.pnl === null || s.pnl === undefined) ? null : Number(s.pnl),
-          s.created_at ? new Date(s.created_at) : new Date(),
+          fixed.created_at,
           s.resolved_at ? new Date(s.resolved_at) : null,
+          receipt.seal,
+          receipt.seal_payload,
+          new Date(),
         ]
       );
       upserted++;

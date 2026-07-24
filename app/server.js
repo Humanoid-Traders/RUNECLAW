@@ -197,6 +197,7 @@ app.use('/api/arena', require('./routes/arena'));
 app.use('/api/since', require('./routes/since'));
 app.use('/api/watchlist', require('./routes/watchlist'));
 app.use('/api/today', require('./routes/today'));
+app.use('/api/call', require('./routes/call'));
 app.use('/api/news', require('./routes/news'));
 app.use('/api/proofofpnl', require('./routes/proofofpnl'));
 app.use('/api/share', require('./routes/share'));
@@ -247,6 +248,9 @@ app.get('/guardian', (req, res) => { res.setHeader('Cache-Control', 'no-cache');
 app.get('/firewall', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'firewall.html')); });
 app.get('/escape', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'escape.html')); });
 app.get('/intent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'intent.html')); });
+// Provable Calls — the public per-call verify page. The page itself pulls
+// /api/call/:key and re-derives the SHA-256 in the visitor's browser.
+app.get('/call/:key', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'call.html')); });
 app.get('/leaderboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'leaderboard.html')); });
 // /arena — SSR unfurl: when a season exists, shared links carry its live
 // status ("RUNECLAW Arena · Genesis is LIVE"). §4: name + status + window

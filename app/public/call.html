@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Provable Call — RUNECLAW</title>
+<meta name="description" content="A cryptographically sealed trading call — re-derive the hash in your own browser. Don't trust the screenshot. Verify the call.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/styles.css?v=21">
+<style>
+  .call-wrap { max-width: 720px; margin: 0 auto; padding: var(--s5) var(--s4); }
+  .topnav { display: flex; gap: var(--s3); margin-bottom: var(--s4); font-size: var(--fs-sm); }
+  .verdict { border-radius: var(--radius); padding: var(--s4); margin: var(--s4) 0; font-family: var(--font-data); }
+  .verdict.ok { border: 1px solid var(--up); background: rgba(47,191,113,.06); }
+  .verdict.bad { border: 1px solid var(--down); background: rgba(224,82,82,.08); }
+  .verdict .big { font-size: var(--fs-lg); margin-bottom: 6px; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px var(--s3); font-family: var(--font-data); font-size: var(--fs-sm); padding: var(--s3) 0; border-top: 1px solid var(--line); }
+  .kv .k { color: var(--text-3); }
+  .hash { word-break: break-all; font-family: var(--font-data); font-size: var(--fs-xs); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; }
+  .explain { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.65; border-top: 1px solid var(--line); margin-top: var(--s4); padding-top: var(--s3); }
+  .drift { border: 1px solid var(--down); border-radius: var(--radius-sm); padding: var(--s3); margin-top: var(--s3); color: var(--down); font-size: var(--fs-sm); }
+  .up-c { color: var(--up); } .down-c { color: var(--down); }
+</style>
+</head>
+<body>
+<div class="call-wrap" role="main">
+  <nav class="topnav"><a href="/">← RUNECLAW</a><span style="flex:1"></span><a href="/dashboard#signals">Signal stream</a><a href="/proof">Proof of PnL</a></nav>
+  <h1 style="font-family:var(--font-display);letter-spacing:.03em">🔏 Provable Call</h1>
+  <p class="muted" style="font-size:var(--fs-sm);margin:6px 0 0">Sealed the moment it was made — before the market moved. Your browser re-derives the hash below; the server is never trusted to say “verified”.</p>
+  <div id="out"><div class="verdict"><div class="big">Verifying…</div>Computing SHA-256 in your browser.</div></div>
+  <div class="explain">
+    <b>What this proves:</b> the call’s decision facts (symbol, direction, entry, stop, target, confidence, time) hash to the seal shown — if any had been edited after sealing, the hash your browser computes would not match, and any difference between the sealed payload and the live record is flagged in red. Outcomes attach to the same sealed record later; losers can’t be deleted without leaving a hole in the stream.<br>
+    <b>What it doesn’t prove yet:</b> that the platform’s clock is honest to third parties. The seal is broadcast at decision time (feed &amp; stream subscribers hold copies); independent timestamping — anchoring a daily root hash on-chain — is the planned v2 and will be stated here when live. Not investment advice.
+  </div>
+</div>
+<script>
+(function () {
+  var esc = function (t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var key = decodeURIComponent((location.pathname.split('/call/')[1] || '').replace(/\/+$/, ''));
+  var out = document.getElementById('out');
+  function fail(msg) { out.innerHTML = '<div class="verdict bad"><div class="big">✖ ' + esc(msg) + '</div></div>'; }
+  if (!key) { fail('No call id in the URL'); return; }
+
+  function sha256hex(str) {
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function (buf) {
+      return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+    });
+  }
+
+  fetch('/api/call/' + encodeURIComponent(key), { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json().then(function (d) { return { status: r.status, d: d }; }); })
+    .then(function (res) {
+      var d = res.d;
+      if (res.status !== 200 || !d || !d.seal) { fail((d && d.error) || 'Call not found'); return; }
+      return sha256hex(d.seal_payload).then(function (hex) {
+        var intact = hex === d.seal;
+        var p;
+        try { p = JSON.parse(d.seal_payload); } catch (e) { p = null; }
+        var html = '<div class="verdict ' + (intact ? 'ok' : 'bad') + '">'
+          + '<div class="big">' + (intact ? '✅ Seal verified in your browser' : '✖ HASH MISMATCH — this receipt is not intact') + '</div>'
+          + 'sha256(sealed payload) ' + (intact ? '=' : '≠') + ' stored seal</div>';
+        if (p) {
+          var dirCls = p.direction === 'LONG' ? 'up-c' : 'down-c';
+          html += '<div class="kv">'
+            + '<span class="k">Call</span><span><b class="' + dirCls + '">' + esc(p.direction) + '</b> ' + esc(p.symbol) + '</span>'
+            + '<span class="k">Entry</span><span>' + p.entry_price + '</span>'
+            + '<span class="k">Stop / Target</span><span>' + p.stop_loss + ' / ' + p.take_profit + '</span>'
+            + '<span class="k">Confidence</span><span>' + Math.round((p.confidence || 0) * 100) + '%</span>'
+            + (p.pattern ? '<span class="k">Pattern</span><span>' + esc(p.pattern) + '</span>' : '')
+            + (p.regime ? '<span class="k">Regime</span><span>' + esc(p.regime) + '</span>' : '')
+            + '<span class="k">Called at</span><span>' + esc(p.created_at) + '</span>'
+            + '<span class="k">Sealed at</span><span>' + esc(d.sealed_at || '') + '</span>'
+            + '</div>';
+          // Drift check: the sealed payload vs the record as served TODAY.
+          var drift = [];
+          var c = d.current || {};
+          [['symbol', 'symbol'], ['direction', 'direction'], ['entry_price', 'entry'],
+           ['stop_loss', 'stop'], ['take_profit', 'target'], ['confidence', 'confidence']].forEach(function (f) {
+            var a = p[f[0]], b = c[f[0]];
+            var same = (typeof a === 'number' || typeof b === 'number')
+              ? Math.abs((Number(a) || 0) - (Number(b) || 0)) < 1e-9 : String(a) === String(b);
+            if (!same) drift.push(f[1] + ': sealed ' + a + ' → now ' + b);
+          });
+          if (drift.length) {
+            html += '<div class="drift">⚠️ The live record DIFFERS from what was sealed: ' + esc(drift.join(' · ')) + '</div>';
+          }
+        }
+        var o = d.outcome || {};
+        html += '<div class="kv"><span class="k">Outcome</span><span>'
+          + (o.pnl == null ? esc(o.status || 'pending') + ' — not resolved yet'
+            : (Number(o.pnl) > 0 ? '<b class="up-c">✓ WIN</b>' : '<b class="down-c">✗ LOSS</b>')
+              + (o.resolved_at ? ' · resolved ' + esc(String(o.resolved_at)) : ''))
+          + '</span></div>';
+        html += '<div style="margin-top:var(--s3)"><div class="k muted" style="font-size:var(--fs-xs);margin-bottom:4px">Seal (SHA-256)</div><div class="hash">' + esc(d.seal) + '</div></div>';
+        html += '<div style="margin-top:8px"><div class="k muted" style="font-size:var(--fs-xs);margin-bottom:4px">Sealed payload (hash this yourself)</div><div class="hash">' + esc(d.seal_payload) + '</div></div>';
+        out.innerHTML = html;
+      });
+    })
+    .catch(function () { fail('The verify feed is unavailable right now — try again shortly.'); });
+})();
+</script>
+</body>
+</html>
