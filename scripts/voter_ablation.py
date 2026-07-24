@@ -53,6 +53,8 @@ CURATED = [
     "fvg", "premium_discount", "mtf_choch", "mtf_alignment",
     "of_funding", "of_whale_bias", "of_book_imbalance", "of_cvd_divergence",
     "of_spot_futures_div", "of_oi_price_div",
+    # Divergence sub-labels — live only under DIVERGENCE_SUBLABELS_ENABLED.
+    "divergence_rsi", "divergence_macd", "divergence_obv",
 ]
 
 _PATS = {

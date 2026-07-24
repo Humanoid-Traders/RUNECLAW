@@ -286,18 +286,23 @@ def scan_divergences(
     return all_signals
 
 
-def divergence_to_confluence_votes(signals: list[DivergenceSignal]) -> tuple[list[float], list[float]]:
-    """Convert divergence signals into confluence votes and weights.
+def divergence_to_labeled_votes(
+    signals: list[DivergenceSignal],
+) -> tuple[list[float], list[float], list[str]]:
+    """Convert divergence signals into confluence votes, weights AND labels.
 
     Regular bullish/hidden bullish → positive vote (bullish)
     Regular bearish/hidden bearish → negative vote (bearish)
     Weight scales with confidence and type (regular > hidden).
 
-    Returns:
-        (votes, weights) lists for confluence scorer
+    Labels are ``divergence_<indicator>`` (rsi/macd/obv) — the drop-one
+    ablation attributed only the WHOLE voter (tuning audit: removal cost
+    −1.54pp), never the per-indicator mix; sub-labels make each source
+    individually measurable and learnable.
     """
     votes: list[float] = []
     weights: list[float] = []
+    labels: list[str] = []
 
     # Deduplicate: take best signal per type
     best_by_type: dict[str, DivergenceSignal] = {}
@@ -316,5 +321,12 @@ def divergence_to_confluence_votes(signals: list[DivergenceSignal]) -> tuple[lis
         else:
             votes.append(-1.0)
         weights.append(round(weight, 3))
+        labels.append(f"divergence_{str(getattr(sig, 'indicator', '') or 'other').lower()}")
 
+    return votes, weights, labels
+
+
+def divergence_to_confluence_votes(signals: list[DivergenceSignal]) -> tuple[list[float], list[float]]:
+    """Legacy two-tuple wrapper — byte-identical votes/weights."""
+    votes, weights, _labels = divergence_to_labeled_votes(signals)
     return votes, weights

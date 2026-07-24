@@ -109,6 +109,46 @@ class TestPatternTargetLevels:
         assert _KIND_BASE_SCORE.get("pattern_target") == 1.1
 
 
+class TestDivergenceSubLabels:
+    def test_flag_ships_dark(self):
+        assert CONFIG.analyzer.divergence_sublabels_enabled is False
+
+    def test_labeled_votes_align_and_legacy_wrapper_is_byte_identical(self):
+        from bot.core.divergence import (DivergenceSignal,
+                                         divergence_to_confluence_votes,
+                                         divergence_to_labeled_votes)
+        def sig(dt, ind, conf):
+            return DivergenceSignal(div_type=dt, indicator=ind, confidence=conf,
+                                    price_pivot1=100.0, price_pivot2=98.0,
+                                    ind_pivot1=30.0, ind_pivot2=35.0,
+                                    bars_apart=10, description="d")
+        sigs = [sig("regular_bullish", "rsi", 0.8),
+                sig("hidden_bearish", "macd", 0.6)]
+        v3, w3, l3 = divergence_to_labeled_votes(sigs)
+        v2, w2 = divergence_to_confluence_votes(sigs)
+        assert (v3, w3) == (v2, w2), "legacy wrapper must stay byte-identical"
+        assert len(l3) == len(v3)
+        assert set(l3) == {"divergence_rsi", "divergence_macd"}
+
+    def test_voter_block_gates_on_the_flag(self):
+        from bot.core.analyzer import Analyzer
+        src = inspect.getsource(Analyzer._score_confluence)
+        assert "divergence_sublabels_enabled" in src
+        assert '"divergence"' in src, "legacy label remains the OFF path"
+
+
+class TestOrphanDeleted:
+    def test_book_analysis_is_gone_and_unreferenced(self):
+        assert not Path(ROOT, "bot", "core", "book_analysis.py").exists()
+        hits = []
+        for p in Path(ROOT, "bot").rglob("*.py"):
+            if "__pycache__" in str(p):
+                continue
+            if "book_analysis" in p.read_text(errors="ignore"):
+                hits.append(str(p))
+        assert not hits, f"references to the deleted module remain: {hits}"
+
+
 class TestMeasurementInfra:
     def test_ablation_covers_the_round2_voters(self):
         src = Path(ROOT, "scripts", "voter_ablation.py").read_text()

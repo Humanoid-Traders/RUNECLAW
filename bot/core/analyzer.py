@@ -967,12 +967,13 @@ class Analyzer:
 
         # ── Divergence Scanner ──
         try:
-            from bot.core.divergence import scan_divergences, divergence_to_confluence_votes
+            from bot.core.divergence import scan_divergences, divergence_to_labeled_votes
             div_signals = scan_divergences(closes, volumes, lookback=CONFIG.analyzer.divergence_lookback)
             if div_signals:
-                div_votes, div_weights = divergence_to_confluence_votes(div_signals)
+                div_votes, div_weights, div_labels = divergence_to_labeled_votes(div_signals)
                 indicators["_div_votes"] = div_votes
                 indicators["_div_weights"] = div_weights
+                indicators["_div_labels"] = div_labels
                 indicators["divergences"] = [
                     {"type": s.div_type, "indicator": s.indicator, "confidence": s.confidence, "description": s.description}
                     for s in div_signals[:3]  # top 3
@@ -3208,8 +3209,19 @@ class Analyzer:
         div_weights = indicators.get("_div_weights")
         if div_votes and div_weights:
             votes.extend(div_votes)
-            weights.extend(_lw(w, "divergence") for w in div_weights)
-            names.extend(["divergence"] * len(div_weights))
+            # Sub-labels (dark flag — tuning audit): the ablation priced only
+            # the WHOLE divergence voter; per-indicator labels
+            # (divergence_rsi/macd/obv) let the harness and the weight
+            # learner attribute each source. OFF keeps the legacy single
+            # label byte-identical.
+            _dlabels = indicators.get("_div_labels")
+            if (getattr(CONFIG.analyzer, "divergence_sublabels_enabled", False)
+                    and _dlabels and len(_dlabels) == len(div_weights)):
+                weights.extend(_lw(w, _dlabels[i]) for i, w in enumerate(div_weights))
+                names.extend(_dlabels)
+            else:
+                weights.extend(_lw(w, "divergence") for w in div_weights)
+                names.extend(["divergence"] * len(div_weights))
 
         # ── Volume Profile voter ──
         vp = indicators.get("_vp_result")
