@@ -83,9 +83,26 @@ test('the /trader page + SSR-lite route + board links are wired', () => {
   const arenaPage = fs.readFileSync(path.join(__dirname, '..', 'public', 'arena.html'), 'utf8');
   assert.match(srv, /app\.get\('\/trader\/:handle'/);
   assert.match(srv, /__HANDLE__/);
-  assert.match(page, /__HANDLE__/);                     // og/title tokens
+  assert.match(page, /__TITLE__/);                      // og/title tokens (live-stat SSR)
   assert.match(page, /api\/arena\/trader\//);
   assert.match(page, /no dollar figures/i);
   assert.match(page, /Challenge them in the Arena/);
   assert.match(arenaPage, /\/trader\/' \+ encodeURIComponent/);
+});
+
+test('fetchTraderCard is one source of truth; the SSR unfurl carries live stats', async () => {
+  const { fetchTraderCard } = require('../lib/arena_trader');
+  const card = await fetchTraderCard('card_ace');       // opted-in earlier in this suite
+  assert.ok(card && card.handle === 'card_ace');
+  assert.equal(await fetchTraderCard('ghost_nobody'), null);
+  assert.equal(await fetchTraderCard('bad handle!'), null);
+  // SSR route + template tokens
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'trader.html'), 'utf8');
+  assert.match(srv, /fetchTraderCard/);
+  assert.match(srv, /__OGLINE__/);
+  assert.match(srv, /Think you can beat them\?/);
+  assert.match(page, /__TITLE__/);
+  assert.match(page, /__OGLINE__/);
+  assert.ok(!page.includes('content="__HANDLE__ —'), 'title tokens upgraded');
 });

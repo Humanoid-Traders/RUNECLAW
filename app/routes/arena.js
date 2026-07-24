@@ -397,6 +397,25 @@ router.post('/season', authMiddleware, async (req, res) => {
     await pool.execute(
       'INSERT INTO arena_seasons (name, starts_at, ends_at, created_at) VALUES (?, ?, ?, ?)',
       [v.data.name, v.data.starts_at, v.data.ends_at, new Date()]);
+    // Announce the launch — best-effort, never fails the launch itself.
+    // §4: name + window + mechanism only; no numbers of any kind.
+    const live = v.data.starts_at <= new Date();
+    const when = live ? 'is LIVE now' : `starts ${v.data.starts_at.toISOString().slice(0, 10)}`;
+    try {
+      await require('../lib/push').notifySubscribers({
+        title: `🏟️ Arena season: ${v.data.name}`,
+        body: `The season ${when} — same virtual stake for everyone, ranked on percent return. Take the crown.`,
+        url: '/arena',
+      });
+    } catch (e) { /* push not configured — the banner still announces it */ }
+    try {
+      await pool.execute(
+        `INSERT INTO agent_events (event_type, severity, symbol, title, body, data_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['arena_season', 'info', null, `Arena season launched: ${v.data.name}`,
+          `The paper-trading season ${when}. Same virtual stake for everyone, standings by percent return only — enter at /arena.`,
+          JSON.stringify({ starts_at: v.data.starts_at, ends_at: v.data.ends_at }), new Date()]);
+    } catch (e) { /* feed insert is best-effort too */ }
     res.json({ ok: true, season: { name: v.data.name, starts_at: v.data.starts_at, ends_at: v.data.ends_at } });
   } catch (err) {
     console.error('Arena season create error:', err.message);
