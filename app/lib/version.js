@@ -13,7 +13,9 @@
  *   1. BUILD_SHA / SOURCE_COMMIT env (set by a container build ARG)
  *   2. build-info.json written at build time (a .git-less image still stamps)
  *   3. `git` in the checkout (the re-clone deploy path has a real .git)
- *   4. 'unknown' — honest when nothing is available, never a fake value
+ *   4. the .git plumbing files directly — HEAD → refs → packed-refs — for a
+ *      re-clone deploy that has a .git dir but NO git binary on PATH
+ *   5. 'unknown' — honest when nothing is available, never a fake value
  */
 
 const { execFileSync } = require('child_process');
@@ -47,6 +49,51 @@ function readBuildFile() {
   return null;
 }
 
+// Resolve the HEAD commit by reading .git plumbing directly — no git binary
+// needed. Handles the normal `.git` dir, a `.git` *file* (worktree/submodule
+// pointer: "gitdir: <path>"), a symbolic HEAD (ref: refs/heads/<branch>) via a
+// loose ref file, and the packed-refs fallback. Returns a full 40-char SHA or
+// null. Reads only ref plumbing — never object contents — so it stays cheap and
+// carries no secrets (§F-15).
+function readGitHead(root) {
+  try {
+    let gitDir = path.join(root || REPO_ROOT, '.git');
+    const st = fs.statSync(gitDir);
+    if (st.isFile()) {
+      const m = fs.readFileSync(gitDir, 'utf8').match(/^gitdir:\s*(.+)\s*$/m);
+      if (!m) return null;
+      gitDir = path.resolve(root || REPO_ROOT, m[1].trim());
+    }
+    const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    const ref = head.match(/^ref:\s*(.+)$/);
+    if (!ref) {
+      // Detached HEAD — the file already holds the raw SHA.
+      return /^[0-9a-f]{40}$/i.test(head) ? head : null;
+    }
+    const refName = ref[1].trim();
+    // Prefer a loose ref file.
+    try {
+      const loose = fs.readFileSync(path.join(gitDir, refName), 'utf8').trim();
+      if (/^[0-9a-f]{40}$/i.test(loose)) return loose;
+    } catch (e) { /* not loose — fall through to packed-refs */ }
+    // Packed-refs fallback: lines are "<sha> <refname>".
+    try {
+      const packed = fs.readFileSync(path.join(gitDir, 'packed-refs'), 'utf8');
+      for (const line of packed.split('\n')) {
+        if (!line || line[0] === '#' || line[0] === '^') continue;
+        const sp = line.indexOf(' ');
+        if (sp > 0 && line.slice(sp + 1).trim() === refName) {
+          const sha = line.slice(0, sp).trim();
+          if (/^[0-9a-f]{40}$/i.test(sha)) return sha;
+        }
+      }
+    } catch (e) { /* no packed-refs either — give up honestly */ }
+    return null;
+  } catch (e) {
+    return null; // no .git at all — fall through to 'unknown'
+  }
+}
+
 function compute() {
   let sha = (process.env.BUILD_SHA || process.env.SOURCE_COMMIT || '').trim() || null;
   let committedAt = (process.env.BUILD_TIME || '').trim() || null;
@@ -59,6 +106,10 @@ function compute() {
 
   if (!sha) sha = gitOut(['rev-parse', '--short', 'HEAD']);
   if (!committedAt) committedAt = gitOut(['show', '-s', '--format=%cI', 'HEAD']);
+
+  // No git binary but a real .git checkout (the re-clone deploy): read the
+  // ref plumbing directly rather than surrendering to 'unknown'.
+  if (!sha) sha = readGitHead();
 
   return {
     sha: (sha ? String(sha).slice(0, 12) : 'unknown'),
@@ -79,4 +130,4 @@ function buildInfo() {
   };
 }
 
-module.exports = { buildInfo };
+module.exports = { buildInfo, readGitHead };
