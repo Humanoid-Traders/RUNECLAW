@@ -1,14 +1,23 @@
 {
+  "id": "/dashboard",
   "name": "RUNECLAW — AI Trading Command Core",
   "short_name": "RUNECLAW",
-  "description": "Autonomous AI trading agent for Bitget USDT-M futures — signal stream, risk engine, and portfolio tracking.",
+  "description": "Autonomous AI trading agent for Bitget USDT-M futures — signal stream, risk engine, Guardian safety suite, Paper Trading Arena and portfolio tracking.",
   "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#090a0e",
   "theme_color": "#090a0e",
+  "categories": ["finance", "productivity"],
   "icons": [
     { "src": "/app_icon_256.png", "sizes": "256x256", "type": "image/png" },
     { "src": "/app_icon_512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Dashboard", "url": "/dashboard", "description": "Your portfolio, trades and the engine" },
+    { "name": "Paper Arena", "url": "/arena", "description": "Practice trading — virtual stake, live prices" },
+    { "name": "Guardian", "url": "/guardian", "description": "The safety suite — scan, stress, escape" },
+    { "name": "Signals", "url": "/dashboard#feed", "description": "The live signal stream" }
   ]
 }

@@ -419,6 +419,15 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .w3-card .w3-val { margin-left: auto; white-space: nowrap; }
 .w3-delta { font-family: var(--font-data); font-size: var(--fs-xs); white-space: nowrap; }
 @media (max-width: 520px) { .w3-card { flex-wrap: wrap; } .w3-card .w3-val { flex-basis: 100%; text-align: right; } }
+/* Mobile-first touch targets (Android): interactive controls reach the ~40px
+   comfortable tap size on touch/small screens without changing desktop. */
+@media (max-width: 600px), (pointer: coarse) {
+  .btn, .btn--sm, button:not(.rm):not(.gc-chip):not(.chip), select, input[type="submit"] {
+    min-height: 40px;
+  }
+  .chip, .gc-chip, .season-tab { min-height: 32px; }
+  input[type="range"] { height: 32px; }
+}
 .kv-row:last-of-type { border-bottom: none; }
 .kv-row b { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 600; }
 
