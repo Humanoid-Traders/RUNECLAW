@@ -317,6 +317,16 @@
       <span style="color:var(--gold-bright)" data-i18n="sec.arena_cta">Enter the Arena →</span>
     </a>
   </div>
+  <!-- Live tape strip — REAL latest closes from the Arena (percent only,
+       opt-in handles, §4). Hidden entirely while the tape is quiet:
+       liveliness is never faked on the landing page. -->
+  <div id="landingTape" hidden style="margin-bottom:var(--s4)">
+    <div style="display:flex;gap:10px;align-items:baseline;justify-content:center;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-family:var(--font-data);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.08em;color:var(--gold-bright)" data-i18n="arena.p_tape">Live tape</span>
+      <span id="ltPulse" class="muted" style="font-family:var(--font-data);font-size:var(--fs-xs)"></span>
+    </div>
+    <div id="ltRows" style="display:flex;flex-direction:column;gap:4px;max-width:560px;margin:0 auto"></div>
+  </div>
   <div class="section-head">
     <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-target"></use></svg> <span>Paper Trading Arena</span></div>
     <h2 id="arena-h" data-i18n="sec.arena_h">Prove your edge before you risk a cent</h2>
@@ -1264,6 +1274,36 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catc
       document.getElementById('seasonRibbon').hidden = false;
     })
     .catch(function () { /* ribbon is decoration on the band */ });
+})();
+</script>
+<script>
+// Live tape strip — the Arena's REAL latest closes on the front door
+// (percent only, opt-in handles). Quiet tape → the strip stays hidden.
+(function () {
+  fetch('/api/arena/tape', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.rows || !d.rows.length) return;
+      var esc = function (t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+      var ago = function (iso) {
+        var s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+        return s < 60 ? s + 's ago' : s < 3600 ? Math.floor(s / 60) + 'm ago'
+          : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago';
+      };
+      document.getElementById('ltRows').innerHTML = d.rows.slice(0, 5).map(function (t) {
+        var up = t.direction === 'LONG';
+        return '<div style="display:flex;gap:10px;align-items:baseline;justify-content:center;flex-wrap:wrap;font-family:var(--font-data);font-size:var(--fs-sm)">'
+          + '<span style="color:var(--' + (up ? 'up' : 'down') + ')">' + (up ? '▲' : '▼') + '</span>'
+          + '<b>' + esc(t.handle) + '</b>'
+          + '<span>' + esc(t.symbol) + '</span>'
+          + '<span style="color:var(--' + (t.pct >= 0 ? 'up' : 'down') + ')">' + (t.pct > 0 ? '+' : '') + Number(t.pct).toFixed(2) + '%</span>'
+          + '<span class="muted" style="font-size:var(--fs-xs)">' + esc(t.reason) + ' · ' + ago(t.closed_at) + '</span></div>';
+      }).join('');
+      document.getElementById('ltPulse').textContent = d.traders + ' traders · ' + d.trades_24h + ' closes in 24h';
+      document.getElementById('landingTape').hidden = false;
+    })
+    .catch(function () { /* strip is decoration on the band */ });
 })();
 </script>
 <!-- Perf + a11y: the 3D hero statically imports three.js (~150KB+). Load it via

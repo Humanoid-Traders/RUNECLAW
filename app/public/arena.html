@@ -101,6 +101,11 @@
   @keyframes tapeIn { from { transform: translateY(-8px); opacity: 0; background: rgba(230,176,60,.10); } to { transform: none; opacity: 1; background: transparent; } }
   @media (prefers-reduced-motion: reduce) { .tape-row.tape-new { animation: none; } }
   @media (max-width: 520px) { .tape-row { grid-template-columns: 18px minmax(70px, 1fr) auto auto; } .tape-row .how, .tape-row .ago { display: none; } }
+  /* Symbol chips — the mobile-proof picker (datalist is flaky on Android) */
+  .sym-chips { display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 6px 0 2px; scrollbar-width: none; }
+  .sym-chips::-webkit-scrollbar { display: none; }
+  .sym-chip { flex: 0 0 auto; font-size: var(--fs-xs); font-family: var(--font-data); padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text-2); cursor: pointer; }
+  .sym-chip.on { border-color: var(--gold-bright); color: var(--text-1); }
   .optin { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s3); }
   .optin input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: var(--fs-sm); }
   .cta { display: inline-block; margin-top: var(--s2); }
@@ -196,7 +201,10 @@
     <div class="ticket">
       <div><label for="tSym">Symbol</label>
         <input id="tSym" list="symList" value="BTCUSDT" maxlength="20" autocomplete="off" spellcheck="false">
-        <datalist id="symList"></datalist></div>
+        <datalist id="symList"></datalist>
+        <!-- Tap-to-pick chips: <datalist> suggestions are unreliable on
+             Android, which read as "only BTC exists". Chips work everywhere. -->
+        <div id="symChips" class="sym-chips" aria-label="Top symbols by volume"></div></div>
       <div><label>Direction</label>
         <div class="dirbtns">
           <button class="dirbtn on-long" id="dirLong" type="button">▲ Long</button>
@@ -458,6 +466,25 @@
     tapeFirst = false;
   }
 
+  // Real Bitget USDT-M majors — the picker's floor when the ticker feed is
+  // unavailable, so the symbol choice NEVER collapses to just the default.
+  var MAJOR_SYMS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'DOGEUSDT', 'ADAUSDT', 'LINKUSDT'];
+  // "sol" / "Sol/usdt" → "SOLUSDT": mirror the server's normalization so a
+  // hand-typed base never 400s as an invalid symbol.
+  function normSym(v) {
+    v = String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (v && !/USDT$/.test(v)) v += 'USDT';
+    return v;
+  }
+  function paintChips(syms) {
+    var box = $('symChips');
+    if (!box) return;
+    var cur = $('tSym').value;
+    box.innerHTML = syms.map(function (s) {
+      return '<button type="button" class="sym-chip' + (s === cur ? ' on' : '')
+        + '" data-sym-chip="' + esc(s) + '">' + esc(s.replace(/USDT$/, '')) + '</button>';
+    }).join('');
+  }
   async function loadSymbols() {
     // Raw Bitget shape: { data: [ { symbol, lastPr, usdtVolume, ... } ] }
     var r = await RC.fetchJSON('/api/market/tickers', { auth: false, timeoutMs: 12000 }).catch(function () { return null; });
@@ -465,8 +492,24 @@
     var syms = list.filter(function (t) { return t && /USDT$/.test(t.symbol || ''); })
       .sort(function (a, b) { return (parseFloat(b.usdtVolume) || 0) - (parseFloat(a.usdtVolume) || 0); })
       .slice(0, 60).map(function (t) { return t.symbol; });
+    if (!syms.length) syms = MAJOR_SYMS.slice();
     $('symList').innerHTML = syms.map(function (s) { return '<option value="' + esc(s) + '">'; }).join('');
+    paintChips(syms.slice(0, 10));
   }
+  // Chip taps fill the input (delegated once — survives every repaint).
+  (function () {
+    var box = $('symChips');
+    if (!box) return;
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-sym-chip]');
+      if (!b) return;
+      $('tSym').value = b.getAttribute('data-sym-chip');
+      var all = box.querySelectorAll('.sym-chip');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('on');
+      b.classList.add('on');
+      try { $('tSym').dispatchEvent(new Event('input')); } catch (e2) { /* old browser */ }
+    });
+  })();
 
   function tmsg(t) { $('tMsg').textContent = t || ''; }
 
@@ -509,7 +552,7 @@
     // the R:R is computed against a real price, never a guess.
     var liveMark = null, markSym = '', markTimer = null;
     function fetchMark() {
-      var sym = $('tSym').value.trim().toUpperCase();
+      var sym = normSym($('tSym').value);
       if (!sym || sym === markSym) { riskPreview(); return; }
       RC.fetchJSON('/api/market/ticker/' + encodeURIComponent(sym), { auth: false, timeoutMs: 8000 })
         .then(function (r) {
@@ -555,12 +598,22 @@
     $('openBtn').addEventListener('click', async function () {
       $('openBtn').disabled = true; tmsg('Opening…');
       var r = await RC.fetchJSON('/api/arena/open', { method: 'POST', body: {
-        symbol: $('tSym').value, direction: direction,
+        symbol: normSym($('tSym').value), direction: direction,
         margin: Number($('tMargin').value), leverage: Number($('tLev').value),
         tp: $('tTp').value || null, sl: $('tSl').value || null,
       }, timeoutMs: 14000 }).catch(function () { return null; });
       $('openBtn').disabled = false;
-      if (r && r.ok) { haptic(12); tmsg('Filled ' + r.data.filled.direction + ' ' + r.data.filled.symbol + ' @ ' + fmtP(r.data.filled.entry)); loadAccount(); loadBoard(); }
+      if (r && r.ok) {
+        haptic(12);
+        tmsg('Filled ' + r.data.filled.direction + ' ' + r.data.filled.symbol + ' @ ' + fmtP(r.data.filled.entry));
+        loadAccount(); loadBoard();
+        // Mobile: the positions table lives below the fold — bring the fresh
+        // fill into view so "did it work?" is never a question.
+        try {
+          var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+          $('posPanel').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest' });
+        } catch (e2) { /* older browsers: the fill message still confirms */ }
+      }
       else tmsg((r && r.data && r.data.error) || 'Open failed — try again.');
     });
 
