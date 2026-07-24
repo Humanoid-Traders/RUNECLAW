@@ -357,6 +357,13 @@ class MemoryDB {
       return [rows.map(r => ({ ...r })), []];
     }
     if (cmd.includes('FROM ARENA_TRADES')) {
+      if (cmd.includes('COUNT(*)') && cmd.includes('CLOSED_AT >=')) {
+        // tape pulse: WHERE closed_at >= ? (single cutoff, count only)
+        const lo = new Date(params[0]).getTime();
+        const n = this.arenaTrades.filter(
+          t => new Date(t.closed_at).getTime() >= lo).length;
+        return [[{ n }], []];
+      }
       if (cmd.includes('CLOSED_AT >=')) {
         // season window: WHERE closed_at >= ? AND closed_at <= ?
         const lo = new Date(params[0]).getTime(), hi = new Date(params[1]).getTime();
@@ -370,6 +377,11 @@ class MemoryDB {
         const counts = {};
         for (const t of this.arenaTrades) counts[t.user_id] = (counts[t.user_id] || 0) + 1;
         return [Object.entries(counts).map(([user_id, n]) => ({ user_id: Number(user_id), n })), []];
+      }
+      if (!cmd.includes('WHERE')) {
+        // live tape: newest closes across ALL users (route maps to handles)
+        const rows = this.arenaTrades.slice().sort((a, b) => b.id - a.id).slice(0, 40);
+        return [rows.map(r => ({ ...r })), []];
       }
       // history: WHERE user_id = ? ORDER BY id DESC LIMIT 30
       const rows = this.arenaTrades.filter(t => t.user_id === params[0])
