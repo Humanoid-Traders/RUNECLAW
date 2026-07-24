@@ -546,9 +546,22 @@
 
     renderPanel(C('hero'), async () => {
       if (!LOGGED_IN) {
+        // The logged-out overview is a ROUTER into everything already open:
+        // most of the product is watchable without an account — say so and
+        // point at it, then earn the signup.
         return `<div class="stat"><div class="k">Welcome to RUNECLAW</div>
-          <div style="font-size:var(--fs-md);margin:6px 0 14px;max-width:52ch">Watch the autonomous engine, chat with the analyst, and paper-trade with a real risk gate — free.</div>
-          <a class="btn btn--primary" href="/">Create your account</a></div>`;
+          <div style="font-size:var(--fs-md);margin:6px 0 10px;max-width:56ch">Most of this cockpit is
+          <b>open right now — no account needed</b>: watch the engine think, read every signal it generates,
+          and see the live market it trades.</div>
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+            <a class="btn btn--ghost btn--sm" href="#feed">🧠 Watch the agent's mind-stream</a>
+            <a class="btn btn--ghost btn--sm" href="#signals">📡 Every signal, taken or not</a>
+            <a class="btn btn--ghost btn--sm" href="#trade">📈 The live market + ticket preview</a>
+            <a class="btn btn--ghost btn--sm" href="/arena">🏟️ Paper-trade in the Arena</a>
+            <a class="btn btn--ghost btn--sm" href="/guardian">🛡️ Try the Guardian tools</a>
+          </div>
+          <a class="btn btn--primary" href="/">Create your free account</a>
+          <span class="small muted" style="margin-left:10px">unlocks your own portfolio, journal, alerts &amp; Arena record</span></div>`;
       }
       const pf = await getPortfolio(true);
       updateModeChip(pf);

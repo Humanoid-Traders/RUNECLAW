@@ -43,3 +43,13 @@ test('cache-buster bumped so the previews ship', () => {
   const v = Number((shell.match(/dashboard\.js\?v=(\d+)/) || [])[1]);
   assert.ok(v >= 90, `dashboard.js v>=90 (got ${v})`);
 });
+
+test('the logged-out overview routes visitors into everything already open', () => {
+  const cur = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
+  assert.match(cur, /open right now — no account needed/);
+  assert.match(cur, /mind-stream/);
+  assert.match(cur, /href="#signals"/);
+  assert.match(cur, /href="#trade"/);
+  assert.match(cur, /href="\/arena"/);
+  assert.match(cur, /href="\/guardian"/);
+});
