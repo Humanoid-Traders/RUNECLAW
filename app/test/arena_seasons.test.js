@@ -131,3 +131,13 @@ test('the /arena page mounts an operator-only season launcher', () => {
   // …the POST goes to the server route that re-checks admin (asserted above)
   assert.match(html, /method: 'POST'/);
 });
+
+test('the main leaderboard page teases the Arena season (§4-safe)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'leaderboard.html'), 'utf8');
+  assert.match(html, /id="arenaSeasonPanel"/);
+  assert.match(html, /api\/arena\/season/);
+  assert.match(html, /Enter the Arena/);
+  // §4: no $-amounts in the teaser markup
+  const cut = html.slice(html.indexOf('arenaSeasonPanel'));
+  assert.ok(!/\$\s?\d/.test(cut), 'no $-amount in the arena teaser');
+});
