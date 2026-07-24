@@ -486,6 +486,9 @@ class Analyzer:
         # set to a callable(signal, indicators, as_of) -> thesis|None by the
         # backtest for deterministic parity. See bot/backtest/recorded_llm.py.
         self._offline_thesis_fn = None
+        # Cross-asset tracker (engine-owned; assigned after engine builds it).
+        # Read only by the dark cross_asset voter — None means no votes.
+        self.cross_asset_tracker = None
         # Confidence calibrator (Phase A): lazily loaded from disk. ``False`` is
         # the "looked, none on disk" sentinel so we don't re-stat every analyze().
         self._calibrator = None
@@ -1193,6 +1196,18 @@ class Analyzer:
         except Exception as _oc_exc:
             system_log.debug("On-chain snapshot skipped: %s", _oc_exc)
 
+        # Cross-asset context (gated): the dark voter's data source. Inert
+        # unless CROSS_ASSET_VOTER_ENABLED is flipped; the tracker's own
+        # cache makes get_context() cheap. Fails open to None.
+        _ca_context = None
+        try:
+            if getattr(CONFIG.analyzer, "cross_asset_voter_enabled", False):
+                _cat = getattr(self, "cross_asset_tracker", None)
+                if _cat is not None:
+                    _ca_context = _cat.get_context()
+        except Exception as _ca_exc:
+            system_log.debug("Cross-asset context skipped: %s", _ca_exc)
+
         _confluence_votes: list = []
         confluence = self._score_confluence(
             indicators, regime, signal,
@@ -1204,6 +1219,7 @@ class Analyzer:
             strategy_type=strategy_type,
             breakdown=_confluence_votes,
             onchain_snapshot=_onchain_snapshot,
+            cross_asset_context=_ca_context,
         )
         # Voter-grounded thesis (audit UX item): expose the top signed votes
         # to the LLM prompt so the narrative cites the actual electorate that
@@ -2854,7 +2870,8 @@ class Analyzer:
                           mode_config=None, sentiment_engine=None,
                           strategy_type: str = "swing",
                           breakdown: "Optional[list]" = None,
-                          onchain_snapshot=None) -> float:
+                          onchain_snapshot=None,
+                          cross_asset_context=None) -> float:
         """
         Score agreement across indicators on a 0-1 scale.
 
@@ -3406,6 +3423,22 @@ class Analyzer:
                     aw(_oc_weight, _oc_name)
             except Exception as _oc_exc:
                 logger.warning("On-chain vote failed: %s", _oc_exc)
+
+        # Cross-asset regime voter — present only when the caller resolved a
+        # context (gated by CROSS_ASSET_VOTER_ENABLED, default OFF). Macro
+        # evidence from related markets: regime (risk_on/off/rotation),
+        # DXY-proxy dollar wind, ETH/BTC alt-season — direction-aware per
+        # symbol (BTC vs alt). A dataless context votes nothing (dilution
+        # guard); the tracker's post-score confidence/size adjustments are a
+        # separate, always-on mechanism — see the config note.
+        if cross_asset_context is not None:
+            try:
+                for _ca_name, _ca_vote, _ca_weight in cross_asset_context.to_confluence_votes(
+                        str(signal.symbol)):
+                    votes.append(_ca_vote)
+                    aw(_ca_weight, _ca_name)
+            except Exception as _ca_exc:
+                logger.warning("Cross-asset vote failed: %s", _ca_exc)
 
         # Volume Profile POC-magnet voter
         poc_price = indicators.get("poc_price", 0)

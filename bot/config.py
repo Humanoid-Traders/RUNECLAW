@@ -1302,6 +1302,13 @@ class AnalyzerConfig:
     # bar-level spike indicator is always computed; the voter trigger ships
     # dark on the same joint production measurement as SMC/MFI above.
     vol_spike_bar_vote_enabled: bool = _env_bool("VOL_SPIKE_BAR_VOTE_ENABLED", False)
+    # Cross-asset regime voter (default OFF — §4 new-voter rule): the
+    # CrossAssetTracker is always fed and its post-score confidence/size
+    # adjustments already apply; this flag additionally lets the context VOTE
+    # in the confluence electorate (regime risk_on/off/rotation, DXY proxy,
+    # ETH/BTC alt-season — see CrossAssetContext.to_confluence_votes).
+    # Flip only with measurement, as with every dark voter.
+    cross_asset_voter_enabled: bool = _env_bool("CROSS_ASSET_VOTER_ENABLED", False)
 
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
     # each is env-overridable. These activate VWAP math that used to be computed

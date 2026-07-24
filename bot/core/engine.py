@@ -357,6 +357,9 @@ class RuneClawEngine:
         # Cross-asset correlation tracker
         from bot.core.cross_asset import CrossAssetTracker
         self.cross_asset = CrossAssetTracker()
+        # Hand the analyzer's dark cross_asset voter its data source (votes
+        # only when CROSS_ASSET_VOTER_ENABLED is flipped).
+        self.analyzer.cross_asset_tracker = self.cross_asset
 
         # Slippage tracker. Wire it into the operator executor so realized
         # slippage (intended entry vs actual fill) is actually recorded — the

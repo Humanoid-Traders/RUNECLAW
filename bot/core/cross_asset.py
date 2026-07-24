@@ -41,6 +41,37 @@ class CrossAssetContext:
     description: str = ""
     timestamp: float = 0.0
 
+    def to_confluence_votes(self, symbol: str = "") -> "list[tuple[str, float, float]]":
+        """Directional confluence votes for SYMBOL — the VOTER face of this
+        context. (The confidence/size adjustments are the post-score face;
+        this voter ships dark behind CROSS_ASSET_VOTER_ENABLED so the two
+        never double-count by default.) Vote sign: + bullish, − bearish.
+
+        A dataless context — regime "normal", every trend "neutral" — votes
+        NOTHING: the dilution-guard doctrine (absence of evidence must not
+        dilute the electorate's denominator).
+        """
+        votes: "list[tuple[str, float, float]]" = []
+        sym = str(symbol).upper()
+        is_alt = "BTC" not in sym          # same convention as get_symbol_adjustment
+        if self.market_regime == "risk_off":
+            votes.append(("cross_regime", -0.6 if is_alt else -0.3, 0.6))
+        elif self.market_regime == "risk_on":
+            votes.append(("cross_regime", 0.5 if is_alt else 0.3, 0.6))
+        elif self.market_regime == "rotation":
+            # Money rotating alts → BTC: bearish alts, mildly bullish BTC.
+            votes.append(("cross_regime", -0.5 if is_alt else 0.4, 0.6))
+        if self.dxy_proxy_trend == "strengthening":
+            votes.append(("dollar_wind", -0.4, 0.5))
+        elif self.dxy_proxy_trend == "weakening":
+            votes.append(("dollar_wind", 0.4, 0.5))
+        if is_alt:
+            if self.eth_btc_trend == "rising":
+                votes.append(("alt_season", 0.4, 0.5))
+            elif self.eth_btc_trend == "falling":
+                votes.append(("alt_season", -0.3, 0.5))
+        return votes
+
 
 class CrossAssetTracker:
     """Tracks cross-asset signals from exchange data.
