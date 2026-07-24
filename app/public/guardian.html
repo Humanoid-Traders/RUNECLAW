@@ -46,6 +46,23 @@
   .card .go { color: var(--gold-bright); font-size: var(--fs-sm); margin-top: auto; }
   .card.soon .go { color: var(--text-3); }
   .disc { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; margin-top: var(--s5); border-top: 1px solid var(--line); padding-top: var(--s3); text-align: center; }
+  /* Guardian Console */
+  .gd-console { max-width: 760px; margin: 0 auto var(--s5); background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius); padding: var(--s4); }
+  .gd-console .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--gold-bright); margin-bottom: 8px; }
+  .gd-console .bar { display: flex; gap: var(--s2); }
+  .gd-console input { flex: 1; background: var(--bg); border: 1px solid var(--line); color: var(--text-1); border-radius: var(--radius-sm); padding: 10px 12px; font: inherit; font-size: var(--fs-sm); }
+  #gcOut { margin-top: var(--s3); }
+  .gc-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--s3) var(--s4); background: var(--bg); }
+  .gc-card.gc-v-danger { border-color: #ff5c6c; } .gc-card.gc-v-caution { border-color: #e6c34b; } .gc-card.gc-v-clear { border-color: var(--up); }
+  .gc-head { font-weight: 600; margin-bottom: 5px; } .gc-sum { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; }
+  .gc-flag { font-size: var(--fs-xs); color: var(--text-2); margin-top: 8px; line-height: 1.5; padding-left: 10px; border-left: 2px solid var(--line-2); }
+  .gc-flag.gc-high { border-left-color: #ff5c6c; } .gc-flag.gc-medium { border-left-color: #ff9f45; } .gc-flag.gc-low { border-left-color: #e6c34b; }
+  .gc-flag code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-family: var(--font-data); word-break: break-all; }
+  .gc-more { display: inline-block; margin-top: 10px; color: var(--gold-bright); font-size: var(--fs-sm); }
+  .gc-eg { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .gc-chip { font-size: var(--fs-xs); padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text-2); cursor: pointer; }
+  .gc-chip:hover { color: var(--text-1); border-color: var(--gold-bright); }
+  .gc-loading { color: var(--text-3); }
 </style>
 </head>
 <body>
@@ -70,6 +87,20 @@
       <div class="p"><div class="a">The escape</div><div class="b">recovers</div></div>
     </div>
   </header>
+
+  <!-- Guardian Console: one input that routes to the right safety module and
+       answers inline (Firewall + Sentinel) or opens the tool (Stress / Escape /
+       Flight). Deterministic + local — no LLM key, nothing leaves the page
+       except the public Sentinel read. -->
+  <section class="gd-console" aria-label="Ask Guardian">
+    <div class="lbl">◆ Ask Guardian</div>
+    <div class="bar">
+      <input id="gcInput" type="text" autocomplete="off" spellcheck="false"
+        placeholder="Paste a transaction to scan · &quot;how crowded is the market?&quot; · &quot;plan my exit&quot;" aria-label="Ask Guardian">
+      <button class="btn btn--primary btn--sm" id="gcRun" type="button">Ask</button>
+    </div>
+    <div id="gcOut"></div>
+  </section>
 
   <main class="grid">
     <a class="card" href="/flight">
@@ -116,5 +147,7 @@
   simulate and prove — they never move funds on their own, and nothing here is investment advice. Funds move only
   inside a revocable authority envelope you set and can switch off at any time.</p>
 </div>
+<script src="/js/firewall-model.js?v=1"></script>
+<script src="/js/guardian-console.js?v=1"></script>
 </body>
 </html>
